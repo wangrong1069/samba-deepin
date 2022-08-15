@@ -1,0 +1,3 @@
+usr/lib/*/libpyldb-util.cpython-*.so.*
+usr/lib/python3/dist-packages/_ldb_text.py
+usr/lib/python3/dist-packages/ldb.cpython-*.so

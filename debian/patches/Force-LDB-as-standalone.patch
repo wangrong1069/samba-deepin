@@ -1,0 +1,25 @@
+From 052023a67ca022b8bf323574c540964cf656f0b2 Mon Sep 17 00:00:00 2001
+From: Mathieu Parent <math.parent@gmail.com>
+Date: Sun, 19 Dec 2021 22:29:13 +0100
+Subject: [PATCH] Force LDB as standalone
+
+---
+ lib/ldb/wscript | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/ldb/wscript b/lib/ldb/wscript
+index 57dfdd6fe6b..70a982da352 100644
+--- a/lib/ldb/wscript
++++ b/lib/ldb/wscript
+@@ -68,7 +68,7 @@ def configure(conf):
+     #
+     conf.CONFIG_PATH('LDB_MODULESDIR', conf.SUBST_ENV_VAR('MODULESDIR') + '/ldb')
+ 
+-    conf.env.standalone_ldb = conf.IN_LAUNCH_DIR()
++    conf.env.standalone_ldb = conf.IN_LAUNCH_DIR() or True
+ 
+     if not conf.env.standalone_ldb:
+         max_ldb_version = [int(x) for x in VERSION.split(".")]
+-- 
+2.30.2
+

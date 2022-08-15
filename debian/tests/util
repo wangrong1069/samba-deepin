@@ -1,0 +1,65 @@
+#!/bin/sh
+
+# $1: share name
+# $2: comma separated list of vfs_objects to use, if any
+add_share() {
+    local share="$1"
+    local vfs="$2"
+    if ! testparm -s 2>&1 | grep -E "^\[${share}\]"; then
+        echo "Adding [${share}] share"
+        cat >> /etc/samba/smb.conf <<EOFEOF
+[${share}]
+  read only = no
+  guest ok = no
+  path = /${share}
+EOFEOF
+        if [ -n "${vfs}" ]; then
+            echo "vfs objects = ${vfs}" >> /etc/samba/smb.conf
+        fi
+        systemctl restart smbd.service
+    else
+        echo "Share [${share}] already exists, continuing"
+    fi
+}
+
+# $1: username
+# $2: password
+add_user() {
+    local username="$1"
+    local password="$2"
+
+    echo "Creating a local and samba user called ${username}"
+    useradd -m "${username}"
+    echo "Setting samba password for the ${username} user"
+    echo "${password}\n${password}" | smbpasswd -s -a ${username}
+}
+
+# $1: share name
+populate_share() {
+    local sharename="$1"
+    local usergroup="$2"
+    local sharepath="/${sharename}"
+
+    mkdir -p "${sharepath}"
+    dd if=/dev/urandom bs=4096 count=1000 2>/dev/null | base64 > "${sharepath}/data"
+    cd "${sharepath}"
+    md5sum data > data.md5
+    chown -R "${usergroup}:${usergroup}" "${sharepath}"
+}
+
+
+# $1: kernel version in the form major.minor.patch
+check_kernel_version() {
+    local k_ver=$1
+    local k_major=$(echo ${k_ver} | cut -d . -f 1)
+    local k_minor=$(echo ${k_ver} | cut -d . -f 2)
+
+    # uring is supported starting with kernel 5.1.x
+    if [ ${k_major} -eq 5 ] && [ ${k_minor} -ge 1 ]; then
+       return 0
+    elif [ ${k_major} -ge 6 ]; then
+       return 0
+    else
+        return 1
+    fi
+}

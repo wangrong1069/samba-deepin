@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -x
+set -e
+
+. debian/tests/util
+
+k_ver=$(uname -r | cut -d - -f 1)
+if ! check_kernel_version ${k_ver}; then
+    echo "uring not available in kernel version ${k_ver}, skipping test"
+    exit 77
+fi
+
+username="smbtest$$"
+password="$$"
+add_user "${username}" "${password}"
+
+myshare="myshare$$"
+add_share "${myshare}" io_uring
+
+echo "Creating file with random data and computing its md5"
+populate_share "${myshare}" "${username}"
+
+rm -f downloaded-data
+echo "Downloading file and comparing its md5"
+smbclient //localhost/"${myshare}" -U "${username}"%"${password}" -c "get data downloaded-data"
+
+mv -f downloaded-data data
+md5sum -c data.md5

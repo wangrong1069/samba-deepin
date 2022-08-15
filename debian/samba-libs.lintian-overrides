@@ -1,0 +1,21 @@
+# the samba-libs package contains a number of libraries
+# it doesn't make sense to have them in separate packages, as this would
+# result in circular dependencies
+samba-libs: package-name-doesnt-match-sonames libdcerpc-binding0 libdcerpc-samr0 libdcerpc-server-core0 libdcerpc-server0 libdcerpc0 libndr-krb5pac0 libndr-nbt0 libndr-standard0 libndr2 libnetapi1 libsamba-credentials1 libsamba-errors1 libsamba-hostconfig0 libsamba-passdb0 libsamdb0 libsmbconf0 libsmbldap2 libtevent-util0
+# Embedded Heimdal is patched
+samba-libs: embedded-library heimdal usr/lib/*/samba/libgssapi-samba4.so.0
+# False positives, see #896012
+samba-libs: library-not-linked-against-libc *
+samba-libs: shared-library-lacks-prerequisites usr/lib/*/libdcerpc-samr.so.*
+# unofficial APIs
+samba-libs: no-symbols-control-file usr/lib/*/libdcerpc*.so.*
+samba-libs: no-symbols-control-file usr/lib/*/libndr*.so.*
+samba-libs: no-symbols-control-file usr/lib/*/libnetapi.so.*
+samba-libs: no-symbols-control-file usr/lib/*/libsamba-*.so*
+samba-libs: no-symbols-control-file usr/lib/*/libsamdb.so.*
+samba-libs: no-symbols-control-file usr/lib/*/libsmbconf.so.*
+# FIXME: libsmbldap actually has ABI file
+#samba-libs: no-symbols-control-file usr/lib/*/libsmbldap.so.*
+samba-libs: no-symbols-control-file usr/lib/*/libtevent-util.so.*
+# deliberate, a synonym for misspelled parameter
+samba-libs: spelling-error-in-binary usr/lib/*/libsamba-hostconfig.so.* prefered preferred

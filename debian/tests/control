@@ -1,0 +1,30 @@
+Tests: cifs-share-access
+Depends: samba, coreutils, systemd, cifs-utils, passwd
+Restrictions: needs-root, allow-stderr, isolation-machine
+
+Tests: cifs-share-access-uring
+Depends: samba, samba-vfs-modules, coreutils, systemd, cifs-utils, passwd
+Restrictions: needs-root, allow-stderr, isolation-machine, skippable
+
+Tests: python-smoke
+Depends: python3-samba
+
+Tests: smbclient-anonymous-share-list
+Depends: samba, smbclient
+Restrictions: allow-stderr, isolation-container
+
+Tests: smbclient-authenticated-share-list
+Depends: samba, smbclient, passwd
+Restrictions: needs-root, allow-stderr, isolation-container
+
+Tests: smbclient-share-access
+Depends: samba, smbclient, coreutils, systemd, passwd
+Restrictions: needs-root, allow-stderr, isolation-container
+
+Tests: smbclient-share-access-uring
+Depends: samba, samba-vfs-modules, smbclient, coreutils, systemd, passwd
+Restrictions: needs-root, allow-stderr, isolation-container, skippable
+
+Tests: reinstall-samba-common-bin
+Depends: samba-common, samba-common-bin
+Restrictions: needs-root, needs-reboot, isolation-machine, allow-stderr

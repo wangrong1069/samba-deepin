@@ -1,0 +1,13 @@
+usr/bin/gentest
+usr/bin/locktest
+usr/bin/masktest
+usr/bin/ndrdump
+usr/bin/smbtorture
+usr/lib/*/samba/libdlz-bind9-for-torture-samba4.so.0
+usr/lib/*/samba/libprinter-driver-samba4.so.0
+usr/lib/*/samba/libtorture-samba4.so.0
+usr/share/man/man1/gentest.1
+usr/share/man/man1/locktest.1
+usr/share/man/man1/masktest.1
+usr/share/man/man1/ndrdump.1
+usr/share/man/man1/smbtorture.1

@@ -1,0 +1,8 @@
+usr/bin/ldb*
+usr/lib/*/samba/libldb-cmdline-samba4.so.0
+usr/share/man/man1/ldbadd.1
+usr/share/man/man1/ldbdel.1
+usr/share/man/man1/ldbedit.1
+usr/share/man/man1/ldbmodify.1
+usr/share/man/man1/ldbrename.1
+usr/share/man/man1/ldbsearch.1

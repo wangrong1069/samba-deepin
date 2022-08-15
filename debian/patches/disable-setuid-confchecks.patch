@@ -1,0 +1,25 @@
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Fri, 08 Apr 2022 11:50:21 +0300
+Subject: disable setuid configure checks
+
+For some strange reason, when running reprotest test on salsa-ci,
+which apparently is running as root, - on the *second* build only
+the configure fails (after successfully built package the first
+time). The configure test tries to change gid and verifies it
+actually changed (not that the syscall exist), - and that fails.
+Since it is extremly uncommon to configure the build process as
+root, salsa-ci test environment details are quite deep down the line,
+and we know the syscall actually works, just disable the probe,
+pretending we are not root.
+
+diff --git a/source3/lib/util_sec.c b/source3/lib/util_sec.c
+index 30a29f535b1..451ad396965 100644
+--- a/source3/lib/util_sec.c
++++ b/source3/lib/util_sec.c
+@@ -556,5 +556,5 @@ static int have_syscall(void)
+ int main(void)
+ {
+-        if (getuid() != 0) {
++        if (1 || getuid() != 0) {
+ #if (defined(AIX) && defined(USE_SETREUID))
+ 		/* setreuid is badly broken on AIX 4.1, we avoid it completely */

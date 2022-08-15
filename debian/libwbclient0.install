@@ -1,0 +1,9 @@
+usr/lib/*/libsamba-util.so.*
+usr/lib/*/libwbclient.so.0*
+usr/lib/*/samba/libgenrand-samba4.so.0
+usr/lib/*/samba/libiov-buf-samba4.so.0
+usr/lib/*/samba/libreplace-samba4.so.0
+usr/lib/*/samba/libsamba-debug-samba4.so.0
+usr/lib/*/samba/libsocket-blocking-samba4.so.0
+usr/lib/*/samba/libsys-rw-samba4.so.0
+usr/lib/*/samba/libtime-basic-samba4.so.0

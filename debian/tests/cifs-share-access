@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -x
+set -e
+
+. debian/tests/util
+
+username="smbtest$$"
+password="$$"
+add_user "${username}" "${password}"
+
+myshare="myshare$$"
+add_share "${myshare}"
+
+echo "Creating file with random data and computing its md5"
+populate_share "${myshare}" "${username}"
+
+echo "Mounting //localhost/${myshare} via CIFS"
+temp_mount=$(mktemp -d)
+mount -t cifs //localhost/"${myshare}" "$temp_mount" -o user="${username}",username="${username}",password="${password}"
+
+echo "Verifying MD5 via cifs"
+cd "$temp_mount"
+md5sum -c data.md5
+result=$?
+cd -
+umount "$temp_mount"
+rmdir "$temp_mount"
+exit "$result"

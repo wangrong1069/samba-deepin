@@ -1,0 +1,50 @@
+Subject: ensure libsmbclient.h is being used with LFS enabled
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Sat, 02 Apr 2022 19:01:55 +0300
+Bug-Debian: https://bugs.debian.org/221618
+
+We build samba with LFS (Large File Support) even on 32bits.
+This means some types like off_t are 64-bit wide, again,
+even on a 32bit host.  libsmbclient.h uses off_t in function
+prototypes, and thes prototypes muct match those which were
+used at samba compile time - if some other source includes
+libsmbclient.h without LFS, it'll get wrong prototypes and
+the resulting binary will most likely crash when using
+libsmbclient functions.
+
+Detect and error-out this at compile time.
+
+We can not do anything with this in the public header since
+it is alredy too late to redefine things, since we can't
+guarantee we're the first header a program #includes, and
+at the time this libsmbclient.h is included, off_t can
+already be defined so our (re)define of _FILE_OFFSET_BITS
+does nothing already.
+
+Patching libsmbclient.h to use off64_t means client program
+should change their off_t to off64_t too when storing
+file offsets returning from libsmbclient, so this is not
+an option too.
+
+With this change, we will error out even if the user source
+does not use any off_t-related functions. Namely, it was ok
+to #include <libsmbclient.h> and use smbc_open/smbc_read/
+smbc_write/smbc_close without _F_O_B=64, - neither of these
+functions uses off_t. smbc_lseek and others doesn't work,
+but if a program does not use them anyway, whole thing will
+just work even without enabling LFS.  Ideally we can probably
+check each individual function which is being affected, by
+replacing it with #error if sizeof(off_t) < 8.  But this
+requires quite some hackery...
+
+diff --git a/source3/include/libsmbclient.h b/source3/include/libsmbclient.h
+index 84c98089251..1a6ea599cfa 100644
+--- a/source3/include/libsmbclient.h
++++ b/source3/include/libsmbclient.h
+@@ -82,4 +82,6 @@ extern "C" {
+ #include <utime.h>
+ 
++typedef int smbc_off_t_should_be_at_least_64bits_use_LFS_CFLAGS[sizeof(off_t)-7];
++
+ #define SMBC_BASE_FD        10000 /* smallest file descriptor returned */
+ 

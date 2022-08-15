@@ -1,0 +1,5 @@
+# False positives, see #896012
+python3-samba: library-not-linked-against-libc *
+python3-samba: package-name-doesnt-match-sonames libsamba-policy.cpython-*0
+python3-samba: shared-library-lacks-prerequisites usr/lib/python3/dist-packages/samba/*.so
+python3-samba: no-symbols-control-file usr/lib/*/libsamba-policy.*.so.*

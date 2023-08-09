@@ -70,7 +70,7 @@ After `gbp pull`:
     # Edit debian/watch's major version
     editor debian/watch
     # Edit this file's major version
-    editor debian/README.source
+    editor debian/README.source.md
     # Commit
     git commit -m"Update d/gbp.conf, d/watch and d/README.source for ${major_version}" debian/gbp.conf debian/watch debian/README.source.md
     # Create the new upstream branch

@@ -1,0 +1,7 @@
+# manpages for idmap modules:
+winbind: spare-manual-page */man/man8/idmap_*
+# more modules:
+winbind: spare-manual-page */man/man8/winbind_krb5_locator.8*
+winbind: hardening-no-fortify-functions */samba/idmap/hash.so*
+winbind: hardening-no-fortify-functions */samba/idmap/tdb2.so*
+winbind: hardening-no-fortify-functions */samba/nss_info/hash.so*

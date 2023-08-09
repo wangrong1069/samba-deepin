@@ -1,7 +1,7 @@
 #!/bin/sh
 echo 'usr/lib/*/libldb.so.*'
 # lib/ldb/wscript: (sizeof(size_t) >= 8), >=64bit is required for lmdb
-if [ 64 -le "${DEB_HOST_ARCH_BITS:-$(dpkg-architecture -qDEB_HOST_ARCH_BITS)}" ]
+if [ 64 -le "$(dpkg-architecture -qDEB_HOST_ARCH_BITS)" ]
 then
     echo 'usr/lib/*/samba/libldb-mdb-int-samba4.so.0'
     echo 'usr/lib/*/samba/ldb/mdb.so'

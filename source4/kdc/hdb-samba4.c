@@ -292,6 +292,47 @@ static krb5_error_code hdb_samba4_fetch_kvno(krb5_context context, HDB *db,
 	return code;
 }
 
+static krb5_error_code hdb_samba4_kpasswd_fetch_kvno(krb5_context context, HDB *db,
+						     krb5_const_principal _principal,
+						     unsigned flags,
+						     krb5_kvno _kvno,
+						     hdb_entry *entry)
+{
+	struct samba_kdc_db_context *kdc_db_ctx = NULL;
+	krb5_error_code ret;
+	krb5_principal kpasswd_principal = NULL;
+
+	kdc_db_ctx = talloc_get_type_abort(db->hdb_db,
+					   struct samba_kdc_db_context);
+
+	ret = smb_krb5_make_principal(context, &kpasswd_principal,
+				      lpcfg_realm(kdc_db_ctx->lp_ctx),
+				      "kadmin", "changepw",
+				      NULL);
+	if (ret) {
+		return ret;
+	}
+	smb_krb5_principal_set_type(context, kpasswd_principal, KRB5_NT_SRV_INST);
+
+	/*
+	 * For the kpasswd service, always ensure we get the latest kvno. This
+	 * also means we (correctly) refuse RODC-issued tickets.
+	 */
+	flags &= ~HDB_F_KVNO_SPECIFIED;
+
+	/* Don't bother looking up a client or krbtgt. */
+	flags &= ~(SDB_F_GET_CLIENT|SDB_F_GET_KRBTGT);
+
+	ret = hdb_samba4_fetch_kvno(context, db,
+				    kpasswd_principal,
+				    flags,
+				    0,
+				    entry);
+
+	krb5_free_principal(context, kpasswd_principal);
+	return ret;
+}
+
 static krb5_error_code hdb_samba4_firstkey(krb5_context context, HDB *db, unsigned flags,
 					hdb_entry *entry)
 {
@@ -348,6 +389,14 @@ static krb5_error_code hdb_samba4_nextkey(krb5_context context, HDB *db, unsigne
 	ret = sdb_entry_ex_to_hdb_entry_ex(context, &sdb_entry_ex, entry);
 	sdb_free_entry(&sdb_entry_ex);
 	return ret;
+}
+
+static krb5_error_code hdb_samba4_nextkey_panic(krb5_context context, HDB *db,
+						unsigned flags,
+						hdb_entry *entry)
+{
+	DBG_ERR("Attempt to iterate kpasswd keytab => PANIC\n");
+	smb_panic("hdb_samba4_nextkey_panic: Attempt to iterate kpasswd keytab");
 }
 
 static krb5_error_code hdb_samba4_destroy(krb5_context context, HDB *db)
@@ -551,26 +600,6 @@ static krb5_error_code hdb_samba4_audit(krb5_context context,
 	}
 
 	switch (hdb_auth_status) {
-	case KDC_AUTH_EVENT_CLIENT_AUTHORIZED:
-	{
-		TALLOC_CTX *frame = talloc_stackframe();
-		struct samba_kdc_entry *p = talloc_get_type(entry->context,
-							    struct samba_kdc_entry);
-		struct netr_SendToSamBase *send_to_sam = NULL;
-
-		/*
-		 * TODO: We could log the AS-REQ authorization success here as
-		 * well.  However before we do that, we need to pass
-		 * in the PAC here or re-calculate it.
-		 */
-		authsam_logon_success_accounting(kdc_db_ctx->samdb, p->msg,
-						 domain_dn, true, &send_to_sam);
-		if (kdc_db_ctx->rodc && send_to_sam != NULL) {
-			reset_bad_password_netlogon(frame, kdc_db_ctx, send_to_sam);
-		}
-		talloc_free(frame);
-	}
-	FALL_THROUGH;
 	default:
 	{
 		TALLOC_CTX *frame = talloc_stackframe();
@@ -612,8 +641,28 @@ static krb5_error_code hdb_samba4_audit(krb5_context context,
 		ui.auth_description = auth_description;
 
 		if (hdb_auth_status == KDC_AUTH_EVENT_CLIENT_AUTHORIZED) {
+			struct netr_SendToSamBase *send_to_sam = NULL;
+
+			/*
+			 * TODO: We could log the AS-REQ authorization success here as
+			 * well.  However before we do that, we need to pass
+			 * in the PAC here or re-calculate it.
+			 */
+			status = authsam_logon_success_accounting(kdc_db_ctx->samdb, p->msg,
+								  domain_dn, true, frame, &send_to_sam);
+			if (NT_STATUS_EQUAL(status, NT_STATUS_ACCOUNT_LOCKED_OUT)) {
+				final_ret = KRB5KDC_ERR_CLIENT_REVOKED;
+				r->error_code = final_ret;
+				rwdc_fallback = kdc_db_ctx->rodc;
+			} else if (!NT_STATUS_IS_OK(status)) {
+				final_ret = KRB5KRB_ERR_GENERIC;
+				r->error_code = final_ret;
+				rwdc_fallback = kdc_db_ctx->rodc;
+			} else if (kdc_db_ctx->rodc && send_to_sam != NULL) {
+				reset_bad_password_netlogon(frame, kdc_db_ctx, send_to_sam);
+			}
+
 			/* This is the final sucess */
-			status = NT_STATUS_OK;
 		} else if (hdb_auth_status == KDC_AUTH_EVENT_VALIDATED_LONG_TERM_KEY) {
 			/*
 			 * This was only a pre-authentication success,
@@ -653,8 +702,13 @@ static krb5_error_code hdb_samba4_audit(krb5_context context,
 		} else if (hdb_auth_status == KDC_AUTH_EVENT_CLIENT_TIME_SKEW) {
 			status = NT_STATUS_TIME_DIFFERENCE_AT_DC;
 		} else if (hdb_auth_status == KDC_AUTH_EVENT_WRONG_LONG_TERM_KEY) {
-			authsam_update_bad_pwd_count(kdc_db_ctx->samdb, p->msg, domain_dn);
-			status = NT_STATUS_WRONG_PASSWORD;
+			status = authsam_update_bad_pwd_count(kdc_db_ctx->samdb, p->msg, domain_dn);
+			if (NT_STATUS_EQUAL(status, NT_STATUS_ACCOUNT_LOCKED_OUT)) {
+				final_ret = KRB5KDC_ERR_CLIENT_REVOKED;
+				r->error_code = final_ret;
+			} else {
+				status = NT_STATUS_WRONG_PASSWORD;
+			}
 			rwdc_fallback = kdc_db_ctx->rodc;
 		} else if (hdb_auth_status == KDC_AUTH_EVENT_CLIENT_LOCKED_OUT) {
 			status = NT_STATUS_ACCOUNT_LOCKED_OUT;
@@ -809,6 +863,23 @@ NTSTATUS hdb_samba4_create_kdc(struct samba_kdc_base_context *base_ctx,
 	(*db)->hdb_check_constrained_delegation = hdb_samba4_check_constrained_delegation;
 	(*db)->hdb_check_pkinit_ms_upn_match = hdb_samba4_check_pkinit_ms_upn_match;
 	(*db)->hdb_check_client_matches_target_service = hdb_samba4_check_client_matches_target_service;
+
+	return NT_STATUS_OK;
+}
+
+NTSTATUS hdb_samba4_kpasswd_create_kdc(struct samba_kdc_base_context *base_ctx,
+				       krb5_context context, struct HDB **db)
+{
+	NTSTATUS nt_status;
+
+	nt_status = hdb_samba4_create_kdc(base_ctx, context, db);
+	if (!NT_STATUS_IS_OK(nt_status)) {
+		return nt_status;
+	}
+
+	(*db)->hdb_fetch_kvno = hdb_samba4_kpasswd_fetch_kvno;
+	(*db)->hdb_firstkey = hdb_samba4_nextkey_panic;
+	(*db)->hdb_nextkey = hdb_samba4_nextkey_panic;
 
 	return NT_STATUS_OK;
 }

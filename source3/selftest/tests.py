@@ -271,13 +271,39 @@ plantestsuite("samba3.smbtorture_s3.plain.%s" % "SMB2-DEL-ON-CLOSE-NONEMPTY",
                 "",
                 "-l $LOCAL_PATH"])
 
+#
+# SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-YES needs to run against a special fileserver share delete_yes_unwrite
+#
+plantestsuite("samba3.smbtorture_s3.plain.%s" % "SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-YES",
+                "fileserver",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_s3.sh"),
+                'SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-YES',
+                '//$SERVER_IP/delete_yes_unwrite',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "",
+                "-l $LOCAL_PATH"])
 
+#
+# SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-NO needs to run against a special fileserver share delete_no_unwrite
+#
+plantestsuite("samba3.smbtorture_s3.plain.%s" % "SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-NO",
+                "fileserver",
+                [os.path.join(samba3srcdir,
+                              "script/tests/test_smbtorture_s3.sh"),
+                'SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-NO',
+                '//$SERVER_IP/delete_no_unwrite',
+                '$USERNAME',
+                '$PASSWORD',
+                smbtorture3,
+                "",
+                "-l $LOCAL_PATH"])
 
 shares = [
     "vfs_aio_pthread_async_dosmode_default1",
-    "vfs_aio_pthread_async_dosmode_default2",
-    "vfs_aio_pthread_async_dosmode_force_sync1",
-    "vfs_aio_pthread_async_dosmode_force_sync2"
+    "vfs_aio_pthread_async_dosmode_default2"
 ]
 for s in shares:
     plantestsuite("samba3.smbtorture_s3.%s(simpleserver).SMB2-BASIC" % s, "simpleserver", [os.path.join(samba3srcdir, "script/tests/test_smbtorture_s3.sh"), 'SMB2-BASIC', '//$SERVER_IP/' + s, '$USERNAME', '$PASSWORD', smbtorture3, "", "-l $LOCAL_PATH"])
@@ -374,6 +400,8 @@ plantestsuite("samba3.blackbox.smbclient_basic.SMB2_02", "nt4_dc_schannel", [os.
 plantestsuite("samba3.blackbox.smbclient_basic.SMB2_10", "nt4_dc_schannel", [os.path.join(samba3srcdir, "script/tests/test_smbclient_basic.sh"), '$SERVER', '$SERVER_IP', '$DC_USERNAME', '$DC_PASSWORD', smbclient3, configuration, "-mSMB2_10"])
 plantestsuite("samba3.blackbox.smbclient_basic.SMB3_02", "nt4_dc_schannel", [os.path.join(samba3srcdir, "script/tests/test_smbclient_basic.sh"), '$SERVER', '$SERVER_IP', '$DC_USERNAME', '$DC_PASSWORD', smbclient3, configuration, "-mSMB3_02"])
 plantestsuite("samba3.blackbox.smbclient_basic.SMB3_11", "nt4_dc_schannel", [os.path.join(samba3srcdir, "script/tests/test_smbclient_basic.sh"), '$SERVER', '$SERVER_IP', '$DC_USERNAME', '$DC_PASSWORD', smbclient3, configuration, "-mSMB3_11"])
+
+plantestsuite("samba3.blackbox.smbclient_usernamemap", "ad_member_idmap_nss:local", [os.path.join(samba3srcdir, "script/tests/test_usernamemap.sh"), '$SERVER', smbclient3])
 
 plantestsuite("samba3.blackbox.smbclient_basic", "ad_member", [os.path.join(samba3srcdir, "script/tests/test_smbclient_basic.sh"), '$SERVER', '$SERVER_IP', '$DC_USERNAME', '$DC_PASSWORD', smbclient3, configuration])
 for options in ["", "--option=clientntlmv2auth=no", "--option=clientusespnego=no", "--option=clientusespnego=no --option=clientntlmv2auth=no", "--option=clientntlmv2auth=no --option=clientlanmanauth=yes --max-protocol=LANMAN2", "--option=clientntlmv2auth=no --option=clientlanmanauth=yes --option=clientmaxprotocol=NT1"]:
@@ -534,6 +562,7 @@ for env in ["fileserver"]:
     plantestsuite("samba3.blackbox.large_acl.NT1", env + "_smb1_done", [os.path.join(samba3srcdir, "script/tests/test_large_acl.sh"), '$SERVER', '$USERNAME', '$PASSWORD', smbclient3, smbcacls, '-m', 'NT1'])
     plantestsuite("samba3.blackbox.large_acl.SMB3", env, [os.path.join(samba3srcdir, "script/tests/test_large_acl.sh"), '$SERVER', '$USERNAME', '$PASSWORD', smbclient3, smbcacls, '-m', 'SMB3'])
     plantestsuite("samba3.blackbox.give_owner", env, [os.path.join(samba3srcdir, "script/tests/test_give_owner.sh"), '$SERVER', '$SERVER_IP', '$USERNAME', '$PASSWORD', '$PREFIX', smbclient3, smbcacls, net, 'tmp'])
+    plantestsuite("samba3.blackbox.delete_stream", env, [os.path.join(samba3srcdir, "script/tests/test_delete_stream.sh"), '$SERVER', '$SERVER_IP', '$USERNAME', '$PASSWORD', '$PREFIX', smbclient3, smbcacls, net, 'acl_streams_xattr'])
     plantestsuite("samba3.blackbox.homes", env, [os.path.join(samba3srcdir, "script/tests/test_homes.sh"), '$SERVER', '$USERNAME', '$PASSWORD', '$LOCAL_PATH', '$PREFIX', smbclient3, configuration])
     plantestsuite("samba3.blackbox.force_group_change", env,
 		[os.path.join(samba3srcdir, "script/tests/test_force_group_change.sh"),
@@ -637,6 +666,10 @@ for env in ["fileserver"]:
     plantestsuite("samba3.blackbox.fifo", env,
                   [os.path.join(samba3srcdir, "script/tests/test_fifo.sh"),
                   '$SERVER', '$DOMAIN', 'gooduser', '$PASSWORD', '$PREFIX', env, smbclient3])
+    plantestsuite("samba3.blackbox.fruit.resource_stream", env,
+                  [os.path.join(samba3srcdir, "script/tests/test_fruit_resource_stream.sh"),
+                  '$SERVER', 'fruit_resource_stream', '$USERNAME', '$PASSWORD',
+                  '$LOCAL_PATH/fruit_resource_stream', smbclient3])
 
 for env in ["fileserver:local"]:
     plantestsuite("samba3.blackbox.net_usershare", env, [os.path.join(samba3srcdir, "script/tests/test_net_usershare.sh"), '$SERVER', '$SERVER_IP', '$USERNAME', '$PASSWORD', smbclient3])
@@ -850,7 +883,7 @@ for t in tests:
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD', 'over ncacn_np ')
         plansmbtorture4testsuite(t, "ad_dc", 'ncacn_ip_tcp:$SERVER_IP -U$USERNAME%$PASSWORD', 'over ncacn_ip_tcp ')
     elif t == "rpc.mdssvc":
-        plansmbtorture4testsuite(t, "fileserver", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD --option=torture:no_spotlight_localdir=$SELFTEST_PREFIX/fileserver/share')
+        plansmbtorture4testsuite(t, "fileserver", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
     elif t == "rpc.samr.passwords.validate":
         plansmbtorture4testsuite(t, "nt4_dc", 'ncacn_ip_tcp:$SERVER_IP[seal] -U$USERNAME%$PASSWORD', 'over ncacn_ip_tcp ')
         plansmbtorture4testsuite(t, "ad_dc", 'ncacn_ip_tcp:$SERVER_IP[seal] -U$USERNAME%$PASSWORD', 'over ncacn_ip_tcp ')
@@ -894,6 +927,8 @@ for t in tests:
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/fs_specific -U$USERNAME%$PASSWORD', 'fs_specific')
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -U$USERNAME%$PASSWORD')
+    elif t == "smb2.ioctl-on-stream":
+        plansmbtorture4testsuite(t, "fileserver", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
     elif t == "smb2.lock":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/aio -U$USERNAME%$PASSWORD', 'aio')
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
@@ -966,6 +1001,8 @@ for t in tests:
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/aio -U$USERNAME%$PASSWORD', 'aio')
         plansmbtorture4testsuite(t, "ad_dc", '//$SERVER/tmp -U$USERNAME%$PASSWORD')
+    elif t == "smb2.compound_async":
+        plansmbtorture4testsuite(t, "fileserver", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
     elif t == "rpc.samba3.netlogon" or t == "rpc.samba3.sessionkey":
         plansmbtorture4testsuite(t, "nt4_dc_smb1", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD --option=torture:wksname=samba3rpctest')
         plansmbtorture4testsuite(t, "ad_dc_smb1", '//$SERVER/tmp -U$USERNAME%$PASSWORD --option=torture:wksname=samba3rpctest')
@@ -985,6 +1022,17 @@ for t in tests:
         plansmbtorture4testsuite(t, "fileserver", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
     elif t == "smb2.acls_non_canonical":
         plansmbtorture4testsuite(t, "nt4_dc", '//$SERVER_IP/acls_non_canonical -U$USERNAME%$PASSWORD')
+    elif t == "smb2.async_dosmode":
+        plansmbtorture4testsuite("smb2.async_dosmode",
+                                 "simpleserver",
+                                 "//$SERVER_IP/async_dosmode_shadow_copy2 -U$USERNAME%$PASSWORD")
+    elif t == "smb2.rename":
+        plansmbtorture4testsuite(t, "fileserver", '//$SERVER_IP/tmp -U$USERNAME%$PASSWORD')
+    elif t == "smb2.twrp":
+        # This is being driven by samba3.blackbox.shadow_copy_torture
+        pass
+    elif t == "smb2.create_no_streams":
+        plansmbtorture4testsuite(t, "fileserver", '//$SERVER_IP/nfs4acl_simple_40 -U$USERNAME%$PASSWORD')
     elif t == "rpc.wkssvc":
         plansmbtorture4testsuite(t, "ad_member", '//$SERVER/tmp -U$DC_USERNAME%$DC_PASSWORD')
     elif t == "rpc.srvsvc":
@@ -1173,6 +1221,12 @@ plantestsuite("samba3.blackbox.netfileenum", "simpleserver:local",
                '$SERVER_IP',
                'tmp'])
 
+plantestsuite("samba3.blackbox.netshareenum_username", "fileserver",
+              [os.path.join(samba3srcdir,
+                            "script/tests/test_user_in_sharelist.sh"),
+               os.path.join(bindir(), "rpcclient"),
+               '$SERVER_IP'])
+
 plantestsuite("samba3.blackbox.net_tdb", "simpleserver:local",
               [os.path.join(samba3srcdir, "script/tests/test_net_tdb.sh"),
                smbclient3, '$SERVER', 'tmp', '$USERNAME', '$PASSWORD',
@@ -1255,6 +1309,11 @@ plantestsuite("samba3.blackbox.smbXsrv_client_dead_rec", "fileserver:local",
                configuration,
                '$SERVER_IP',
                "tmp"])
+
+plantestsuite("samba3.blackbox.registry_share", "clusteredmember",
+              [os.path.join(samba3srcdir,
+                            "script/tests/test_registry_share.sh"),
+               "$SERVER", '$DC_USERNAME', "$DC_PASSWORD"])
 
 env = 'fileserver'
 plantestsuite("samba3.blackbox.virus_scanner", "%s:local" % (env),

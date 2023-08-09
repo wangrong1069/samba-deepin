@@ -45,6 +45,9 @@
 #define SAMBA_KVNO_GET_KRBTGT(kvno) \
 	((uint16_t)(((uint32_t)kvno) >> 16))
 
+#define SAMBA_KVNO_GET_VALUE(kvno) \
+	((uint16_t)(((uint32_t)kvno) & 0xFFFF))
+
 #define SAMBA_KVNO_AND_KRBTGT(kvno, krbtgt) \
 	((krb5_kvno)((((uint32_t)kvno) & 0xFFFF) | \
 	 ((((uint32_t)krbtgt) << 16) & 0xFFFF0000)))
@@ -420,13 +423,15 @@ static krb5_error_code samba_kdc_message2entry_keys(krb5_context context,
 						    struct samba_kdc_db_context *kdc_db_ctx,
 						    TALLOC_CTX *mem_ctx,
 						    struct ldb_message *msg,
-						    uint32_t rid,
+						    bool is_krbtgt,
 						    bool is_rodc,
 						    uint32_t userAccountControl,
 						    enum samba_kdc_ent_type ent_type,
 						    struct sdb_entry_ex *entry_ex,
+						    const uint32_t supported_enctypes_in,
 						    uint32_t *supported_enctypes_out)
 {
+	struct sdb_entry *entry = &entry_ex->entry;
 	krb5_error_code ret = 0;
 	enum ndr_err_code ndr_err;
 	struct samr_Password *hash;
@@ -437,53 +442,23 @@ static krb5_error_code samba_kdc_message2entry_keys(krb5_context context,
 	struct package_PrimaryKerberosBlob _pkb;
 	struct package_PrimaryKerberosCtr3 *pkb3 = NULL;
 	struct package_PrimaryKerberosCtr4 *pkb4 = NULL;
+	int krbtgt_number = 0;
+	uint32_t current_kvno;
+	uint32_t returned_kvno = 0;
 	uint16_t i;
 	uint16_t allocated_keys = 0;
-	int rodc_krbtgt_number = 0;
-	int kvno = 0;
-	uint32_t supported_enctypes
-		= ldb_msg_find_attr_as_uint(msg,
-					    "msDS-SupportedEncryptionTypes",
-					    0);
+	uint32_t supported_enctypes = supported_enctypes_in;
+
 	*supported_enctypes_out = 0;
-
-	if (rid == DOMAIN_RID_KRBTGT || is_rodc) {
-		bool enable_fast;
-
-		/* KDCs (and KDCs on RODCs) use AES */
-		supported_enctypes |= ENC_HMAC_SHA1_96_AES128 | ENC_HMAC_SHA1_96_AES256;
-
-		enable_fast = lpcfg_kdc_enable_fast(kdc_db_ctx->lp_ctx);
-		if (enable_fast) {
-			supported_enctypes |= ENC_FAST_SUPPORTED;
-		}
-	} else if (userAccountControl & (UF_PARTIAL_SECRETS_ACCOUNT|UF_SERVER_TRUST_ACCOUNT)) {
-		/* DCs and RODCs comptuer accounts use AES */
-		supported_enctypes |= ENC_HMAC_SHA1_96_AES128 | ENC_HMAC_SHA1_96_AES256;
-	} else if (ent_type == SAMBA_KDC_ENT_TYPE_CLIENT ||
-		   (ent_type == SAMBA_KDC_ENT_TYPE_ANY)) {
-		/* for AS-REQ the client chooses the enc types it
-		 * supports, and this will vary between computers a
-		 * user logs in from.
-		 *
-		 * likewise for 'any' return as much as is supported,
-		 * to export into a keytab */
-		supported_enctypes = ENC_ALL_TYPES;
-	}
-
-	/* If UF_USE_DES_KEY_ONLY has been set, then don't allow use of the newer enc types */
-	if (userAccountControl & UF_USE_DES_KEY_ONLY) {
-		supported_enctypes = 0;
-	} else {
-		/* Otherwise, add in the default enc types */
-		supported_enctypes |= ENC_RC4_HMAC_MD5;
-	}
 
 	/* Is this the krbtgt or a RODC krbtgt */
 	if (is_rodc) {
-		rodc_krbtgt_number = ldb_msg_find_attr_as_int(msg, "msDS-SecondaryKrbTgtNumber", -1);
+		krbtgt_number = ldb_msg_find_attr_as_int(msg, "msDS-SecondaryKrbTgtNumber", -1);
 
-		if (rodc_krbtgt_number == -1) {
+		if (krbtgt_number == -1) {
+			return EINVAL;
+		}
+		if (krbtgt_number == 0) {
 			return EINVAL;
 		}
 	}
@@ -498,16 +473,25 @@ static krb5_error_code samba_kdc_message2entry_keys(krb5_context context,
 						kdc_db_ctx,
 						entry_ex);
 
-		*supported_enctypes_out = supported_enctypes;
+		*supported_enctypes_out = supported_enctypes & ENC_ALL_TYPES;
 
 		goto out;
 	}
 
-	kvno = ldb_msg_find_attr_as_int(msg, "msDS-KeyVersionNumber", 0);
-	if (is_rodc) {
-		kvno = SAMBA_KVNO_AND_KRBTGT(kvno, rodc_krbtgt_number);
+	current_kvno = ldb_msg_find_attr_as_int(msg, "msDS-KeyVersionNumber", 0);
+	if (is_krbtgt) {
+		/*
+		 * Even for the main krbtgt account
+		 * we have to strictly split the kvno into
+		 * two 16-bit parts and the upper 16-bit
+		 * need to be all zero, even if
+		 * the msDS-KeyVersionNumber has a value
+		 * larger than 65535.
+		 *
+		 * See https://bugzilla.samba.org/show_bug.cgi?id=14951
+		 */
+		current_kvno = SAMBA_KVNO_GET_VALUE(current_kvno);
 	}
-	entry_ex->entry.kvno = kvno;
 
 	/* Get keys from the db */
 
@@ -768,10 +752,22 @@ static krb5_error_code samba_kdc_message2entry_keys(krb5_context context,
 		}
 	}
 
-	/* Set FAST support bits */
-	*supported_enctypes_out |= supported_enctypes & (ENC_FAST_SUPPORTED |
-							 ENC_COMPOUND_IDENTITY_SUPPORTED |
-							 ENC_CLAIMS_SUPPORTED);
+	returned_kvno = current_kvno;
+
+	if (is_krbtgt) {
+		/*
+		 * Even for the main krbtgt account
+		 * we have to strictly split the kvno into
+		 * two 16-bit parts and the upper 16-bit
+		 * need to be all zero, even if
+		 * the msDS-KeyVersionNumber has a value
+		 * larger than 65535.
+		 *
+		 * See https://bugzilla.samba.org/show_bug.cgi?id=14951
+		 */
+		returned_kvno = SAMBA_KVNO_AND_KRBTGT(returned_kvno, krbtgt_number);
+	}
+	entry->kvno = returned_kvno;
 
 out:
 	if (ret != 0) {
@@ -798,15 +794,19 @@ static int principal_comp_strcmp_int(krb5_context context,
 				     bool do_strcasecmp)
 {
 	const char *p;
-	size_t len;
 
 #if defined(HAVE_KRB5_PRINCIPAL_GET_COMP_STRING)
 	p = krb5_principal_get_comp_string(context, principal, component);
 	if (p == NULL) {
 		return -1;
 	}
-	len = strlen(p);
+	if (do_strcasecmp) {
+		return strcasecmp(p, string);
+	} else {
+		return strcmp(p, string);
+	}
 #else
+	size_t len;
 	krb5_data *d;
 	if (component >= krb5_princ_size(context, principal)) {
 		return -1;
@@ -818,13 +818,26 @@ static int principal_comp_strcmp_int(krb5_context context,
 	}
 
 	p = d->data;
-	len = d->length;
-#endif
+
+	len = strlen(string);
+
+	/*
+	 * We explicitly return -1 or 1. Subtracting of the two lengths might
+	 * give the wrong result if the result overflows or loses data when
+	 * narrowed to int.
+	 */
+	if (d->length < len) {
+		return -1;
+	} else if (d->length > len) {
+		return 1;
+	}
+
 	if (do_strcasecmp) {
 		return strncasecmp(p, string, len);
 	} else {
-		return strncmp(p, string, len);
+		return memcmp(p, string, len);
 	}
+#endif
 }
 
 static int principal_comp_strcasecmp(krb5_context context,
@@ -843,6 +856,110 @@ static int principal_comp_strcmp(krb5_context context,
 {
 	return principal_comp_strcmp_int(context, principal,
 					 component, string, false);
+}
+
+static bool is_kadmin_changepw(krb5_context context,
+			       krb5_const_principal principal)
+{
+	return krb5_princ_size(context, principal) == 2 &&
+		(principal_comp_strcmp(context, principal, 0, "kadmin") == 0) &&
+		(principal_comp_strcmp(context, principal, 1, "changepw") == 0);
+}
+
+static krb5_error_code samba_kdc_get_entry_principal(
+		krb5_context context,
+		struct samba_kdc_db_context *kdc_db_ctx,
+		const char *samAccountName,
+		enum samba_kdc_ent_type ent_type,
+		unsigned flags,
+		bool is_kadmin_changepw,
+		krb5_const_principal in_princ,
+		krb5_principal *out_princ)
+{
+	struct loadparm_context *lp_ctx = kdc_db_ctx->lp_ctx;
+	krb5_error_code code = 0;
+	bool canon = flags & (SDB_F_CANON|SDB_F_FORCE_CANON);
+
+	/*
+	 * If we are set to canonicalize, we get back the fixed UPPER
+	 * case realm, and the real username (ie matching LDAP
+	 * samAccountName)
+	 *
+	 * Otherwise, if we are set to enterprise, we
+	 * get back the whole principal as-sent
+	 *
+	 * Finally, if we are not set to canonicalize, we get back the
+	 * fixed UPPER case realm, but the as-sent username
+	 */
+
+	/*
+	 * We need to ensure that the kadmin/changepw principal isn't able to
+	 * issue krbtgt tickets, even if canonicalization is turned on.
+	 */
+	if (!is_kadmin_changepw) {
+		if (ent_type == SAMBA_KDC_ENT_TYPE_KRBTGT && canon) {
+			/*
+			 * When requested to do so, ensure that the
+			 * both realm values in the principal are set
+			 * to the upper case, canonical realm
+			 */
+			code = smb_krb5_make_principal(context,
+						       out_princ,
+						       lpcfg_realm(lp_ctx),
+						       "krbtgt",
+						       lpcfg_realm(lp_ctx),
+						       NULL);
+			if (code != 0) {
+				return code;
+			}
+			smb_krb5_principal_set_type(context,
+						    *out_princ,
+						    KRB5_NT_SRV_INST);
+
+			return 0;
+		}
+
+		if ((canon && flags & (SDB_F_FORCE_CANON|SDB_F_FOR_AS_REQ)) ||
+		    (ent_type == SAMBA_KDC_ENT_TYPE_ANY && in_princ == NULL)) {
+			/*
+			 * SDB_F_CANON maps from the canonicalize flag in the
+			 * packet, and has a different meaning between AS-REQ
+			 * and TGS-REQ.  We only change the principal in the
+			 * AS-REQ case.
+			 *
+			 * The SDB_F_FORCE_CANON if for new MIT KDC code that
+			 * wants the canonical name in all lookups, and takes
+			 * care to canonicalize only when appropriate.
+			 */
+			code = smb_krb5_make_principal(context,
+						      out_princ,
+						      lpcfg_realm(lp_ctx),
+						      samAccountName,
+						      NULL);
+			return code;
+		}
+	}
+
+	/*
+	 * For a krbtgt entry, this appears to be required regardless of the
+	 * canonicalize flag from the client.
+	 */
+	code = krb5_copy_principal(context, in_princ, out_princ);
+	if (code != 0) {
+		return code;
+	}
+
+	/*
+	 * While we have copied the client principal, tests show that Win2k3
+	 * returns the 'corrected' realm, not the client-specified realm.  This
+	 * code attempts to replace the client principal's realm with the one
+	 * we determine from our records
+	 */
+	code = smb_krb5_principal_set_realm(context,
+					    *out_princ,
+					    lpcfg_realm(lp_ctx));
+
+	return code;
 }
 
 /*
@@ -865,17 +982,48 @@ static krb5_error_code samba_kdc_message2entry(krb5_context context,
 	krb5_boolean is_computer = FALSE;
 
 	struct samba_kdc_entry *p;
-	uint32_t supported_enctypes = 0;
 	NTTIME acct_expiry;
 	NTSTATUS status;
 
 	uint32_t rid;
+	bool is_krbtgt = false;
 	bool is_rodc = false;
+	bool force_rc4 = lpcfg_kdc_force_enable_rc4_weak_session_keys(lp_ctx);
 	struct ldb_message_element *objectclasses;
 	struct ldb_val computer_val;
+	uint32_t config_default_supported_enctypes = lpcfg_kdc_default_domain_supported_enctypes(lp_ctx);
+	uint32_t default_supported_enctypes =
+		config_default_supported_enctypes != 0 ?
+		config_default_supported_enctypes :
+		ENC_RC4_HMAC_MD5 | ENC_HMAC_SHA1_96_AES256_SK;
+	uint32_t supported_enctypes
+		= ldb_msg_find_attr_as_uint(msg,
+					    "msDS-SupportedEncryptionTypes",
+					    default_supported_enctypes);
+	uint32_t pa_supported_enctypes;
+	uint32_t supported_session_etypes;
+	uint32_t available_enctypes = 0;
+	/*
+	 * also lagacy enctypes are announced,
+	 * but effectively restricted by kdc_enctypes
+	 */
+	uint32_t domain_enctypes = ENC_RC4_HMAC_MD5 | ENC_RSA_MD5 | ENC_CRC32;
+	uint32_t config_kdc_enctypes = lpcfg_kdc_supported_enctypes(lp_ctx);
+	uint32_t kdc_enctypes =
+		config_kdc_enctypes != 0 ?
+		config_kdc_enctypes :
+		ENC_ALL_TYPES;
 	const char *samAccountName = ldb_msg_find_attr_as_string(msg, "samAccountName", NULL);
 	computer_val.data = discard_const_p(uint8_t,"computer");
 	computer_val.length = strlen((const char *)computer_val.data);
+
+	if (supported_enctypes == 0) {
+		supported_enctypes = default_supported_enctypes;
+	}
+
+	if (dsdb_functional_level(kdc_db_ctx->samdb) >= DS_DOMAIN_FUNCTION_2008) {
+		domain_enctypes |= ENC_HMAC_SHA1_96_AES128 | ENC_HMAC_SHA1_96_AES256;
+	}
 
 	if (ldb_msg_find_element(msg, "msDS-SecondaryKrbTgtNumber")) {
 		is_rodc = true;
@@ -935,93 +1083,8 @@ static krb5_error_code samba_kdc_message2entry(krb5_context context,
 		userAccountControl |= msDS_User_Account_Control_Computed;
 	}
 
-	/*
-	 * If we are set to canonicalize, we get back the fixed UPPER
-	 * case realm, and the real username (ie matching LDAP
-	 * samAccountName)
-	 *
-	 * Otherwise, if we are set to enterprise, we
-	 * get back the whole principal as-sent
-	 *
-	 * Finally, if we are not set to canonicalize, we get back the
-	 * fixed UPPER case realm, but the as-sent username
-	 */
-
 	if (ent_type == SAMBA_KDC_ENT_TYPE_KRBTGT) {
 		p->is_krbtgt = true;
-
-		if (flags & (SDB_F_CANON)) {
-			/*
-			 * When requested to do so, ensure that the
-			 * both realm values in the principal are set
-			 * to the upper case, canonical realm
-			 */
-			ret = smb_krb5_make_principal(context, &entry_ex->entry.principal,
-						      lpcfg_realm(lp_ctx), "krbtgt",
-						      lpcfg_realm(lp_ctx), NULL);
-			if (ret) {
-				krb5_clear_error_message(context);
-				goto out;
-			}
-			smb_krb5_principal_set_type(context, entry_ex->entry.principal, KRB5_NT_SRV_INST);
-		} else {
-			ret = krb5_copy_principal(context, principal, &entry_ex->entry.principal);
-			if (ret) {
-				krb5_clear_error_message(context);
-				goto out;
-			}
-			/*
-			 * this appears to be required regardless of
-			 * the canonicalize flag from the client
-			 */
-			ret = smb_krb5_principal_set_realm(context, entry_ex->entry.principal, lpcfg_realm(lp_ctx));
-			if (ret) {
-				krb5_clear_error_message(context);
-				goto out;
-			}
-		}
-
-	} else if (ent_type == SAMBA_KDC_ENT_TYPE_ANY && principal == NULL) {
-		ret = smb_krb5_make_principal(context, &entry_ex->entry.principal, lpcfg_realm(lp_ctx), samAccountName, NULL);
-		if (ret) {
-			krb5_clear_error_message(context);
-			goto out;
-		}
-	} else if ((flags & SDB_F_FORCE_CANON) ||
-		   ((flags & SDB_F_CANON) && (flags & SDB_F_FOR_AS_REQ))) {
-		/*
-		 * SDB_F_CANON maps from the canonicalize flag in the
-		 * packet, and has a different meaning between AS-REQ
-		 * and TGS-REQ.  We only change the principal in the AS-REQ case
-		 *
-		 * The SDB_F_FORCE_CANON if for new MIT KDC code that wants
-		 * the canonical name in all lookups, and takes care to
-		 * canonicalize only when appropriate.
-		 */
-		ret = smb_krb5_make_principal(context, &entry_ex->entry.principal, lpcfg_realm(lp_ctx), samAccountName, NULL);
-		if (ret) {
-			krb5_clear_error_message(context);
-			goto out;
-		}
-	} else {
-		ret = krb5_copy_principal(context, principal, &entry_ex->entry.principal);
-		if (ret) {
-			krb5_clear_error_message(context);
-			goto out;
-		}
-
-		/* While we have copied the client principal, tests
-		 * show that Win2k3 returns the 'corrected' realm, not
-		 * the client-specified realm.  This code attempts to
-		 * replace the client principal's realm with the one
-		 * we determine from our records */
-
-		/* this has to be with malloc() */
-		ret = smb_krb5_principal_set_realm(context, entry_ex->entry.principal, lpcfg_realm(lp_ctx));
-		if (ret) {
-			krb5_clear_error_message(context);
-			goto out;
-		}
 	}
 
 	/* First try and figure out the flags based on the userAccountControl */
@@ -1147,11 +1210,9 @@ static krb5_error_code samba_kdc_message2entry(krb5_context context,
 		 * 'change password', as otherwise we could get into
 		 * trouble, and not enforce the password expirty.
 		 * Instead, only do it when request is for the kpasswd service */
-		if (ent_type == SAMBA_KDC_ENT_TYPE_SERVER
-		    && krb5_princ_size(context, principal) == 2
-		    && (principal_comp_strcmp(context, principal, 0, "kadmin") == 0)
-		    && (principal_comp_strcmp(context, principal, 1, "changepw") == 0)
-		    && lpcfg_is_my_domain_or_realm(lp_ctx, realm)) {
+		if (ent_type == SAMBA_KDC_ENT_TYPE_SERVER &&
+		    is_kadmin_changepw(context, principal) &&
+		    lpcfg_is_my_domain_or_realm(lp_ctx, realm)) {
 			entry_ex->entry.flags.change_pw = 1;
 		}
 
@@ -1216,6 +1277,19 @@ static krb5_error_code samba_kdc_message2entry(krb5_context context,
 		}
 	}
 
+	ret = samba_kdc_get_entry_principal(context,
+					    kdc_db_ctx,
+					    samAccountName,
+					    ent_type,
+					    flags,
+					    entry_ex->entry.flags.change_pw,
+					    principal,
+					    &entry_ex->entry.principal);
+	if (ret != 0) {
+		krb5_clear_error_message(context);
+		goto out;
+	}
+
 	entry_ex->entry.valid_start = NULL;
 
 	entry_ex->entry.max_life = malloc(sizeof(*entry_ex->entry.max_life));
@@ -1233,6 +1307,11 @@ static krb5_error_code samba_kdc_message2entry(krb5_context context,
 					        kdc_db_ctx->policy.usr_tkt_lifetime);
 	}
 
+	if (entry_ex->entry.flags.change_pw) {
+		/* Limit lifetime of kpasswd tickets to two minutes or less. */
+		*entry_ex->entry.max_life = MIN(*entry_ex->entry.max_life, CHANGEPW_LIFETIME);
+	}
+
 	entry_ex->entry.max_renew = malloc(sizeof(*entry_ex->entry.max_life));
 	if (entry_ex->entry.max_renew == NULL) {
 		ret = ENOMEM;
@@ -1241,17 +1320,176 @@ static krb5_error_code samba_kdc_message2entry(krb5_context context,
 
 	*entry_ex->entry.max_renew = kdc_db_ctx->policy.renewal_lifetime;
 
+	if (rid == DOMAIN_RID_KRBTGT || is_rodc) {
+		bool enable_fast;
+
+		is_krbtgt = true;
+
+		/*
+		 * KDCs (and KDCs on RODCs)
+		 * ignore msDS-SupportedEncryptionTypes completely
+		 * but support all supported enctypes by the domain.
+		 */
+		supported_enctypes = domain_enctypes;
+
+		enable_fast = lpcfg_kdc_enable_fast(kdc_db_ctx->lp_ctx);
+		if (enable_fast) {
+			supported_enctypes |= ENC_FAST_SUPPORTED;
+		}
+	} else if (userAccountControl & (UF_PARTIAL_SECRETS_ACCOUNT|UF_SERVER_TRUST_ACCOUNT)) {
+		/*
+		 * DCs and RODCs computer accounts take
+		 * msDS-SupportedEncryptionTypes unmodified, but
+		 * force all enctypes supported by the domain.
+		 */
+		supported_enctypes |= domain_enctypes;
+
+	} else if (ent_type == SAMBA_KDC_ENT_TYPE_CLIENT ||
+		   (ent_type == SAMBA_KDC_ENT_TYPE_ANY)) {
+		/*
+		 * for AS-REQ the client chooses the enc types it
+		 * supports, and this will vary between computers a
+		 * user logs in from. Therefore, so that we accept any
+		 * of the client's keys for decrypting padata,
+		 * supported_enctypes should not restrict etype usage.
+		 *
+		 * likewise for 'any' return as much as is supported,
+		 * to export into a keytab.
+		 */
+		supported_enctypes |= ENC_ALL_TYPES;
+	}
+
+	/* If UF_USE_DES_KEY_ONLY has been set, then don't allow use of the newer enc types */
+	if (userAccountControl & UF_USE_DES_KEY_ONLY) {
+		supported_enctypes &= ~ENC_ALL_TYPES;
+	}
+
+	pa_supported_enctypes = supported_enctypes;
+	supported_session_etypes = supported_enctypes;
+	if (supported_session_etypes & ENC_HMAC_SHA1_96_AES256_SK) {
+		supported_session_etypes |= ENC_HMAC_SHA1_96_AES256;
+		supported_session_etypes |= ENC_HMAC_SHA1_96_AES128;
+	}
+	if (force_rc4) {
+		supported_session_etypes |= ENC_RC4_HMAC_MD5;
+	}
+	/*
+	 * now that we remembered what to announce in pa_supported_enctypes
+	 * and normalized ENC_HMAC_SHA1_96_AES256_SK, we restrict the
+	 * rest to the enc types the local kdc supports.
+	 */
+	supported_enctypes &= kdc_enctypes;
+	supported_session_etypes &= kdc_enctypes;
+
 	/* Get keys from the db */
 	ret = samba_kdc_message2entry_keys(context, kdc_db_ctx, p, msg,
-					   rid, is_rodc, userAccountControl,
-					   ent_type, entry_ex, &supported_enctypes);
+					   is_krbtgt, is_rodc,
+					   userAccountControl,
+					   ent_type, entry_ex,
+					   supported_enctypes,
+					   &available_enctypes);
 	if (ret) {
 		/* Could be bogus data in the entry, or out of memory */
 		goto out;
 	}
 
+	/*
+	 * If we only have a nthash stored,
+	 * but a better session key would be
+	 * available, we fallback to fetching the
+	 * RC4_HMAC_MD5, which implicitly also
+	 * would allow an RC4_HMAC_MD5 session key.
+	 * But only if the kdc actually supports
+	 * RC4_HMAC_MD5.
+	 */
+	if (available_enctypes == 0 &&
+	    (supported_enctypes & ENC_RC4_HMAC_MD5) == 0 &&
+	    (supported_enctypes & ~ENC_RC4_HMAC_MD5) != 0 &&
+	    (kdc_enctypes & ENC_RC4_HMAC_MD5) != 0)
+	{
+		supported_enctypes = ENC_RC4_HMAC_MD5;
+		ret = samba_kdc_message2entry_keys(context, kdc_db_ctx, p, msg,
+						   is_krbtgt, is_rodc,
+						   userAccountControl,
+						   ent_type, entry_ex,
+						   supported_enctypes,
+						   &available_enctypes);
+		if (ret) {
+			/* Could be bogus data in the entry, or out of memory */
+			goto out;
+		}
+	}
+
+	/*
+	 * We need to support all session keys enctypes for
+	 * all keys we provide
+	 */
+	supported_session_etypes |= available_enctypes;
+
+	ret = sdb_entry_set_etypes(&entry_ex->entry);
+	if (ret) {
+		goto out;
+	}
+
+	if (entry_ex->entry.flags.server) {
+		bool add_aes256 =
+			supported_session_etypes & KERB_ENCTYPE_AES256_CTS_HMAC_SHA1_96;
+		bool add_aes128 =
+			supported_session_etypes & KERB_ENCTYPE_AES128_CTS_HMAC_SHA1_96;
+		bool add_rc4 =
+			supported_session_etypes & ENC_RC4_HMAC_MD5;
+		ret = sdb_entry_set_session_etypes(&entry_ex->entry,
+						   add_aes256,
+						   add_aes128,
+						   add_rc4);
+		if (ret) {
+			goto out;
+		}
+	}
+
+	if (entry_ex->entry.keys.len != 0) {
+		/*
+		 * FIXME: Currently limited to Heimdal so as not to
+		 * break MIT KDCs, for which no fix is available.
+		 */
+#ifdef SAMBA4_USES_HEIMDAL
+		if (is_krbtgt) {
+			/*
+			 * The krbtgt account, having no reason to
+			 * issue tickets encrypted in weaker keys,
+			 * shall only make available its strongest
+			 * key. All weaker keys are stripped out. This
+			 * makes it impossible for an RC4-encrypted
+			 * TGT to be accepted when AES KDC keys exist.
+			 *
+			 * This controls the ticket key and so the PAC
+			 * signature algorithms indirectly, preventing
+			 * a weak KDC checksum from being accepted
+			 * when we verify the signatures for an
+			 * S4U2Proxy evidence ticket. As such, this is
+			 * indispensable for addressing
+			 * CVE-2022-37966.
+			 *
+			 * Being strict here also provides protection
+			 * against possible future attacks on weak
+			 * keys.
+			 */
+			entry_ex->entry.keys.len = 1;
+			if (entry_ex->entry.etypes != NULL) {
+				entry_ex->entry.etypes->len = 1;
+			}
+		}
+#endif
+	} else {
+		/*
+		 * oh, no password.  Apparently (comment in
+		 * hdb-ldap.c) this violates the ASN.1, but this
+		 * allows an entry with no keys (yet).
+		 */
+	}
+
 	p->msg = talloc_steal(p, msg);
-	p->supported_enctypes = supported_enctypes;
+	p->supported_enctypes = pa_supported_enctypes;
 
 out:
 	if (ret != 0) {
@@ -1303,15 +1541,41 @@ static krb5_error_code samba_kdc_trust_message2entry(krb5_context context,
 	NTTIME an_hour_ago;
 	uint32_t *auth_kvno;
 	bool preferr_current = false;
+	bool force_rc4 = lpcfg_kdc_force_enable_rc4_weak_session_keys(lp_ctx);
 	uint32_t supported_enctypes = ENC_RC4_HMAC_MD5;
+	uint32_t pa_supported_enctypes;
+	uint32_t supported_session_etypes;
+	uint32_t config_kdc_enctypes = lpcfg_kdc_supported_enctypes(lp_ctx);
+	uint32_t kdc_enctypes =
+		config_kdc_enctypes != 0 ?
+		config_kdc_enctypes :
+		ENC_ALL_TYPES;
 	struct lsa_TrustDomainInfoInfoEx *tdo = NULL;
 	NTSTATUS status;
 
 	if (dsdb_functional_level(kdc_db_ctx->samdb) >= DS_DOMAIN_FUNCTION_2008) {
+		/* If not told otherwise, Windows now assumes that trusts support AES. */
 		supported_enctypes = ldb_msg_find_attr_as_uint(msg,
 					"msDS-SupportedEncryptionTypes",
-					supported_enctypes);
+					ENC_HMAC_SHA1_96_AES256);
 	}
+
+	pa_supported_enctypes = supported_enctypes;
+	supported_session_etypes = supported_enctypes;
+	if (supported_session_etypes & ENC_HMAC_SHA1_96_AES256_SK) {
+		supported_session_etypes |= ENC_HMAC_SHA1_96_AES256;
+		supported_session_etypes |= ENC_HMAC_SHA1_96_AES128;
+	}
+	if (force_rc4) {
+		supported_session_etypes |= ENC_RC4_HMAC_MD5;
+	}
+	/*
+	 * now that we remembered what to announce in pa_supported_enctypes
+	 * and normalized ENC_HMAC_SHA1_96_AES256_SK, we restrict the
+	 * rest to the enc types the local kdc supports.
+	 */
+	supported_enctypes &= kdc_enctypes;
+	supported_session_etypes &= kdc_enctypes;
 
 	status = dsdb_trust_parse_tdo_info(mem_ctx, msg, &tdo);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -1392,7 +1656,7 @@ static krb5_error_code samba_kdc_trust_message2entry(krb5_context context,
 	p->is_trust = true;
 	p->kdc_db_ctx = kdc_db_ctx;
 	p->realm_dn = realm_dn;
-	p->supported_enctypes = supported_enctypes;
+	p->supported_enctypes = pa_supported_enctypes;
 
 	talloc_set_destructor(p, samba_kdc_entry_destructor);
 
@@ -1672,6 +1936,27 @@ static krb5_error_code samba_kdc_trust_message2entry(krb5_context context,
 		krb5_clear_error_message(context);
 		ret = ENOMEM;
 		goto out;
+	}
+
+	ret = sdb_entry_set_etypes(&entry_ex->entry);
+	if (ret) {
+		goto out;
+	}
+
+	{
+		bool add_aes256 =
+			supported_session_etypes & KERB_ENCTYPE_AES256_CTS_HMAC_SHA1_96;
+		bool add_aes128 =
+			supported_session_etypes & KERB_ENCTYPE_AES128_CTS_HMAC_SHA1_96;
+		bool add_rc4 =
+			supported_session_etypes & ENC_RC4_HMAC_MD5;
+		ret = sdb_entry_set_session_etypes(&entry_ex->entry,
+						   add_aes256,
+						   add_aes128,
+						   add_rc4);
+		if (ret) {
+			goto out;
+		}
 	}
 
 	p->msg = talloc_steal(p, msg);

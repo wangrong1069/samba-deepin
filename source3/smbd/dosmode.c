@@ -375,7 +375,7 @@ NTSTATUS fget_ea_dos_attribute(struct files_struct *fsp,
 	/* Don't reset pattr to zero as we may already have filename-based attributes we
 	   need to preserve. */
 
-	sizeret = SMB_VFS_FGETXATTR(fsp->base_fsp ? fsp->base_fsp : fsp,
+	sizeret = SMB_VFS_FGETXATTR(fsp,
 				    SAMBA_XATTR_DOS_ATTRIB,
 				    attrstr,
 				    sizeof(attrstr));
@@ -386,7 +386,7 @@ NTSTATUS fget_ea_dos_attribute(struct files_struct *fsp,
 		   rights than the real user
 		*/
 		become_root();
-		sizeret = SMB_VFS_FGETXATTR(fsp->base_fsp ? fsp->base_fsp : fsp,
+		sizeret = SMB_VFS_FGETXATTR(fsp,
 					    SAMBA_XATTR_DOS_ATTRIB,
 					    attrstr,
 					    sizeof(attrstr));
@@ -521,8 +521,21 @@ NTSTATUS set_ea_dos_attribute(connection_struct *conn,
 			status = NT_STATUS_OK;
 		}
 		unbecome_root();
-		return status;
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
+		}
 	}
+
+	/*
+	 * We correctly stored the create time.
+	 * We *always* set XATTR_DOSINFO_CREATE_TIME,
+	 * so now it can no longer be considered
+	 * calculated.
+	 */
+	update_stat_ex_create_time(
+		&smb_fname->fsp->fsp_name->st,
+		smb_fname->st.st_ex_btime);
+
 	DEBUG(10,("set_ea_dos_attribute: set EA 0x%x on file %s\n",
 		(unsigned int)dosmode,
 		smb_fname_str_dbg(smb_fname)));
@@ -741,7 +754,7 @@ uint32_t fdos_mode(struct files_struct *fsp)
 	}
 
 	/* Get the DOS attributes via the VFS if we can */
-	status = SMB_VFS_FGET_DOS_ATTRIBUTES(fsp->conn, fsp, &result);
+	status = vfs_fget_dos_attributes(fsp, &result);
 	if (!NT_STATUS_IS_OK(status)) {
 		/*
 		 * Only fall back to using UNIX modes if we get NOT_IMPLEMENTED.
@@ -854,10 +867,13 @@ static void dos_mode_at_vfs_get_dosmode_done(struct tevent_req *subreq)
 		 * dos_mode_post() which also does the mapping of a last resort
 		 * from S_IFMT(st_mode).
 		 *
-		 * Only if we get NT_STATUS_NOT_IMPLEMENTED from a stacked VFS
-		 * module we must fallback to sync processing.
+		 * Only if we get NT_STATUS_NOT_IMPLEMENTED or
+		 * NT_STATUS_NOT_SUPPORTED from a stacked VFS module we must
+		 * fallback to sync processing.
 		 */
-		if (!NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
+		if (!NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED) &&
+		    !NT_STATUS_EQUAL(status, NT_STATUS_NOT_SUPPORTED))
+		{
 			/*
 			 * state->dosmode should still be 0, but reset
 			 * it to be sure.
@@ -924,6 +940,13 @@ int file_set_dosmode(connection_struct *conn,
 		return -1;
 	}
 
+	if ((S_ISDIR(smb_fname->st.st_ex_mode)) &&
+	    (dosmode & FILE_ATTRIBUTE_TEMPORARY))
+	{
+		errno = EINVAL;
+		return -1;
+	}
+
 	dosmode &= SAMBA_ATTRIBUTES_MASK;
 
 	DEBUG(10,("file_set_dosmode: setting dos mode 0x%x on file %s\n",
@@ -943,9 +966,8 @@ int file_set_dosmode(connection_struct *conn,
 
 	if (smb_fname->fsp != NULL) {
 		/* Store the DOS attributes in an EA by preference. */
-		status = SMB_VFS_FSET_DOS_ATTRIBUTES(conn,
-						     smb_fname->fsp,
-						     dosmode);
+		status = SMB_VFS_FSET_DOS_ATTRIBUTES(
+			conn, metadata_fsp(smb_fname->fsp), dosmode);
 	} else {
 		status = NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
@@ -1115,6 +1137,19 @@ NTSTATUS file_set_sparse(connection_struct *conn,
 		DEBUG(9, ("attempt to %s sparse flag over invalid conn\n",
 			  (sparse ? "set" : "clear")));
 		return NT_STATUS_INVALID_PARAMETER;
+	}
+
+	if (fsp_is_alternate_stream(fsp)) {
+		/*
+		 * MS-FSA 2.1.1.5 IsSparse
+		 *
+		 * This is a per stream attribute, but our backends don't
+		 * support it a consistent way, therefor just pretend
+		 * success and ignore the request.
+		 */
+		DBG_DEBUG("Ignoring request to set FILE_ATTRIBUTE_SPARSE on "
+			  "[%s]\n", fsp_str_dbg(fsp));
+		return NT_STATUS_OK;
 	}
 
 	DEBUG(10,("file_set_sparse: setting sparse bit %u on file %s\n",

@@ -297,7 +297,6 @@ static NTSTATUS cmd_open(struct vfs_state *vfs, TALLOC_CTX *mem_ctx, int argc, c
 	struct files_struct *fspcwd = NULL;
 	struct smb_filename *smb_fname = NULL;
 	NTSTATUS status;
-	int ret;
 	int fd;
 
 	mode = 00400;
@@ -414,15 +413,13 @@ static NTSTATUS cmd_open(struct vfs_state *vfs, TALLOC_CTX *mem_ctx, int argc, c
 	}
 	fsp_set_fd(fsp, fd);
 
-	status = NT_STATUS_OK;
-	ret = SMB_VFS_FSTAT(fsp, &smb_fname->st);
-	if (ret == -1) {
+	status = vfs_stat_fsp(fsp);
+	if (!NT_STATUS_IS_OK(status)) {
 		/* If we have an fd, this stat should succeed. */
 		DEBUG(0,("Error doing fstat on open file %s "
 			 "(%s)\n",
 			 smb_fname_str_dbg(smb_fname),
-			 strerror(errno) ));
-		status = map_nt_error_from_unix(errno);
+			 nt_errstr(status) ));
 	} else if (S_ISDIR(smb_fname->st.st_ex_mode)) {
 		errno = EISDIR;
 		status = NT_STATUS_FILE_IS_A_DIRECTORY;
@@ -1600,7 +1597,7 @@ static NTSTATUS cmd_fget_nt_acl(struct vfs_state *vfs, TALLOC_CTX *mem_ctx,
 		return NT_STATUS_OK;
 	}
 
-	status = SMB_VFS_FGET_NT_ACL(vfs->files[fd],
+	status = SMB_VFS_FGET_NT_ACL(metadata_fsp(vfs->files[fd]),
 				     SECINFO_OWNER | SECINFO_GROUP | SECINFO_DACL,
 				     talloc_tos(), &sd);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -1693,7 +1690,10 @@ static NTSTATUS cmd_fset_nt_acl(struct vfs_state *vfs, TALLOC_CTX *mem_ctx,
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
-	status = SMB_VFS_FSET_NT_ACL(vfs->files[fd], SECINFO_OWNER | SECINFO_GROUP | SECINFO_DACL, sd);
+	status = SMB_VFS_FSET_NT_ACL(
+			metadata_fsp(vfs->files[fd]),
+			SECINFO_OWNER | SECINFO_GROUP | SECINFO_DACL,
+			sd);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("fset_nt_acl returned (%s)\n", nt_errstr(status));
 		return status;
@@ -1705,7 +1705,6 @@ static NTSTATUS cmd_fset_nt_acl(struct vfs_state *vfs, TALLOC_CTX *mem_ctx,
 static NTSTATUS cmd_set_nt_acl(struct vfs_state *vfs, TALLOC_CTX *mem_ctx, int argc, const char **argv)
 {
 	int flags;
-	int ret;
 	mode_t mode;
 	files_struct *fsp;
 	struct files_struct *fspcwd = NULL;
@@ -1776,18 +1775,13 @@ static NTSTATUS cmd_set_nt_acl(struct vfs_state *vfs, TALLOC_CTX *mem_ctx, int a
 	}
 	fsp_set_fd(fsp, fd);
 
-	status = NT_STATUS_OK;
-	ret = SMB_VFS_FSTAT(fsp, &smb_fname->st);
-	if (ret == -1) {
+	status = vfs_stat_fsp(fsp);
+	if (!NT_STATUS_IS_OK(status)) {
 		/* If we have an fd, this stat should succeed. */
 		DEBUG(0,("Error doing fstat on open file %s "
 			 "(%s)\n",
 			 smb_fname_str_dbg(smb_fname),
-			 strerror(errno) ));
-		status = map_nt_error_from_unix(errno);
-	}
-	
-	if (!NT_STATUS_IS_OK(status)) {
+			 nt_errstr(status) ));
 		goto out;
 	}
 
@@ -1809,7 +1803,10 @@ static NTSTATUS cmd_set_nt_acl(struct vfs_state *vfs, TALLOC_CTX *mem_ctx, int a
 		goto out;
 	}
 
-	status = SMB_VFS_FSET_NT_ACL(fsp, SECINFO_OWNER | SECINFO_GROUP | SECINFO_DACL, sd);
+	status = SMB_VFS_FSET_NT_ACL(
+			metadata_fsp(fsp),
+			SECINFO_OWNER | SECINFO_GROUP | SECINFO_DACL,
+			sd);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("fset_nt_acl returned (%s)\n", nt_errstr(status));
 		goto out;

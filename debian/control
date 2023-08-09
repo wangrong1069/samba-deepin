@@ -1,14 +1,14 @@
 Source: samba
 Section: net
 Priority: optional
-Maintainer: Deepin Developer <deepin-dev@deepin.org>
-Uploaders: Deepin Packages Builder <packages@deepin.org>
+Maintainer: Debian Samba Maintainers <pkg-samba-maint@lists.alioth.debian.org>
+Uploaders: Steve Langasek <vorlon@debian.org>,
            Jelmer Vernooĳ <jelmer@debian.org>,
            Mathieu Parent <sathieu@debian.org>,
            Andrew Bartlett <abartlet+debian@catalyst.net.nz>,
            Michael Tokarev <mjt@tls.msk.ru>
 Homepage: https://www.samba.org
-Standards-Version: 4.5.1
+Standards-Version: 4.6.1
 Build-Depends:
 	debhelper-compat (= 13),
 	dh-exec,
@@ -37,7 +37,7 @@ Build-Depends-Arch:
 	libblkid-dev,
 	libbsd-dev,
 	libcap-dev [linux-any],
-	libcephfs-dev [amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32],
+	libcephfs-dev [amd64 arm64 armel armhf i386 mips64el mipsel ppc64el s390x],
 	libcmocka-dev (>= 1.1.3),
 	libcups2-dev,
 	libdbus-1-dev,
@@ -54,12 +54,12 @@ Build-Depends-Arch:
 	libparse-yapp-perl,
 	libpcap-dev [hurd-i386 kfreebsd-any],
 	libpopt-dev,
-	librados-dev [amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32],
+	librados-dev [amd64 arm64 armel armhf i386 mips64el mipsel ppc64el s390x],
 	libreadline-dev,
 	libsystemd-dev [linux-any],
 	libtasn1-6-dev (>= 3.8),
 	libtasn1-bin,
-	liburing-dev [linux-any],
+	liburing-dev [linux-any] <!pkg.samba.nouring>,
 	xfslibs-dev [linux-any],
 	zlib1g-dev (>= 1:1.2.3),
 # python:
@@ -74,11 +74,9 @@ Build-Depends-Arch:
 #	python3-cryptography <!nocheck>,
 #	python3-iso8601 <!nocheck>,
 #	python3-pyasn1 <!nocheck>,
-Build-Conflicts: libtracker-miner-2.0-dev,
-                 libtracker-sparql-2.0-dev
 Rules-Requires-Root: binary-targets
-#Vcs-Browser
-#Vcs-Git
+Vcs-Browser: https://salsa.debian.org/samba-team/samba
+Vcs-Git: https://salsa.debian.org/samba-team/samba.git
 
 Package: samba
 Architecture: any
@@ -132,7 +130,14 @@ Multi-Arch: same
 Architecture: any
 Section: libs
 Depends: ${misc:Depends}, ${shlibs:Depends}
-Breaks: sssd-ad-common (<< 2.3.0),
+Replaces:
+# libsamba-util.so &deps moved from libwbclient0 to samba-libs in 4.16.1+dfsg-7
+ libwbclient0 (<< 2:4.16.1+dfsg-7~),
+# libRPC-WORKER-samba4.so & libREG-FULL-samba4.so moved from samba to samba-libs in 4.16.2+dfsg-1
+ samba (<< 2:4.16.2+dfsg-1~),
+Breaks:
+ libwbclient0 (<< 2:4.16.1+dfsg-7~),
+ samba (<< 2:4.16.2+dfsg-1~),
 Description: Samba core libraries
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
@@ -167,6 +172,9 @@ Recommends: samba-dsdb-modules
 Suggests: heimdal-clients,
           python3-markdown,
           python3-dnspython
+# in 4.16.2+dfsg-1 we moved samba-dcerpcd from samba to samba-common-bin:
+Replaces: samba (<< 2:4.16.2+dfsg-1~)
+Breaks:   samba (<< 2:4.16.2+dfsg-1~)
 Description: Samba common files used by both the server and the client
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
@@ -235,6 +243,9 @@ Depends: libc6-dev,
          libwbclient-dev,
          samba-libs (= ${binary:Version}),
          ${misc:Depends}
+# libsamba-util.so moved from libwbclient0 to samba-libs in 4.16.1+dfsg-7
+Replaces: libwbclient-dev (<< 2:4.16.1+dfsg-7~)
+Breaks:   libwbclient-dev (<< 2:4.16.1+dfsg-7~)
 Section: devel
 Description: tools for extending Samba
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
@@ -339,10 +350,15 @@ Multi-Arch: allowed
 Depends: lsb-base (>= 3.0-6),
          samba-common (= ${source:Version}),
          samba-common-bin (=${binary:Version}),
+# wbinfo (linked with libwbclient) which should use the same protocol
+         libwbclient0 (=${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
 Enhances: libkrb5-26-heimdal
 Suggests: libnss-winbind, libpam-winbind
+# 4.16.6+dfsg-5 idmap_{script,rfc2307}.8 moved samba{,-libs} => winbind
+Breaks:   samba (<< 2:4.16.6+dfsg-5~), samba-libs (<< 2:4.16.6+dfsg-5~),
+Replaces: samba (<< 2:4.16.6+dfsg-5~), samba-libs (<< 2:4.16.6+dfsg-5~),
 Description: service to resolve user and group information from Windows NT servers
  Samba is an implementation of the SMB/CIFS protocol for Unix systems,
  providing support for cross-platform file sharing with Microsoft Windows, OS X,
@@ -364,7 +380,6 @@ Multi-Arch: same
 Pre-Depends: ${misc:Pre-Depends}
 Depends: libpam-runtime (>= 1.0.1-6),
          libpam0g (>= 1.1.3-2~),
-         samba-common (= ${source:Version}),
          winbind:any (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
@@ -383,8 +398,7 @@ Package: libnss-winbind
 Section: admin
 Architecture: any
 Multi-Arch: same
-Depends: samba-common (= ${source:Version}),
-         winbind:any (= ${binary:Version}),
+Depends: winbind:any (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
 Suggests: libpam-winbind
@@ -481,11 +495,7 @@ Architecture: any
 Section: libs
 Depends: ${misc:Depends},
          ${shlibs:Depends}
-Replaces: libldb0
 Breaks: ldb-tools (<<1.1.30~),
-        libldb0,
-        libldb1 (<< 2:2~),
-        python-samba (<< 2:4.7.0~),
         samba (<<2:4.7.0~),
         samba-dsdb-modules (<< 2:4.7.0~),
         samba-libs (<< 2:4.7.0~),

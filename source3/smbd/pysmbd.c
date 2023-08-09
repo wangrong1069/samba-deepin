@@ -176,7 +176,6 @@ static NTSTATUS init_files_struct(TALLOC_CTX *mem_ctx,
 {
 	struct smb_filename *smb_fname = NULL;
 	int fd;
-	int ret;
 	mode_t saved_umask;
 	struct files_struct *fsp;
 	struct files_struct *fspcwd = NULL;
@@ -230,13 +229,13 @@ static NTSTATUS init_files_struct(TALLOC_CTX *mem_ctx,
 	}
 	fsp_set_fd(fsp, fd);
 
-	ret = SMB_VFS_FSTAT(fsp, &smb_fname->st);
-	if (ret == -1) {
+	status = vfs_stat_fsp(fsp);
+	if (!NT_STATUS_IS_OK(status)) {
 		/* If we have an fd, this stat should succeed. */
 		DEBUG(0,("Error doing fstat on open file %s (%s)\n",
 			 smb_fname_str_dbg(smb_fname),
-			 strerror(errno) ));
-		return map_nt_error_from_unix(errno);
+			 nt_errstr(status) ));
+		return status;
 	}
 
 	fsp->file_id = vfs_file_id_from_sbuf(conn, &smb_fname->st);
@@ -288,7 +287,7 @@ static NTSTATUS set_nt_acl_conn(const char *fname,
 		return status;
 	}
 
-	status = SMB_VFS_FSET_NT_ACL(fsp, security_info_sent, sd);
+	status = SMB_VFS_FSET_NT_ACL(metadata_fsp(fsp), security_info_sent, sd);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(0,("set_nt_acl_no_snum: fset_nt_acl returned %s.\n", nt_errstr(status)));
 	}
@@ -331,7 +330,7 @@ static NTSTATUS get_nt_acl_conn(TALLOC_CTX *mem_ctx,
 		return status;
 	}
 
-	status = SMB_VFS_FGET_NT_ACL(smb_fname->fsp,
+	status = SMB_VFS_FGET_NT_ACL(metadata_fsp(smb_fname->fsp),
 				security_info_wanted,
 				mem_ctx,
 				sd);

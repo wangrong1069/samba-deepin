@@ -55,15 +55,17 @@ mask_services() {
 #	them to be readable only by root.
 umask 022
 
-# add the sambashare group
-if ! getent group sambashare > /dev/null 2>&1
+if [ configure = "$1" -a -z "$2" ] # only do this if not upgrading
 then
+    # add the sambashare group
+    if ! getent group sambashare > /dev/null 2>&1
+    then
 	addgroup --system sambashare
-fi
-
-if [ ! -e /var/lib/samba/usershares ]
-then
+    fi
+    if [ ! -e /var/lib/samba/usershares ]
+    then
 	install -d -m 1770 -g sambashare /var/lib/samba/usershares
+    fi
 fi
 
 # mimic source4/smbd/server.c and mask service before it fails
@@ -89,6 +91,38 @@ elif [ "$DISABLE_NETBIOS" = Yes ]; then
     mask_services "NetBIOS is disabled" nmbd.service
 fi
 
+# remove old spool directory (point it to /var/tmp if in use)
+dir=/var/spool/samba
+if [ configure = "$1" ] && dpkg --compare-versions "$2" lt-nl 2:4.17.4+dfsg-3~
+then
+    pat="^(\\s*path\\s*=\\s*)$dir"
+    if grep -q -E "$pat\\s*$" /etc/samba/smb.conf ; then
+	echo "W: fixing smb.conf, replacing $dir with /var/tmp" >&2
+	sed -ri "s|$pat\\s*$|\\1/var/tmp|" /etc/samba/smb.conf
+    fi
+    if [ -d $dir -a ! -L $dir ]; then
+	echo "W: removing old samba print spool $dir" >&2
+	rm -rf $dir
+    fi
+    # we can still have it in an include file (or have a subdir there?)
+    if testparm -s 2>/dev/null | grep -E "$pat\\b" >&2; then
+	echo "W: $dir is still referenced in smb.conf. Please update smb.conf" >&2
+	if [ ! -L $dir ]; then
+	    echo "W: redirecting $dir to /var/tmp" >&2
+	    ln -s ../tmp $dir
+	fi
+    fi
+fi
+
 #DEBHELPER#
+
+# remove msg.sock/ directory (moved to /run/samba/)
+dir=/var/lib/samba/private/msg.sock
+if [ -d $dir -a configure = "$1" ] &&
+   dpkg --compare-versions "$2" lt-nl 2:4.16.0+dfsg-7~
+then
+    rm -f $dir/*
+    rmdir $dir
+fi
 
 exit 0

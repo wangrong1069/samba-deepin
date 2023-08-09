@@ -245,7 +245,6 @@ NTSTATUS open_internal_dirfsp(connection_struct *conn,
 {
 	struct files_struct *fsp = NULL;
 	NTSTATUS status;
-	int ret;
 
 	status = create_internal_dirfsp(conn, smb_dname, &fsp);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -264,9 +263,10 @@ NTSTATUS open_internal_dirfsp(connection_struct *conn,
 		return status;
 	}
 
-	ret = SMB_VFS_FSTAT(fsp, &fsp->fsp_name->st);
-	if (ret != 0) {
-		return map_nt_error_from_unix(errno);
+	status = vfs_stat_fsp(fsp);
+	if (!NT_STATUS_IS_OK(status)) {
+		file_free(NULL, fsp);
+		return status;
 	}
 
 	if (!S_ISDIR(fsp->fsp_name->st.st_ex_mode)) {
@@ -671,7 +671,7 @@ NTSTATUS synthetic_pathref(TALLOC_CTX *mem_ctx,
 
 	status = openat_pathref_fsp(dirfsp, smb_fname);
 	if (!NT_STATUS_IS_OK(status)) {
-		DBG_ERR("opening [%s] failed\n",
+		DBG_NOTICE("opening [%s] failed\n",
 			smb_fname_str_dbg(smb_fname));
 		TALLOC_FREE(smb_fname);
 		return status;
@@ -752,7 +752,8 @@ NTSTATUS parent_pathref(TALLOC_CTX *mem_ctx,
 	return NT_STATUS_OK;
 }
 
-static bool close_file_in_loop(struct files_struct *fsp)
+static bool close_file_in_loop(struct files_struct *fsp,
+			       enum file_close_type close_type)
 {
 	if (fsp->base_fsp != NULL) {
 		/*
@@ -770,7 +771,7 @@ static bool close_file_in_loop(struct files_struct *fsp)
 		fsp->base_fsp->stream_fsp = NULL;
 		fsp->base_fsp = NULL;
 
-		close_file_free(NULL, &fsp, SHUTDOWN_CLOSE);
+		close_file_free(NULL, &fsp, close_type);
 		return NULL;
 	}
 
@@ -794,7 +795,7 @@ static bool close_file_in_loop(struct files_struct *fsp)
 		return false;
 	}
 
-	close_file_free(NULL, &fsp, SHUTDOWN_CLOSE);
+	close_file_free(NULL, &fsp, close_type);
 	return true;
 }
 
@@ -804,6 +805,7 @@ static bool close_file_in_loop(struct files_struct *fsp)
 
 struct file_close_conn_state {
 	struct connection_struct *conn;
+	enum file_close_type close_type;
 	bool fsp_left_behind;
 };
 
@@ -825,7 +827,7 @@ static struct files_struct *file_close_conn_fn(
 		fsp->op->global->durable = false;
 	}
 
-	did_close = close_file_in_loop(fsp);
+	did_close = close_file_in_loop(fsp, state->close_type);
 	if (!did_close) {
 		state->fsp_left_behind = true;
 	}
@@ -833,9 +835,10 @@ static struct files_struct *file_close_conn_fn(
 	return NULL;
 }
 
-void file_close_conn(connection_struct *conn)
+void file_close_conn(connection_struct *conn, enum file_close_type close_type)
 {
-	struct file_close_conn_state state = { .conn = conn };
+	struct file_close_conn_state state = { .conn = conn,
+					       .close_type = close_type };
 
 	files_forall(conn->sconn, file_close_conn_fn, &state);
 
@@ -921,7 +924,7 @@ static struct files_struct *file_close_user_fn(
 		return NULL;
 	}
 
-	did_close = close_file_in_loop(fsp);
+	did_close = close_file_in_loop(fsp, SHUTDOWN_CLOSE);
 	if (!did_close) {
 		state->fsp_left_behind = true;
 	}
@@ -1593,4 +1596,17 @@ void fsp_set_base_fsp(struct files_struct *fsp, struct files_struct *base_fsp)
 	if (fsp->base_fsp != NULL) {
 		fsp->base_fsp->stream_fsp = fsp;
 	}
+}
+
+bool fsp_is_alternate_stream(const struct files_struct *fsp)
+{
+	return (fsp->base_fsp != NULL);
+}
+
+struct files_struct *metadata_fsp(struct files_struct *fsp)
+{
+	if (fsp_is_alternate_stream(fsp)) {
+		return fsp->base_fsp;
+	}
+	return fsp;
 }

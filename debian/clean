@@ -1,0 +1,9 @@
+# remove artifacts left by the build system
+.lock-wscript
+compile_commands.json
+# Waf pycache files
+buildtools/wafsamba/__pycache__/
+source3/build/__pycache__/
+third_party/waf/waflib/__pycache__/
+third_party/waf/waflib/extras/__pycache__/
+third_party/waf/waflib/Tools/__pycache__/

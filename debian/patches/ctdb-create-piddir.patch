@@ -1,0 +1,29 @@
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Wed, 27 Apr 2022 16:03:49 +0300
+Subject: create ctdb pid directory
+
+ctdb does not create its pid directory automatically
+(which is /run/ctdb/). Create it in the systemd service
+file (using RuntimeDirectory directive) and in the sysv-init
+script.
+
+diff --git a/ctdb/config/ctdb.init b/ctdb/config/ctdb.init
+index 7fe8f0085ae..57fd0dda63d 100755
+--- a/ctdb/config/ctdb.init
++++ b/ctdb/config/ctdb.init
+@@ -80,4 +80,5 @@ start()
+ 	    ;;
+ 	debian)
++	    mkdir -p -m0755 ${pidfile%/*}
+ 	    eval start-stop-daemon --start --quiet --background --exec \
+ 		"$ctdbd_wrapper" "start"
+diff --git a/ctdb/config/ctdb.service b/ctdb/config/ctdb.service
+index dbe35281f56..1d03150a1ce 100644
+--- a/ctdb/config/ctdb.service
++++ b/ctdb/config/ctdb.service
+@@ -10,4 +10,5 @@ LimitCORE=infinity
+ LimitNOFILE=1048576
+ TasksMax=4096
++RuntimeDirectory=ctdb
+ PIDFile=/run/ctdb/ctdbd.pid
+ ExecStart=/usr/sbin/ctdbd_wrapper start

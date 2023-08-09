@@ -1,0 +1,6 @@
+# the source is in *.xml
+samba source: source-is-missing [ctdb/doc/*.html]
+# there are many generated files with long lines in source
+samba source: very-long-line-length-in-source-file *
+# d/control has Breaks: aligned with Replaces: values:
+samba source: debian-control-has-unusual-field-spacing Breaks [debian/control:*]

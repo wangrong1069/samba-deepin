@@ -528,6 +528,93 @@ EOF
     return 0
 }
 
+test_msdfs_del()
+{
+    tmpfile="$PREFIX/smbclient.in.$$"
+    filename_src="src.$$"
+    filename_src_path="$PREFIX/$filename_src"
+    rm -f "$filename_src_path"
+    touch "$filename_src_path"
+
+    cat > $tmpfile <<EOF
+lcd $PREFIX
+cd dfshop1
+cd dfshop2
+put $filename_src
+del $filename_src
+quit
+EOF
+
+    cmd='CLI_FORCE_INTERACTIVE=yes $SMBCLIENT "$@" -U$USERNAME%$PASSWORD //$SERVER/msdfs-share -I $SERVER_IP $ADDARGS < $tmpfile 2>&1'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    ret=$?
+    rm -f "$tmpfile"
+    rm -f "$filename_src_path"
+
+    if [ $ret != 0 ] ; then
+	echo "$out"
+	echo "failed deleteing $filename_src with error $ret"
+	return 1
+    fi
+
+    echo "$out" | grep "NT_STATUS" >/dev/null 2>&1
+
+    ret="$?"
+    if [ "$ret" -eq 0 ] ; then
+	echo "$out"
+	echo "del $filename_src NT_STATUS_ error"
+	return 1
+    fi
+    return 0
+}
+
+test_msdfs_deltree()
+{
+    tmpfile="$PREFIX/smbclient.in.$$"
+    dirname_src="foodir.$$"
+    filename_src="src.$$"
+    filename_src_path="$PREFIX/$filename_src"
+    dirname_src_path="$PREFIX/$dirname"
+    rm -f "$filename_src_path"
+    touch "$filename_src_path"
+
+    cat > $tmpfile <<EOF
+lcd $PREFIX
+cd dfshop1
+cd dfshop2
+mkdir $dirname_src
+cd $dirname_src
+put $filename_src
+cd ..
+deltree $dirname_src
+quit
+EOF
+
+    cmd='CLI_FORCE_INTERACTIVE=yes $SMBCLIENT "$@" -U$USERNAME%$PASSWORD //$SERVER/msdfs-share -I $SERVER_IP $ADDARGS < $tmpfile 2>&1'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    ret=$?
+    rm -f "$tmpfile"
+    rm -f "$filename_src_path"
+    rm -f "$dirname_src_path"
+
+    if [ $ret != 0 ] ; then
+	echo "$out"
+	echo "deltree failed deleting dir $dirname_src with error $ret"
+	return 1
+    fi
+
+    echo "$out" | grep "NT_STATUS" >/dev/null 2>&1
+
+    ret="$?"
+    if [ "$ret" -eq 0 ] ; then
+	echo "$out"
+	echo "deltree $dirname_src NT_STATUS_ error"
+	return 1
+    fi
+    return 0
+}
 
 # Archive bits are correctly set on file/dir creation and rename.
 test_rename_archive_bit()
@@ -1965,6 +2052,19 @@ EOF
        return 1
     fi
 
+    # User not in NIS group in "valid users" can't login to service
+    cmd='CLI_FORCE_INTERACTIVE=yes $SMBCLIENT "$@" -U$DC_USERNAME%$DC_PASSWORD //$SERVER/valid_users_nis_group $ADDARGS < $tmpfile 2>&1'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    echo "$out" | grep 'NT_STATUS_ACCESS_DENIED'
+    ret=$?
+
+    if [ $ret -ne 0 ] ; then
+       echo "$out"
+       echo "test_valid_users:valid_users_nis_group 'User not in NIS group in 'valid users' can't login to service' failed - $ret"
+       return 1
+    fi
+
     # Check user in UNIX, then in NIS group in "valid users" can login to service
     cmd='CLI_FORCE_INTERACTIVE=yes $SMBCLIENT "$@" -U$DC_USERNAME%$DC_PASSWORD //$SERVER/valid_users_unix_nis_group $ADDARGS < $tmpfile 2>&1'
     eval echo "$cmd"
@@ -2043,6 +2143,47 @@ EOF
     return 0
 }
 
+test_smbclient_minus_e_stderr()
+{
+    cmd='$SMBCLIENT "$@" -U$USERNAME%$PASSWORD //$SERVER/tmp -c ls'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    if [ $? != 0 ] ; then
+	echo "$out"
+	echo "command failed"
+	return 1
+    fi
+
+    # test smbclient 'ls' command output went to stdout
+    echo "$out" | grep "blocks available" >/dev/null 2>&1
+    if [ $? != 0 ] ; then
+	# didn't get output to stdout
+	echo "expected output was NOT output to stdout"
+	return 1
+    fi
+
+    # this time execute ls but redirect stdout alone to /dev/null
+    cmd='$SMBCLIENT -E "$@" -U$USERNAME%$PASSWORD //$SERVER/tmp -c "ls"  2>&1 > /dev/null'
+    eval echo "$cmd"
+    out=`eval $cmd`
+    if [ $? != 0 ] ; then
+	echo "$out"
+	echo "command failed"
+	return 1
+    fi
+
+    # test smbclient 'ls' command output went to stderr
+    echo "$out" | grep "blocks available" >/dev/null 2>&1
+    if [ $? != 0 ] ; then
+	# didn't get output to stderr
+	echo "expected output was NOT output to stderr"
+	return 1
+    fi
+
+    return 0
+
+}
+
 #
 #
 LOGDIR_PREFIX=test_smbclient_s3
@@ -2066,6 +2207,10 @@ testit "noninteractive smbclient does not prompt" \
 
 testit "noninteractive smbclient -l does not prompt" \
    test_noninteractive_no_prompt -l $LOGDIR || \
+    failed=`expr $failed + 1`
+
+testit "smbclient output goes to stderr when -E is passed" \
+    test_smbclient_minus_e_stderr || \
     failed=`expr $failed + 1`
 
 testit "interactive smbclient prompts on stdout" \
@@ -2110,6 +2255,14 @@ testit "Rename on MS-DFS share" \
 
 testit "Hardlink on MS-DFS share" \
     test_msdfs_hardlink || \
+    failed=`expr $failed + 1`
+
+testit "del on MS-DFS share" \
+    test_msdfs_del || \
+    failed=`expr $failed + 1`
+
+testit "deltree on MS-DFS share" \
+    test_msdfs_deltree || \
     failed=`expr $failed + 1`
 
 testit "Ensure archive bit is set correctly on file/dir rename" \

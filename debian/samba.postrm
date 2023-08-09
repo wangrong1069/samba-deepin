@@ -17,6 +17,10 @@ if [ "$1" = purge ]; then
 	if [ -f /etc/apparmor.d/samba/smbd-shares ]; then
 		rm /etc/apparmor.d/samba/smbd-shares
 	fi
+
+	# compat symlink for a dir used for print jobs in the past
+	rm -f /var/spool/samba
+
 fi
 
 #DEBHELPER#

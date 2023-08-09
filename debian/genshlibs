@@ -1,0 +1,111 @@
+#! /bin/sh
+#
+# generate shlibs/symbols files for samba packages
+#
+# samba ships a mix of:
+#   public libraries with stable ABI in /usr/lib
+#   public libraries in /usr/lib
+#   public python libraries in /usr/lib
+#   private libraries in /usr/lib/samba/
+#   plugins in /usr/lib/samba/*/
+#
+# For public libraries with stable ABI we generate symbols files.
+# These are listed in d/package.symbols files.
+# For other librries, we only need to generate shlibs files
+# with basic version information so that dpkg-shlibdeps will find them.
+# Here, for libs without .symbols file, we have 2 choices:
+# for public libraries we generate ($pkg >> $version) dependency in
+# shlibs file, but for private libs the relation is equality (=).
+# We do not process plugins, and we do not process python objects.
+#
+# dh_makeshlibs is too difficult to use here, we have much simpler approach.
+# We know exactly where our libs resides (dh_makeshlibs looks everywhere)
+# and we know filename patterns to recognize our shared libs.
+# dh_makeshlibs can not be used to generate symbols files for *some* libraries
+# (it is either all if .symbols is provided, or nothing if not).
+# It is easier to take strightforward approach than to fight a tool.
+
+set -e
+umask 022
+
+: ${DEB_VERSION:=$(dpkg-parsechangelog -S Version)}
+: ${DEB_HOST_MULTIARCH:=$(dpkg-architecture -qDEB_HOST_MULTIARCH)}
+
+# arguments in form pkg1=custom-version pkg2=version2...
+# to override ${DEB_VERSION} for the given packages
+custvers="$*"
+
+lib=usr/lib/${DEB_HOST_MULTIARCH}  # the only library directory
+smblib=$lib/samba                  # samba private libraries
+
+rc=0
+
+# process all packages but skip those without libs of interst
+for pkg in $(dh_listpackages); do
+  pd=debian/$pkg # package directory
+
+  # find library directories
+  libs=
+  for x in $lib $smblib ; do
+    [ -d $pd/$x ] && libs="$libs $x"
+  done
+  [ -n "$libs" ] || continue
+  # find libraries in library dirs (search for libfoo.so.NN names)
+  libs="$(cd $pd; find $libs -maxdepth 1 -regex '.*\.so.[0-9]+')"
+  [ -n "$libs" ] || continue
+
+  ver=${DEB_VERSION}
+  for x in $custvers; do
+    case "$x" in
+      ( $pkg=* ) ver=${x#*=}; break;;
+    esac
+  done
+  echo "${0##*/}: processing $pkg $ver"
+
+  # generate shlibs file: for public libs use >>$ver, for private =$ver
+  mkdir -p $pd/DEBIAN
+  for x in $libs; do
+    case "$x" in
+      ($smblib/*) rel="= $ver";;
+      (*)         rel=">> $ver~";;
+    esac
+    x=${x##*/}
+    echo "${x%.so.*} ${x#**.so.} $pkg ($rel)"
+  done | LC_ALL=C sort > $pd/DEBIAN/shlibs
+
+  # see if we have any public (eg, not in /usr/lib/samba/) libs
+  if echo "$libs" | fgrep -qv $smblib/; then
+    # generate ldconfig trigger activation
+    x=debian/.debhelper/generated/$pkg/triggers
+    y="activate-noawait ldconfig"
+    mkdir -p ${x%/*}
+    if [ ! -f $x ] || ! grep -q "^$y" $x; then
+      echo "# Triggers added by Samba:$0 ${DEB_VERSION}
+$y" >> $x
+    fi
+  fi
+
+  # packages without .symbols file need no further processing
+  [ -f debian/$pkg.symbols ] || continue
+
+  # process libraries listed in .symbols files with dpkg-gensymbols
+  # find libraries listed in .symbols, find full path of them in $libs
+  # and construct -e$filename argument list in $checklibs for dpkg-gensymbols
+  symlibs=$(sed -n -r 's/^([a-z][^ ]*) .*/\1/p' debian/$pkg.symbols)
+  checklibs=
+  for x in $symlibs; do
+    for y in $libs; do
+      case $y in (*/$x) checklibs="$checklibs -e$pd/$y"; break;; esac
+    done
+  done
+  # dpkg-gensymbols will detect listed but missing libs
+  # here we continue if dpkg-gensymbols failed to collect all errors
+  x=0; dpkg-gensymbols -c4 -p$pkg -P$pd -v$ver -l$smblib $checklibs || x=$?
+  if [ $x = 0 ]; then :
+  elif [ $x = 2 ]; then rc=1
+  else exit 1
+  fi
+
+done
+
+exit $rc

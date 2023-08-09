@@ -31,7 +31,7 @@ add_user() {
     echo "Creating a local and samba user called ${username}"
     useradd -m "${username}"
     echo "Setting samba password for the ${username} user"
-    echo "${password}\n${password}" | smbpasswd -s -a ${username}
+    printf '%s\n%s\n' "${password}" "${password}" | smbpasswd -s -a ${username}
 }
 
 # $1: share name
@@ -47,19 +47,22 @@ populate_share() {
     chown -R "${usergroup}:${usergroup}" "${sharepath}"
 }
 
-
-# $1: kernel version in the form major.minor.patch
-check_kernel_version() {
-    local k_ver=$1
-    local k_major=$(echo ${k_ver} | cut -d . -f 1)
-    local k_minor=$(echo ${k_ver} | cut -d . -f 2)
+ensure_uring_available() {
 
     # uring is supported starting with kernel 5.1.x
-    if [ ${k_major} -eq 5 ] && [ ${k_minor} -ge 1 ]; then
-       return 0
-    elif [ ${k_major} -ge 6 ]; then
-       return 0
-    else
-        return 1
+    local kver=$(uname -r)
+    case "$kver" in
+      ( [0-4].* | 5.0.* ) # everything before 5.1
+        echo "uring not available in kernel version ${kver%%-*}, skipping test"
+        exit 77
+        ;;
+    esac
+
+    # ubuntu does not build liburing on i386,
+    # so io_uring vfs object is unavailable too
+    : ${DEB_HOST_MULTIARCH:=$(dpkg-architecture -qDEB_BUILD_MULTIARCH)}
+    if [ ! -f /usr/lib/$DEB_HOST_MULTIARCH/samba/vfs/io_uring.so ]; then
+        echo "io_uring vfs object is not available on this architecture, skipping test"
+        exit 77
     fi
 }

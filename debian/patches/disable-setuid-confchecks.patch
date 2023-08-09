@@ -7,7 +7,7 @@ which apparently is running as root, - on the *second* build only
 the configure fails (after successfully built package the first
 time). The configure test tries to change gid and verifies it
 actually changed (not that the syscall exist), - and that fails.
-Since it is extremly uncommon to configure the build process as
+Since it is extremely uncommon to configure the build process as
 root, salsa-ci test environment details are quite deep down the line,
 and we know the syscall actually works, just disable the probe,
 pretending we are not root.

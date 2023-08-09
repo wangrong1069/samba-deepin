@@ -146,6 +146,7 @@
 ^samba4.smb2.create.*.acldir
 ^samba4.smb2.create.*.impersonation
 ^samba4.smb2.create.quota-fake-file\(ad_dc_ntvfs\) # not supported by the NTVFS
+^samba4.smb2.create.dosattr_tmp_dir\(ad_dc_ntvfs\)
 ^samba4.smb2.acls.*.generic
 ^samba4.smb2.acls.*.inheritflags
 ^samba4.smb2.acls.*.owner
@@ -176,6 +177,7 @@
 ^samba4.smb2.oplock.stream1 # samba 4 oplocks are a mess
 ^samba4.smb2.oplock.statopen1\(ad_dc_ntvfs\)$ # fails with ACCESS_DENIED on a SYNCHRONIZE_ACCESS open
 ^samba4.smb2.getinfo.complex # streams on directories does not work
+^samba4.smb2.getinfo.getinfo_access\(ad_dc_ntvfs\) # Access checks not implemented
 ^samba4.smb2.getinfo.qfs_buffercheck # S4 does not do the INFO_LENGTH_MISMATCH/BUFFER_OVERFLOW thingy
 ^samba4.smb2.getinfo.qfile_buffercheck # S4 does not do the INFO_LENGTH_MISMATCH/BUFFER_OVERFLOW thingy
 ^samba4.smb2.getinfo.qsec_buffercheck # S4 does not do the BUFFER_TOO_SMALL thingy
@@ -194,22 +196,22 @@
 ^samba3.smb2.durable-open.delete_on_close2
 ^samba3.smb2.durable-v2-open.app-instance
 ^samba3.smb2.durable-open.reopen1a-lease\(ad_dc\)$
+^samba3.smb2.durable-open.stat-open\(ad_dc\)$
 ^samba3.smb2.durable-v2-open.reopen1a-lease\(ad_dc\)$
 ^samba4.smb2.ioctl.req_resume_key\(ad_dc_ntvfs\) # not supported by s4 ntvfs server
 ^samba4.smb2.ioctl.req_two_resume_keys\(ad_dc_ntvfs\) # not supported by s4 ntvfs server
 ^samba4.smb2.ioctl.copy_chunk_\w*\(ad_dc_ntvfs\)	# not supported by s4 ntvfs server
 ^samba4.smb2.ioctl.copy-chunk streams\(ad_dc_ntvfs\) # not supported by s4 ntvfs server
 ^samba4.smb2.ioctl.bug14769\(ad_dc_ntvfs\) # not supported by s4 ntvfs server
+^samba4.smb2.ioctl-on-stream.ioctl-on-stream\(ad_dc_ntvfs\)
 ^samba3.smb2.dir.one
 ^samba3.smb2.dir.modify
 ^samba3.smb2.oplock.batch20
 ^samba3.smb2.oplock.stream1
 ^samba3.smb2.streams.rename
 ^samba3.smb2.streams.rename2
-^samba3.smb2.streams.attributes
 ^samba3.smb2.streams streams_xattr.rename\(nt4_dc\)
 ^samba3.smb2.streams streams_xattr.rename2\(nt4_dc\)
-^samba3.smb2.streams streams_xattr.attributes\(nt4_dc\)
 ^samba3.smb2.getinfo.complex
 ^samba3.smb2.getinfo.fsinfo # quotas don't work yet
 ^samba3.smb2.setinfo.setinfo

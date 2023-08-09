@@ -1,127 +1,123 @@
 #!/usr/bin/make -f
+SHELL = /bin/sh -e
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 DPKG_EXPORT_BUILDFLAGS = 1
+# Fast version of dpkg/architecture.mk defining all vars in one go
+ifeq (${DEB_HOST_MULTIARCH},)
+   $(foreach d, $(shell dpkg-architecture | sed 's/=/?=/'), $(eval export $d))
+endif
 include /usr/share/dpkg/buildflags.mk
 include /usr/share/dpkg/pkg-info.mk
 include /usr/share/dpkg/vendor.mk
-# faster version of dpkg/architecture.mk defining only vars we actually need
-$(foreach var,DEB_HOST_ARCH DEB_HOST_ARCH_OS DEB_HOST_MULTIARCH,\
-	$(eval export ${var} ?= $$(shell dpkg-architecture -q${var})))
+V = $(if $(filter terse, ${DEB_BUILD_OPTIONS}),,1)
+WAF = PYTHONHASHSEED=1 ./buildtools/bin/waf \
+	$(if $(filter parallel=%,${DEB_BUILD_OPTIONS}),\
+	  $(patsubst parallel=%,-j%,$(filter parallel=%,${DEB_BUILD_OPTIONS})))
+WAFv = ${WAF}$(if $V, -v)
 
-export PYTHON = python3
+DESTDIR = ${CURDIR}/debian/tmp
 
-# just the debian revision number from the package version
-DEB_REVISION = $(call dpkg_late_eval,DEB_REVISION,v='${DEB_VERSION}'; echo "$${v##*-}")
-
-LDB_EPOCH := 2:
+LDB_EPOCH = 2:
 LDB_VERSION = $(call dpkg_late_eval,LDB_VERSION,grep ^VERSION lib/ldb/wscript | cut -d\' -f2)
- # For 2.5.0 we uploaded wrongly versioned ldb to experimental (2.5.0+samba should be 2.5.0)
- # Temporarily add a suffix so it sorts after the wrong version. Remove for 2.5.1+.
-LDB_DEB_VERSION := ${LDB_EPOCH}${LDB_VERSION}$(if $(filter ${LDB_VERSION},2.5.0),+smb)-${DEB_REVISION}+samba${DEB_VERSION_UPSTREAM}
-LDB_DEPENDS := libldb2 (= ${LDB_DEB_VERSION})
+LDB_DEB_VERSION = ${LDB_EPOCH}${LDB_VERSION}+samba${DEB_VERSION_UPSTREAM_REVISION}
+LDB_DEPENDS = libldb2 (= ${LDB_DEB_VERSION})
+LDB_PACKAGES = libldb2 libldb-dev ldb-tools python3-ldb python3-ldb-dev
 
-V = 1
-WAF_CMD := PYTHONHASHSEED=1 ${PYTHON} ./buildtools/bin/waf
-WAF := ${WAF_CMD} $(if ${V},-v)
+# #1021371: we only need the single "version" symbol LDB_2.4.4 in the library
+# should be removed for bookworm+. Also LDB_2.4.4 in d/libldb2.symbols
+EXTRA_ABI_VERSION_FILES = lib/ldb/ABI/ldb-2.4.4.sigs
 
-ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
-    WAF += -j $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
-endif
-
-conf_args = \
-		--prefix=/usr \
-		--enable-fhs \
-		--sysconfdir=/etc \
-		--localstatedir=/var \
-		--libexecdir=/usr/libexec \
-		--with-privatedir=/var/lib/samba/private \
-		--with-smbpasswd-file=/etc/samba/smbpasswd \
-		--with-piddir=/run/samba \
-		--with-pammodulesdir=/lib/$(DEB_HOST_MULTIARCH)/security \
-		--with-pam \
-		--with-syslog \
-		--with-utmp \
-		--with-winbind \
-		--with-quota \
-		--with-shared-modules=idmap_rid,idmap_ad,idmap_adex,idmap_hash,idmap_ldap,idmap_tdb2,vfs_dfs_samba4,auth_samba4,vfs_nfs4acl_xattr \
-		--with-automount \
-		--with-ldap \
-		--with-ads \
-		--with-gpgme \
-		--libdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
-		--with-modulesdir=/usr/lib/$(DEB_HOST_MULTIARCH)/samba \
-		--datadir=/usr/share \
-		--with-lockdir=/run/samba \
-		--with-statedir=/var/lib/samba \
-		--with-cachedir=/var/cache/samba \
-		--enable-avahi \
-		--disable-rpath \
-		--disable-rpath-install \
-		--bundled-libraries=NONE,pytevent,ldb \
-		--with-cluster-support \
-		--with-socketpath=/run/ctdb/ctdbd.socket \
-		--with-logdir=/var/log/ctdb \
-		--enable-etcd-reclock \
-		--enable-spotlight
-
-
-WITH_CEPH = yes
+with_ceph = yes
 # Ceph is not available on all platforms
-ifeq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32, $(DEB_HOST_ARCH)))
-    WITH_CEPH =
-endif
-# Ubuntu i386 binary compatibility only effort: No Ceph
-ifeq ($(DEB_VENDOR) $(DEB_HOST_ARCH), Ubuntu i386)
-    WITH_CEPH =
+ifeq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el s390x, ${DEB_HOST_ARCH}))
+with_ceph =
 endif
 
-ifneq ($(WITH_CEPH),)
-	conf_args += \
-		--enable-ceph-reclock
-else
-	conf_args += \
-		--disable-cephfs
-endif
-
-
-WITH_GLUSTERFS = yes
+with_glusterfs = yes
 # GlusterFS is linux-only
-ifneq ($(DEB_HOST_ARCH_OS), linux)
-    WITH_GLUSTERFS =
-endif
-# GlusterFS is not in Ubuntu main
-ifeq ($(DEB_VENDOR), Ubuntu)
-    WITH_GLUSTERFS =
-endif
-
-ifeq ($(DEB_HOST_ARCH_OS), linux)
-	conf_args += \
-		--with-systemd \
-		--systemd-install-services \
-		--with-systemddir=/lib/systemd/system
-else
-	conf_args += \
-		--without-systemd
+ifneq (${DEB_HOST_ARCH_OS}, linux)
+with_glusterfs =
 endif
 
 # Ubuntu i386 binary compatibility only effort: Disable some i386 packages
-ifeq ($(DEB_VENDOR) $(DEB_HOST_ARCH), Ubuntu i386)
+ifeq (${DEB_VENDOR}-${DEB_HOST_ARCH}, Ubuntu-i386)
 export DH_OPTIONS += $(addprefix -N,\
 	ctdb libpam-winbind samba samba-testsuite samba-vfs-modules )
+with_ceph =
+with_glusterfs =
 endif
-# build_pakages will honour arch/indep and the above disabled list
-build_packages := $(shell dh_listpackages)
+
+# build_pakages will honour arch/indep and the above list in ${DH_OPTIONS}
+build_packages = $(shell dh_listpackages)
+
+conf_args = \
+	--prefix=/usr \
+	--enable-fhs \
+	--sysconfdir=/etc \
+	--localstatedir=/var \
+	--libexecdir=/usr/libexec \
+	--libdir=/usr/lib/${DEB_HOST_MULTIARCH} \
+	--datadir=/usr/share \
+	--with-modulesdir=/usr/lib/${DEB_HOST_MULTIARCH}/samba \
+	--with-pammodulesdir=/lib/${DEB_HOST_MULTIARCH}/security \
+	--with-privatedir=/var/lib/samba/private \
+	--with-smbpasswd-file=/etc/samba/smbpasswd \
+	--with-piddir=/run/samba \
+	--with-lockdir=/run/samba \
+	--with-sockets-dir=/run/samba \
+	--with-statedir=/var/lib/samba \
+	--with-cachedir=/var/cache/samba \
+	--with-pam \
+	--with-syslog \
+	--with-utmp \
+	--with-winbind \
+	--with-quota \
+	--with-automount \
+	--with-ldap \
+	--with-ads \
+	--with-gpgme \
+	--enable-avahi \
+	--enable-spotlight \
+	--with-profiling-data \
+	--disable-rpath --disable-rpath-install \
+	--with-shared-modules=idmap_rid,idmap_ad,idmap_adex,idmap_hash,idmap_ldap,idmap_tdb2,vfs_dfs_samba4,auth_samba4,vfs_nfs4acl_xattr \
+	--bundled-libraries=NONE,pytevent,ldb \
+	\
+	--with-cluster-support \
+	--enable-etcd-reclock \
+	--with-socketpath=/run/ctdb/ctdbd.socket \
+	--with-logdir=/var/log/ctdb \
+	$(if ${with_ceph},\
+	  --enable-cephfs --enable-ceph-reclock,\
+	  --disable-cephfs) \
+
+ifeq (${DEB_HOST_ARCH_OS}, linux)
+conf_args += \
+	--with-systemd \
+	--systemd-install-services \
+	--with-systemddir=/lib/systemd/system
+else
+conf_args += --without-systemd
+endif
 
 binary binary-arch binary-indep \
-clean install install-arch install-indep: %:
+install install-arch install-indep: %:
 	dh $*
 
 configure: bin/configured.stamp
 .PHONY: configure
 bin/configured.stamp:
-	${WAF_CMD} -j 1 configure ${conf_args} || \
+# branding
+	if [ ! -f VERSION.orig ]; then \
+	  mv VERSION VERSION.orig; \
+	  sed -r -e 's/^(SAMBA_VERSION_VENDOR_SUFFIX).*/\1=${DEB_VENDOR}/' \
+		VERSION.orig > VERSION; \
+	fi
+	${WAF} -j1 configure -C ${conf_args} || \
 	  { $(if ${V},echo "==== contents of config.log:"; cat bin/config.log;) false; }
+# #1021371: we only need the single "version" symbol LDB_2.4.4 in the library
+	touch ${EXTRA_ABI_VERSION_FILES}
 	touch $@
 
 build-arch: bin/built.stamp
@@ -138,8 +134,8 @@ bin/built.stamp: bin/configured.stamp
 # This will pefrorm unnecessary/extra install step (into d/tmp), which
 # we'll repeat during actual install stage, but this is definitely
 # better/faster than building whole thing for _not_ running from the build dir.
-	${WAF} --targets=compile_et,asn1_compile
-	${WAF} install --destdir="${CURDIR}/debian/tmp"
+	${WAFv} --targets=compile_et,asn1_compile
+	${WAFv} install --destdir="${DESTDIR}"
 	touch $@
 build-indep:
 build: build-arch build-indep
@@ -152,7 +148,7 @@ build: build-arch build-indep
 
 testbuild/copied.stamp:
 	rm -rf testbuild; mkdir testbuild
-	cp -a -l $$(ls -1 | egrep -v '^(bin|testbuild)$$') testbuild/
+	cp -a -l $$(ls -1 | egrep -v '^(bin|testbuild|debian)$$') testbuild/
 # cleanup some files just in case, do not interfere with production build
 	find testbuild -name __pycache__ -exec rm -rf {} +
 	rm -f testbuild/compile_commands.json
@@ -163,7 +159,7 @@ testbuild/configured.stamp: testbuild/copied.stamp
 # (libsocket-wrapper &Co), but let's just build the bundled ones. There's no
 # good reason to use externally-packaged wrappers, they're small to build and
 # we don't use them for production build, and extra versioned build-dep hurts.
-	cd testbuild && ${WAF_CMD} -j 1 configure --enable-selftest -C \
+	cd testbuild && ${WAF} -j1 configure --enable-selftest -C \
 		$$(echo '${conf_args}' | \
 		   sed 's|--bundled-libraries=NONE|&,nss_wrapper,pam_wrapper,resolv_wrapper,socket_wrapper,uid_wrapper|')
 # FIXME: some tests fail for now, handle them later
@@ -182,7 +178,7 @@ override_dh_auto_test: # $(if $(findstring nocheck, ${DEB_BUILD_OPTIONS}),, self
 
 override_dh_auto_install-arch:
 # the same "waf install" as in the build target
-	${WAF} install --destdir="${CURDIR}/debian/tmp"
+	${WAF} install --destdir="${DESTDIR}"
 	# get list of files in build log
 	find debian/tmp
 	# Included in python-tevent
@@ -197,7 +193,6 @@ override_dh_auto_install-arch:
 	install -p -m0755 debian/setoption.py -t debian/tmp/usr/share/samba/
 	install -p -m0755 debian/addshare.py -t debian/tmp/usr/share/samba/
 	install -p -m755 debian/update-apparmor-samba-profile -t debian/tmp/usr/share/samba/
-	install -p -m0755 debian/mksmbpasswd.awk debian/tmp/usr/sbin/mksmbpasswd
 	install -Dp -m0644 debian/samba.ufw.profile debian/tmp/etc/ufw/applications.d/samba
 	install -Dp -m0644 debian/source_samba.py -t debian/tmp/usr/share/apport/package-hooks/
 ifeq ($(DEB_HOST_ARCH_OS), linux)
@@ -217,12 +212,6 @@ ifeq ($(DEB_HOST_ARCH_OS), linux)
 	  debian/tmp/lib/systemd/system/smbd.service \
 	  debian/tmp/lib/systemd/system/winbind.service
 endif
-	# Harmless on systems without systemd-tmpfiles, and other consumers exist
-	# such as OpenRC's opentmpfiles
-	mkdir -p debian/tmp/usr/lib/tmpfiles.d
-	echo "d /run/samba 0755 root root -" > debian/tmp/usr/lib/tmpfiles.d/samba.conf
-	echo "d /run/ctdb 0755 root root -" > debian/tmp/usr/lib/tmpfiles.d/ctdb.conf
-
 	# install-and-rename docs for ctdb (also arch-specific)
 	mkdir -p debian/tmp/ctdb
 	install -p ctdb/config/events/README debian/tmp/ctdb/README.notification
@@ -234,18 +223,33 @@ ifeq ($(DEB_HOST_ARCH_OS), kfreebsd)
 	install -p debian/ctdb.README.kfreebsd debian/tmp/ctdb/README.kfreebsd
 endif
 
+# compatibility link. When ldb was built by its own it stored modules in
+# /usr/lib/<triple>/ldb/modules/ldb/. Now as part of samba it stores modules in
+# /usr/lib/<triple>/samba/ldb/.  Keep them together instead of d/*.{links,dirs}.
+# (sssd 2.6.3-3 moved their module to the new location;
+#  samba-dsdb-modules always had their modules in ..../samba/ldb/)
+# This compat symlink should go away after bookworm
+# (needed mostly for bullseye sssd)
+	dh_installdirs -plibldb2 /usr/lib/${DEB_HOST_MULTIARCH}/ldb/modules/ldb
+	dh_link -plibldb2 /usr/lib/${DEB_HOST_MULTIARCH}/ldb/modules/ldb \
+	                  /usr/lib/${DEB_HOST_MULTIARCH}/samba/ldb/compat
+
 override_dh_auto_install-indep:
 # only arch-all package is samba-common containing a few debian-specific files
 # Most of files needs are renamed during install so lets put them
 # directly into the right place without d/samba-common.install indirection
 	# Debian goodies
-	install -Dp -m0644 debian/smb.conf* -t debian/samba-common/usr/share/samba/
+	install -Dp -m0644 debian/smb.conf -t debian/samba-common/usr/share/samba/
+ifeq (${DEB_VENDOR}, Ubuntu)
+	patch debian/samba-common/usr/share/samba/smb.conf debian/smb.conf.ubuntu.diff
+endif
 	install -Dp -m755 debian/panic-action -t debian/samba-common/usr/share/samba/
 	install -Dp -m0644 debian/gdbcommands -t debian/samba-common/etc/samba/
 	install -Dp -m0755 debian/samba-common.dhcp debian/samba-common/etc/dhcp/dhclient-enter-hooks.d/samba
-	# don't actually need installpam here, it just installs one file
-	# we wrongly have pam file in samba-common instead of samba, should move it one day
-	dh_installpam -psamba-common --name=samba
+	# we wrongly have pam file in samba-common instead of samba
+	install -Dp -m0644 debian/samba.pam debian/samba-common/etc/pam.d/samba
+
+override_dh_installpam:
 
 # include a command only if the given package is being built
 ifpkg = $(if $(filter ${1},${build_packages}),${2})
@@ -268,37 +272,37 @@ override_dh_installsystemd:
 	$(call ifpkg, winbind, dh_installsystemd -pwinbind)
 	$(call ifpkg, ctdb, dh_installsystemd -pctdb --no-start --no-stop-on-upgrade)
 
-#override_dh_perl-arch:
-#	dh_perl -a
-#	# Fix Perl shbangs
-#	sed -i '1s@^#!/usr/bin/env perl@#!/usr/bin/perl@' \
-#	  debian/smbclient/usr/bin/findsmb
-
 execute_after_dh_fixperms-arch:
-	$(call ifpkg, samba, chmod 1777 debian/samba/var/spool/samba/)
 	$(call ifpkg, smbclient, chmod 0700 debian/smbclient/usr/libexec/samba/smbspool_krb5_wrapper)
 
 override_dh_makeshlibs:
 	# generate symbols file with correct cpython suffix in there
-	pyext=$$(python3-config --extension-suffix | tr _ -); \
-	pyUP=$$(echo $${pyext%.so} | tr a-z- A-Z_); \
-	{ echo "libpyldb-util$${pyext}.2 python3-ldb #MINVER#"; \
-	  echo " PYLDB_UTIL$${pyUP}_${LDB_VERSION}@PYLDB_UTIL$${pyUP}_${LDB_VERSION} ${LDB_EPOCH}${LDB_VERSION}"; \
-	  cat debian/python3-ldb.symbols.in; } > debian/python3-ldb.symbols
+	{ \
+	    suff=$$(python3-config --extension-suffix | tr _ -); \
+	    SUFF=$$(echo "$${suff%.so}" | tr a-z- A-Z_); \
+	    echo "libpyldb-util$${suff}.2 python3-ldb #MINVER#"; \
+	    echo "* Build-Depends-Package: python3-ldb-dev" ; \
+	    echo " PYLDB_UTIL$${SUFF}_${LDB_VERSION}@PYLDB_UTIL$${SUFF}_${LDB_VERSION} ${LDB_EPOCH}${LDB_VERSION}"; \
+	    cat debian/python3-ldb.symbols.in; \
+	} > debian/python3-ldb.symbols
 
 	# create symbols and shlibs files in separate wrapper script
 	# to deal with private libraries
-	debian/make_shlibs "${LDB_DEB_VERSION}|libldb2|ldb-tools|libldb-dev|python3-ldb|python3-ldb-dev"
+	debian/genshlibs $(addsuffix =${LDB_DEB_VERSION},${LDB_PACKAGES})
 
 	rm -f debian/python3-ldb.symbols
+
+# depcheck package, dep1|dep2... -- dependencies which should NOT be there
+depcheck = if egrep '^shlibs.Depends=.* ($(strip $2)) ' debian/$(strip $1).substvars; \
+	then echo 'E: $(strip $1) should not depend on $(strip $2)' >&2; exit 1; fi
 
 override_dh_shlibdeps:
 # for specific executables/modules, put dependencies in separate variables
 # to change Depends to Recommends for them in d/control
-	dh_shlibdeps -l${CURDIR}/debian/tmp/usr/lib/${DEB_HOST_MULTIARCH}/samba \
+	dh_shlibdeps -l/usr/lib/${DEB_HOST_MULTIARCH}/samba \
 	    -Xceph.so -Xglusterfs.so -Xsnapper.so -Xctdb_mutex_ceph_rados_helper
 ifneq (,$(filter ctdb, ${build_packages}))
-ifneq ($(WITH_CEPH),)
+ifneq (${with_ceph},)
 	dpkg-shlibdeps -Tdebian/ctdb.substvars -prados \
 	    debian/ctdb/usr/libexec/ctdb/ctdb_mutex_ceph_rados_helper
 endif
@@ -306,28 +310,24 @@ endif
 ifneq (,$(filter samba-vfs-modules,${build_packages}))
 	dpkg-shlibdeps -Tdebian/samba-vfs-modules.substvars -pvfsmods \
 	    debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so \
-	    $(if ${WITH_CEPH}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so) \
-	    $(if ${WITH_GLUSTERFS}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so)
+	    $(if ${with_ceph}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so) \
+	    $(if ${with_glusterfs}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so)
 endif
 # after shlibdeps run, check that we don't have wrong depdendencies
-	# libldb2 should not depend on samba-libs
-	# (also see debian/patches/use-bzero-instead-of-memset_s.diff)
-	if egrep "^shlibs.Depends=.* (samba-libs|samba) " debian/libldb2.substvars; \
-	then echo "E: libldb2 should not depend on samba libs" >&2; exit 1; fi
-	# python3-samba should not depend on samba
-	if egrep "^shlibs.Depends=.* (samba) " debian/python3-samba.substvars; \
-	then echo "E: python3-samba should not depend on samba" >&2; exit 1; fi
-	# libwbclient0 should not depend on samba-libs (probably)
-	if egrep "^shlibs.Depends=.* (samba-libs|samba) " debian/libwbclient0.substvars; \
-	then echo "E: libwbclient0 should not depend on samba libs" >&2; exit 1; fi
+	$(call depcheck, samba-libs, samba|winbind|smbclient|ctdb)
+	$(call depcheck, smbclient, samba|winbind|ctdb)
+	$(call depcheck, ctdb, samba|winbind|smbclient)
+	$(call depcheck, libldb2, samba|samba-libs|winbind|libwbclient0) # use-bzero-instead-of-memset_s.diff
+	$(call depcheck, python3-samba, samba|winbind|ctdb)
+	$(call depcheck, libwbclient0, samba|samba-libs|winbind|smbclient|ctdb)
+	$(call depcheck, libsmbclient, samba|winbind|smbclient|ctdb)
 
 override_dh_gencontrol:
-	dh_gencontrol -plibldb2 -pldb-tools -plibldb-dev -ppython3-ldb -ppython3-ldb-dev \
-	  -- -v${LDB_DEB_VERSION}
+	dh_gencontrol $(addprefix -p,${LDB_PACKAGES}) -- -v${LDB_DEB_VERSION}
 	dh_gencontrol --remaining-packages -- -Vldb:Depends="${LDB_DEPENDS}"
 
-override_dh_auto_clean:
-	rm -rf bin/ testbuild/
-	find -name __pycache__ -exec rm -rf {} +
-	rm -f .lock-wscript
-	rm -f compile_commands.json
+clean:
+	# see also debian/clean
+	dh_clean bin/ testbuild/
+	rm -f ${EXTRA_ABI_VERSION_FILES}
+	[ ! -f VERSION.orig ] || mv -f VERSION.orig VERSION

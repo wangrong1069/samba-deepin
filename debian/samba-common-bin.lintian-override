@@ -1,2 +1,2 @@
 # deliberate, a synonym for misspelled parameter
-samba-common-bin: typo-in-manual-page usr/share/man/man5/smb.conf.5.gz line * prefered preferred
+samba-common-bin: typo-in-manual-page prefered preferred */man/man5/smb.conf.5*

@@ -446,7 +446,10 @@ static int ino_path_map_destr_cb(struct sl_inode_path_map *entry)
  * entries by calling talloc_free() on the query slq handles.
  **/
 
-static bool inode_map_add(struct sl_query *slq, uint64_t ino, const char *path)
+static bool inode_map_add(struct sl_query *slq,
+			  uint64_t ino,
+			  const char *path,
+			  struct stat_ex *st)
 {
 	NTSTATUS status;
 	struct sl_inode_path_map *entry;
@@ -493,6 +496,7 @@ static bool inode_map_add(struct sl_query *slq, uint64_t ino, const char *path)
 
 	entry->ino = ino;
 	entry->mds_ctx = slq->mds_ctx;
+	entry->st = *st;
 	entry->path = talloc_strdup(entry, path);
 	if (entry->path == NULL) {
 		DEBUG(1, ("talloc failed\n"));
@@ -516,11 +520,14 @@ static bool inode_map_add(struct sl_query *slq, uint64_t ino, const char *path)
 bool mds_add_result(struct sl_query *slq, const char *path)
 {
 	struct smb_filename *smb_fname = NULL;
+	const char *relative = NULL;
+	char *fake_path = NULL;
 	struct stat_ex sb;
 	uint32_t attr;
 	uint64_t ino64;
 	int result;
 	NTSTATUS status;
+	bool sub;
 	bool ok;
 
 	/*
@@ -607,6 +614,17 @@ bool mds_add_result(struct sl_query *slq, const char *path)
 		}
 	}
 
+	sub = subdir_of(slq->mds_ctx->spath,
+			slq->mds_ctx->spath_len,
+			path,
+			&relative);
+	if (!sub) {
+		DBG_ERR("[%s] is not inside [%s]\n",
+			path, slq->mds_ctx->spath);
+		slq->state = SLQ_STATE_ERROR;
+		return false;
+	}
+
 	/*
 	 * Add inode number and filemeta to result set, this is what
 	 * we return as part of the result set of a query
@@ -619,18 +637,30 @@ bool mds_add_result(struct sl_query *slq, const char *path)
 		slq->state = SLQ_STATE_ERROR;
 		return false;
 	}
-	ok = add_filemeta(slq->mds_ctx,
-			  slq->reqinfo,
-			  slq->query_results->fm_array,
-			  path,
-			  &sb);
-	if (!ok) {
-		DBG_ERR("add_filemeta error\n");
+
+	fake_path = talloc_asprintf(slq,
+				    "/%s/%s",
+				    slq->mds_ctx->sharename,
+				    relative);
+	if (fake_path == NULL) {
 		slq->state = SLQ_STATE_ERROR;
 		return false;
 	}
 
-	ok = inode_map_add(slq, ino64, path);
+	ok = add_filemeta(slq->mds_ctx,
+			  slq->reqinfo,
+			  slq->query_results->fm_array,
+			  fake_path,
+			  &sb);
+	if (!ok) {
+		DBG_ERR("add_filemeta error\n");
+		TALLOC_FREE(fake_path);
+		slq->state = SLQ_STATE_ERROR;
+		return false;
+	}
+
+	ok = inode_map_add(slq, ino64, fake_path, &sb);
+	TALLOC_FREE(fake_path);
 	if (!ok) {
 		DEBUG(1, ("inode_map_add error\n"));
 		slq->state = SLQ_STATE_ERROR;
@@ -739,6 +769,10 @@ static bool slrpc_fetch_properties(struct mds_ctx *mds_ctx,
 	}
 
 	/* kMDSStoreMetaScopes array */
+	result = dalloc_stradd(dict, "kMDSStoreMetaScopes");
+	if (result != 0) {
+		return false;
+	}
 	array = dalloc_zero(dict, sl_array_t);
 	if (array == NULL) {
 		return NULL;
@@ -834,6 +868,32 @@ static void slq_close_timer(struct tevent_context *ev,
 }
 
 /**
+ * Translate a fake scope from the client like /sharename/dir
+ * to the real server-side path, replacing the "/sharename" part
+ * with the absolute server-side path of the share.
+ **/
+static bool mdssvc_real_scope(struct sl_query *slq, const char *fake_scope)
+{
+	size_t sname_len = strlen(slq->mds_ctx->sharename);
+	size_t fake_scope_len = strlen(fake_scope);
+
+	if (fake_scope_len < sname_len + 1) {
+		DBG_ERR("Short scope [%s] for share [%s]\n",
+			fake_scope, slq->mds_ctx->sharename);
+		return false;
+	}
+
+	slq->path_scope = talloc_asprintf(slq,
+					  "%s%s",
+					  slq->mds_ctx->spath,
+					  fake_scope + sname_len + 1);
+	if (slq->path_scope == NULL) {
+		return false;
+	}
+	return true;
+}
+
+/**
  * Begin a search query
  **/
 static bool slrpc_open_query(struct mds_ctx *mds_ctx,
@@ -885,7 +945,8 @@ static bool slrpc_open_query(struct mds_ctx *mds_ctx,
 
 	querystring = dalloc_value_for_key(query, "DALLOC_CTX", 0,
 					   "DALLOC_CTX", 1,
-					   "kMDQueryString");
+					   "kMDQueryString",
+					   "char *");
 	if (querystring == NULL) {
 		DEBUG(1, ("missing kMDQueryString\n"));
 		goto error;
@@ -925,24 +986,36 @@ static bool slrpc_open_query(struct mds_ctx *mds_ctx,
 	slq->ctx2 = *uint64p;
 
 	path_scope = dalloc_value_for_key(query, "DALLOC_CTX", 0,
-					  "DALLOC_CTX", 1, "kMDScopeArray");
+					  "DALLOC_CTX", 1,
+					  "kMDScopeArray",
+					  "sl_array_t");
 	if (path_scope == NULL) {
+		DBG_ERR("missing kMDScopeArray\n");
 		goto error;
 	}
 
 	scope = dalloc_get(path_scope, "char *", 0);
 	if (scope == NULL) {
+		scope = dalloc_get(path_scope,
+				   "DALLOC_CTX", 0,
+				   "char *", 0);
+	}
+	if (scope == NULL) {
+		DBG_ERR("Failed to parse kMDScopeArray\n");
 		goto error;
 	}
 
-	slq->path_scope = talloc_strdup(slq, scope);
-	if (slq->path_scope == NULL) {
+	ok = mdssvc_real_scope(slq, scope);
+	if (!ok) {
 		goto error;
 	}
 
 	reqinfo = dalloc_value_for_key(query, "DALLOC_CTX", 0,
-				       "DALLOC_CTX", 1, "kMDAttributeArray");
+				       "DALLOC_CTX", 1,
+				       "kMDAttributeArray",
+				       "sl_array_t");
 	if (reqinfo == NULL) {
+		DBG_ERR("missing kMDAttributeArray\n");
 		goto error;
 	}
 
@@ -950,7 +1023,9 @@ static bool slrpc_open_query(struct mds_ctx *mds_ctx,
 	DEBUG(10, ("requested attributes: %s", dalloc_dump(reqinfo, 0)));
 
 	cnids = dalloc_value_for_key(query, "DALLOC_CTX", 0,
-				     "DALLOC_CTX", 1, "kMDQueryItemArray");
+				     "DALLOC_CTX", 1,
+				     "kMDQueryItemArray",
+				     "sl_array_t");
 	if (cnids) {
 		ok = sort_cnids(slq, cnids->ca_cnids);
 		if (!ok) {
@@ -1338,29 +1413,7 @@ static bool slrpc_fetch_attributes(struct mds_ctx *mds_ctx,
 		elem = talloc_get_type_abort(p, struct sl_inode_path_map);
 		path = elem->path;
 
-		status = synthetic_pathref(talloc_tos(),
-					   mds_ctx->conn->cwd_fsp,
-					   path,
-					   NULL,
-					   NULL,
-					   0,
-					   0,
-					   &smb_fname);
-		if (!NT_STATUS_IS_OK(status)) {
-			/* This is not an error, the user may lack permissions */
-			DBG_DEBUG("synthetic_pathref [%s]: %s\n",
-				  smb_fname_str_dbg(smb_fname),
-				  nt_errstr(status));
-			return true;
-		}
-
-		result = SMB_VFS_FSTAT(smb_fname->fsp, &smb_fname->st);
-		if (result != 0) {
-			TALLOC_FREE(smb_fname);
-			return true;
-		}
-
-		sp = &smb_fname->st;
+		sp = &elem->st;
 	}
 
 	ok = add_filemeta(mds_ctx, reqinfo, fm_array, path, sp);
@@ -1585,13 +1638,14 @@ static int mds_ctx_destructor_cb(struct mds_ctx *mds_ctx)
  * This ends up being called for every tcon, because the client does a
  * RPC bind for every tcon, so this is acually a per tcon context.
  **/
-struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
-			     struct tevent_context *ev,
-			     struct messaging_context *msg_ctx,
-			     struct auth_session_info *session_info,
-			     int snum,
-			     const char *sharename,
-			     const char *path)
+NTSTATUS mds_init_ctx(TALLOC_CTX *mem_ctx,
+		      struct tevent_context *ev,
+		      struct messaging_context *msg_ctx,
+		      struct auth_session_info *session_info,
+		      int snum,
+		      const char *sharename,
+		      const char *path,
+		      struct mds_ctx **_mds_ctx)
 {
 	const struct loadparm_substitution *lp_sub =
 		loadparm_s3_global_substitution();
@@ -1603,21 +1657,22 @@ struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
 	smb_iconv_t iconv_hnd = (smb_iconv_t)-1;
 	NTSTATUS status;
 
+	if (!lp_spotlight(snum)) {
+		return NT_STATUS_WRONG_VOLUME;
+	}
+
 	mds_ctx = talloc_zero(mem_ctx, struct mds_ctx);
 	if (mds_ctx == NULL) {
-		return NULL;
+		return NT_STATUS_NO_MEMORY;
 	}
 	talloc_set_destructor(mds_ctx, mds_ctx_destructor_cb);
 
 	mds_ctx->mdssvc_ctx = mdssvc_init(ev);
 	if (mds_ctx->mdssvc_ctx == NULL) {
-		goto error;
+		return NT_STATUS_NO_MEMORY;
 	}
 
 	backend = lp_spotlight_backend(snum);
-	if (!lp_spotlight(snum)) {
-		backend = SPOTLIGHT_BACKEND_NOINDEX;
-	}
 	switch (backend) {
 	case SPOTLIGHT_BACKEND_NOINDEX:
 		mds_ctx->backend = &mdsscv_backend_noindex;
@@ -1637,6 +1692,7 @@ struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
 	default:
 		DBG_ERR("Unknown backend %d\n", backend);
 		TALLOC_FREE(mdssvc_ctx);
+		status = NT_STATUS_INTERNAL_ERROR;
 		goto error;
 	}
 
@@ -1645,6 +1701,7 @@ struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
 						   "UTF8-NFC",
 						   false);
 	if (iconv_hnd == (smb_iconv_t)-1) {
+		status = NT_STATUS_INTERNAL_ERROR;
 		goto error;
 	}
 	mds_ctx->ic_nfc_to_nfd = iconv_hnd;
@@ -1654,24 +1711,29 @@ struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
 						   "UTF8-NFD",
 						   false);
 	if (iconv_hnd == (smb_iconv_t)-1) {
+		status = NT_STATUS_INTERNAL_ERROR;
 		goto error;
 	}
 	mds_ctx->ic_nfd_to_nfc = iconv_hnd;
 
 	mds_ctx->sharename = talloc_strdup(mds_ctx, sharename);
 	if (mds_ctx->sharename == NULL) {
+		status = NT_STATUS_NO_MEMORY;
 		goto error;
 	}
 
 	mds_ctx->spath = talloc_strdup(mds_ctx, path);
 	if (mds_ctx->spath == NULL) {
+		status = NT_STATUS_NO_MEMORY;
 		goto error;
 	}
+	mds_ctx->spath_len = strlen(path);
 
 	mds_ctx->snum = snum;
 	mds_ctx->pipe_session_info = session_info;
 
 	if (session_info->security_token->num_sids < 1) {
+		status = NT_STATUS_BAD_LOGON_SESSION_STATE;
 		goto error;
 	}
 	sid_copy(&mds_ctx->sid, &session_info->security_token->sids[0]);
@@ -1680,6 +1742,7 @@ struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
 	mds_ctx->ino_path_map = db_open_rbt(mds_ctx);
 	if (mds_ctx->ino_path_map == NULL) {
 		DEBUG(1,("open inode map db failed\n"));
+		status = NT_STATUS_INTERNAL_ERROR;
 		goto error;
 	}
 
@@ -1704,16 +1767,19 @@ struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
 	if (ret != 0) {
 		DBG_ERR("vfs_ChDir [%s] failed: %s\n",
 			conn_basedir.base_name, strerror(errno));
+		status = map_nt_error_from_unix(errno);
 		goto error;
 	}
 
 	ok = mds_ctx->backend->connect(mds_ctx);
 	if (!ok) {
 		DBG_ERR("backend connect failed\n");
+		status = NT_STATUS_CONNECTION_RESET;
 		goto error;
 	}
 
-	return mds_ctx;
+	*_mds_ctx = mds_ctx;
+	return NT_STATUS_OK;
 
 error:
 	if (mds_ctx->ic_nfc_to_nfd != NULL) {
@@ -1724,7 +1790,7 @@ error:
 	}
 
 	TALLOC_FREE(mds_ctx);
-	return NULL;
+	return status;
 }
 
 /**
@@ -1732,11 +1798,11 @@ error:
  **/
 bool mds_dispatch(struct mds_ctx *mds_ctx,
 		  struct mdssvc_blob *request_blob,
-		  struct mdssvc_blob *response_blob)
+		  struct mdssvc_blob *response_blob,
+		  size_t max_fragment_size)
 {
 	bool ok;
 	int ret;
-	ssize_t len;
 	DALLOC_CTX *query = NULL;
 	DALLOC_CTX *reply = NULL;
 	char *rpccmd;
@@ -1744,6 +1810,7 @@ bool mds_dispatch(struct mds_ctx *mds_ctx,
 	const struct smb_filename conn_basedir = {
 		.base_name = mds_ctx->conn->connectpath,
 	};
+	NTSTATUS status;
 
 	if (CHECK_DEBUGLVL(10)) {
 		const struct sl_query *slq;
@@ -1804,18 +1871,19 @@ bool mds_dispatch(struct mds_ctx *mds_ctx,
 	}
 
 	ok = slcmd->function(mds_ctx, query, reply);
-	if (ok) {
-		DBG_DEBUG("%s", dalloc_dump(reply, 0));
+	if (!ok) {
+		goto cleanup;
+	}
 
-		len = sl_pack(reply,
-			      (char *)response_blob->spotlight_blob,
-			      response_blob->size);
-		if (len == -1) {
-			DBG_ERR("error packing Spotlight RPC reply\n");
-			ok = false;
-			goto cleanup;
-		}
-		response_blob->length = len;
+	DBG_DEBUG("%s", dalloc_dump(reply, 0));
+
+	status = sl_pack_alloc(response_blob,
+			       reply,
+			       response_blob,
+			       max_fragment_size);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_ERR("sl_pack_alloc() failed\n");
+		goto cleanup;
 	}
 
 cleanup:

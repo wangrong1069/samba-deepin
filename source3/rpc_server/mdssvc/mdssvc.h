@@ -105,6 +105,7 @@ struct sl_inode_path_map {
 	struct mds_ctx    *mds_ctx;
 	uint64_t           ino;
 	char              *path;
+	struct stat_ex     st;
 };
 
 /* Per process state */
@@ -126,6 +127,7 @@ struct mds_ctx {
 	int snum;
 	const char *sharename;
 	const char *spath;
+	size_t spath_len;
 	struct connection_struct *conn;
 	struct sl_query *query_list;     /* list of active queries */
 	struct db_context *ino_path_map; /* dbwrap rbt for storing inode->path mappings */
@@ -149,16 +151,18 @@ struct mdssvc_backend {
  */
 extern bool mds_init(struct messaging_context *msg_ctx);
 extern bool mds_shutdown(void);
-struct mds_ctx *mds_init_ctx(TALLOC_CTX *mem_ctx,
-			     struct tevent_context *ev,
-			     struct messaging_context *msg_ctx,
-			     struct auth_session_info *session_info,
-			     int snum,
-			     const char *sharename,
-			     const char *path);
-extern bool mds_dispatch(struct mds_ctx *query_ctx,
+NTSTATUS mds_init_ctx(TALLOC_CTX *mem_ctx,
+		      struct tevent_context *ev,
+		      struct messaging_context *msg_ctx,
+		      struct auth_session_info *session_info,
+		      int snum,
+		      const char *sharename,
+		      const char *path,
+		      struct mds_ctx **_mds_ctx);
+extern bool mds_dispatch(struct mds_ctx *mds_ctx,
 			 struct mdssvc_blob *request_blob,
-			 struct mdssvc_blob *response_blob);
+			 struct mdssvc_blob *response_blob,
+			 size_t max_fragment_size);
 bool mds_add_result(struct sl_query *slq, const char *path);
 
 #endif /* _MDSSVC_H */

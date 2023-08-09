@@ -11,10 +11,14 @@ this endless linkage is eliminated, so we can package,
 for example, libldb (which uses ZERO_STRUCT) without it
 linking to libreplace-samba4.
 
+Note: actually using explicit_bzero() so it is not optimized
+out by the compiler - this is the original goal of using
+memset_s().
+
 diff --git a/lib/replace/replace.h b/lib/replace/replace.h
 index 8609d84322c..28db8d425a3 100644
 --- a/lib/replace/replace.h
 +++ b/lib/replace/replace.h
 @@ -822 +822 @@
 -#define ZERO_STRUCT(x) memset_s((char *)&(x), sizeof(x), 0, sizeof(x))
-+#define ZERO_STRUCT(x) bzero((char *)&(x), sizeof(x))
++#define ZERO_STRUCT(x) explicit_bzero((char *)&(x), sizeof(x))

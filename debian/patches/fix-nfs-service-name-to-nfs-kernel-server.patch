@@ -4,13 +4,15 @@ Subject: fix nfs related service names
 Upstream defines nfs related service names based on the Linux
 distribution. This patch fixes the names for Debian and derivatives.
 
+Update by Andreas Hasenack <andreas@canonical.com> (LP: #1961840):
+Use nfsconf(8) if it's available, instead of parsing the old config
+files in /etc/default/nfs-*
+
 Bug-Debian: https://bugs.debian.org/929931
 Bug-Ubuntu: https://bugs.launchpad.net/bugs/722201
-Last-Update: 2018-08-05
-Index: samba/ctdb/config/events/legacy/06.nfs.script
-===================================================================
---- samba.orig/ctdb/config/events/legacy/06.nfs.script	2020-11-24 18:11:53.506104058 -0500
-+++ samba/ctdb/config/events/legacy/06.nfs.script	2020-11-24 18:11:53.502104093 -0500
+Last-Update: 2022-03-16
+--- a/ctdb/config/events/legacy/06.nfs.script
++++ b/ctdb/config/events/legacy/06.nfs.script
 @@ -6,7 +6,7 @@
  
  . "${CTDB_BASE}/functions"
@@ -20,11 +22,9 @@ Index: samba/ctdb/config/events/legacy/06.nfs.script
  
  load_script_options "service" "60.nfs"
  
-Index: samba/ctdb/config/events/legacy/60.nfs.script
-===================================================================
---- samba.orig/ctdb/config/events/legacy/60.nfs.script	2020-11-24 18:11:53.506104058 -0500
-+++ samba/ctdb/config/events/legacy/60.nfs.script	2020-11-24 18:11:53.502104093 -0500
-@@ -6,9 +6,9 @@
+--- a/ctdb/config/events/legacy/60.nfs.script
++++ b/ctdb/config/events/legacy/60.nfs.script
+@@ -6,9 +6,11 @@
  
  . "${CTDB_BASE}/functions"
  
@@ -32,14 +32,14 @@ Index: samba/ctdb/config/events/legacy/60.nfs.script
 +service_name="nfs-kernel-server"
  
 -load_system_config "nfs"
-+load_system_config "nfs-kernel-server"
++if ! type nfsconf > /dev/null 2>&1; then
++    load_system_config "nfs-kernel-server"
++fi
  
  load_script_options
  
-Index: samba/ctdb/config/nfs-linux-kernel-callout
-===================================================================
---- samba.orig/ctdb/config/nfs-linux-kernel-callout	2020-11-24 18:11:53.506104058 -0500
-+++ samba/ctdb/config/nfs-linux-kernel-callout	2020-11-24 18:11:53.502104093 -0500
+--- a/ctdb/config/nfs-linux-kernel-callout
++++ b/ctdb/config/nfs-linux-kernel-callout
 @@ -14,7 +14,7 @@
  
  # As above, edit the default value below.  CTDB_NFS_DISTRO_STYLE is a
@@ -49,31 +49,40 @@ Index: samba/ctdb/config/nfs-linux-kernel-callout
  
  case "$nfs_distro_style" in
  systemd-*)
-@@ -33,6 +33,14 @@
+@@ -32,7 +32,22 @@
+ 		: # Defaults only
  		;;
  	*-debian)
- 		nfs_rquotad_service="quotarpc"
-+		nfs_lock_service=""
-+		nfs_lock_service=""
-+		nfs_mountd_service=""
-+		nfs_status_service=""
+-		nfs_rquotad_service="quotarpc"
++		# XXX
++		# Undefine nfs_rquotad_services because the quotarpc service won't
++		# start unless there are specific "quota" mount options in /etc/fstab.
++		# In this way, we let ctdb start it up manually once the
++		# /etc/ctdb/nfs-checks.d/50.rquotad.check detects rpc.rquotad isn't
++		# running.
++		# Users who really don't want rpc.rquotad running should then move
++		# the 50.rquotad.check script away.
 +		nfs_rquotad_service=""
 +		nfs_service="nfs-kernel-server"
-+		nfs_config="/etc/default/nfs-kernel-server"
++		if type nfsconf >/dev/null 2>&1; then
++			nfs_config=""
++		else
++			nfs_config="/etc/default/nfs-kernel-server"
++		fi
 +		nfs_rquotad_config="/etc/default/quota"
  		;;
  	*)
  		echo "Internal error"
-Index: samba/ctdb/config/statd-callout
-===================================================================
---- samba.orig/ctdb/config/statd-callout	2020-11-24 18:11:53.506104058 -0500
-+++ samba/ctdb/config/statd-callout	2020-11-24 18:11:53.502104093 -0500
-@@ -29,7 +29,7 @@
+--- a/ctdb/config/statd-callout
++++ b/ctdb/config/statd-callout
+@@ -29,7 +29,9 @@
  }
  
  # Try different variables to find config file for NFS_HOSTNAME
 -load_system_config "nfs" "nfs-common"
-+load_system_config "nfs-kernel-server"
++if ! type nfsconf > /dev/null 2>&1; then
++    load_system_config "nfs-common" "nfs-kernel-server"
++fi
  
  # If NFS_HOSTNAME not set then try to pull it out of /etc/nfs.conf
  if [ -z "$NFS_HOSTNAME" ] && type nfsconf >/dev/null 2>&1 ; then

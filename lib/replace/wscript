@@ -31,6 +31,9 @@ def configure(conf):
 
     conf.env.standalone_replace = conf.IN_LAUNCH_DIR()
 
+    if sys.platform.rfind('linux') > -1:
+        conf.DEFINE('LINUX', '1')
+
     conf.DEFINE('BOOL_DEFINED', 1)
     conf.DEFINE('HAVE_LIBREPLACE', 1)
     conf.DEFINE('LIBREPLACE_NETWORK_CHECKS', 1)
@@ -127,6 +130,9 @@ def configure(conf):
 
     if conf.CHECK_CFLAGS('-Wno-strict-overflow'):
         conf.define('HAVE_WNO_STRICT_OVERFLOW', '1')
+
+    if conf.CHECK_CFLAGS('-Wuse-after-free=1'):
+        conf.define('HAVE_WUSE_AFTER_FREE_1', '1')
 
     # Check for process set name support
     conf.CHECK_CODE('''

@@ -19,6 +19,14 @@ backupfile() {
     [ -f $1 ] && cp $1 $1.prvctdb || true
 }
 
+renamefiles() {
+    for f; do
+        [ -f "$f" ] || continue
+        echo "Renaming $f to $f.prvctdb"
+        mv "$f" "$f".prvctdb
+    done
+}
+
 checkservice() {
     (systemctl list-unit-files | grep -q $1.service) || die "service $1 not found"
 }
@@ -46,20 +54,6 @@ appendfile() {
     cat $base/$origfile >> $replfile
 }
 
-appendnfsenv() {
-
-    file=$1 ; [ -f $file ] || die "inexistent file $file";
-
-    echo appending NFS_HOSTNAME to $file...
-
-    grep -q "NFS_HOSTNAME" $file || \
-    {
-        echo
-        echo "echo NFS_HOSTNAME=\\\"\$NFS_HOSTNAME\\\"" \>\> \/run\/sysconfig\/nfs-utils
-        echo
-    } >> $file
-}
-
 execnfsenv() {
 
     file=$1 ; [ -f $file ] || due "inexistent file $file";
@@ -71,7 +65,7 @@ execnfsenv() {
 
 fixnfshostname() {
 
-    file=$1 ; [ -f $file ] || due "inexistent file $file";
+    type nfsconf > /dev/null 2>&1 || die "nfsconf(8) not found"
 
     if [ "$ghostname" == "" ]; then
         echo "What is the FQDN for the public IP address of this host ?"
@@ -79,8 +73,8 @@ fixnfshostname() {
         read ghostname
     fi
 
-    echo placing hostname $ghostname into $file...
-    sed -i "s:PLACE_HOSTNAME_HERE:$ghostname:g" $file
+    echo "Setting $ghostname in nfs.conf..."
+    nfsconf --set statd name "$ghostname"
 }
 
 # end of functions --
@@ -90,13 +84,14 @@ fixnfshostname() {
 echo """
 This script will enable CTDB NFS HA by changing the following files:
 
-(1) /etc/default/nfs-common                   ( replace )
-(2) /etc/default/nfs-kernel-server            ( replace )
+(1) /etc/nfs.conf                             ( replace )
+(2) /etc/nfs.conf.d/*.conf                    ( rename  )
 (3) /etc/services                             ( append  )
-(4) /etc/sysctl.d/99-nfs-static-ports.conf    ( create  )
-(5) /usr/lib/systemd/scripts/nfs-utils_env.sh ( modify  )
+(4) /etc/sysctl.d/98-nfs-static-ports.conf    ( create  )
+(5) /etc/default/quota                        ( replace )
 
-and disabling the following services:
+and disabling the following services, as they will be managed
+by ctdb:
 
 (1) rpcbind
 (2) nfs-kernel-server
@@ -124,10 +119,10 @@ checkservice rpcbind
 echo "requirements okay!"
 echo
 
-backupfile /etc/default/nfs-common
-backupfile /etc/default/nfs-kernel-server
+backupfile /etc/nfs.conf
+renamefiles /etc/nfs.conf.d/*.conf
 backupfile /etc/services
-backupfile /usr/lib/systemd/scripts/nfs-utils_env.sh
+backupfile /etc/default/quota
 echo
 
 set +e
@@ -150,20 +145,15 @@ echo
 
 set -e
 
-replacefile nfs-common /etc/default/nfs-common
-replacefile nfs-kernel-server /etc/default/nfs-kernel-server
-replacefile 99-nfs-static-ports.conf /etc/sysctl.d/99-nfs-static-ports.conf
+replacefile nfs.conf /etc/nfs.conf
+replacefile 98-nfs-static-ports.conf /etc/sysctl.d/98-nfs-static-ports.conf
+replacefile quota /etc/default/quota
 echo
 
 appendfile services /etc/services
 echo
 
-fixnfshostname /etc/default/nfs-common
-fixnfshostname /etc/default/nfs-kernel-server
-echo
-
-appendnfsenv /usr/lib/systemd/scripts/nfs-utils_env.sh
-execnfsenv /usr/lib/systemd/scripts/nfs-utils_env.sh
+fixnfshostname
 echo
 
 sysctlrefresh
@@ -181,10 +171,10 @@ A log file can be found at:
 
 Remember:
 
-    - to place a recovery lock in /etc/ctdb/ctdb.conf:
+    - to place a cluster lock in /etc/ctdb/ctdb.conf:
         ...
         [cluster]
-        recovery lock = /clustered.filesystem/.reclock
+        cluster lock = /clustered.filesystem/.reclock
         ...
 
 And, make sure you enable ctdb service again:

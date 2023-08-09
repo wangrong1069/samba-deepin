@@ -131,8 +131,7 @@ static void cached_internal_pipe_close(
 	struct winbindd_domain *domain = talloc_get_type_abort(
 		private_data, struct winbindd_domain);
 	/*
-	 * domain->private_data is the struct winbind_internal_pipes *
-	 * pointer so freeing it closes the cached pipes.
+	 * Freeing samr_pipes closes the cached pipes.
 	 *
 	 * We can do a hard close because at the time of this commit
 	 * we only use sychronous calls to external pipes. So we can't
@@ -141,7 +140,7 @@ static void cached_internal_pipe_close(
 	 * get nested event loops. Once we start to get async in
 	 * winbind children, we need to check for outstanding calls
 	 */
-	TALLOC_FREE(domain->private_data);
+	TALLOC_FREE(domain->backend_data.samr_pipes);
 }
 
 static NTSTATUS open_cached_internal_pipe_conn(
@@ -151,9 +150,10 @@ static NTSTATUS open_cached_internal_pipe_conn(
 	struct rpc_pipe_client **lsa_pipe,
 	struct policy_handle *lsa_hnd)
 {
-	struct winbind_internal_pipes *internal_pipes = NULL;
+	struct winbind_internal_pipes *internal_pipes =
+		domain->backend_data.samr_pipes;
 
-	if (domain->private_data == NULL) {
+	if (internal_pipes == NULL) {
 		TALLOC_CTX *frame = talloc_stackframe();
 		NTSTATUS status;
 
@@ -190,14 +190,11 @@ static NTSTATUS open_cached_internal_pipe_conn(
 			return NT_STATUS_NO_MEMORY;
 		}
 
-		domain->private_data = talloc_move(domain, &internal_pipes);
+		domain->backend_data.samr_pipes =
+			talloc_steal(domain, internal_pipes);
 
 		TALLOC_FREE(frame);
-
 	}
-
-	internal_pipes = talloc_get_type_abort(
-		domain->private_data, struct winbind_internal_pipes);
 
 	if (samr_domain_hnd) {
 		*samr_domain_hnd = internal_pipes->samr_domain_hnd;
@@ -226,23 +223,17 @@ static bool reset_connection_on_error(struct winbindd_domain *domain,
 				      struct rpc_pipe_client *p,
 				      NTSTATUS status)
 {
-	struct winbind_internal_pipes *internal_pipes = NULL;
 	struct dcerpc_binding_handle *b = p->binding_handle;
-
-	internal_pipes = talloc_get_type_abort(
-		domain->private_data, struct winbind_internal_pipes);
 
 	if (NT_STATUS_EQUAL(status, NT_STATUS_IO_TIMEOUT) ||
 	    NT_STATUS_EQUAL(status, NT_STATUS_IO_DEVICE_ERROR))
 	{
-		TALLOC_FREE(internal_pipes);
-		domain->private_data = NULL;
+		TALLOC_FREE(domain->backend_data.samr_pipes);
 		return true;
 	}
 
 	if (!dcerpc_binding_handle_is_connected(b)) {
-		TALLOC_FREE(internal_pipes);
-		domain->private_data = NULL;
+		TALLOC_FREE(domain->backend_data.samr_pipes);
 		return true;
 	}
 

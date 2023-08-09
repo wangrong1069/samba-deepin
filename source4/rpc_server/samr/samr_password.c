@@ -26,6 +26,7 @@
 #include "rpc_server/samr/dcesrv_samr.h"
 #include "system/time.h"
 #include "lib/crypto/md4.h"
+#include "dsdb/common/util.h"
 #include "dsdb/samdb/samdb.h"
 #include "auth/auth.h"
 #include "libcli/auth/libcli_auth.h"
@@ -337,13 +338,7 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 	struct ldb_context *sam_ctx = NULL;
 	struct ldb_dn *user_dn = NULL;
 	int ret;
-	struct ldb_message **res;
-	const char * const attrs[] = { "unicodePwd", "dBCSPwd",
-				       "userAccountControl",
-				       "msDS-ResultantPSO",
-				       "msDS-User-Account-Control-Computed",
-				       "badPwdCount", "badPasswordTime",
-				       "objectSid", NULL };
+	struct ldb_message *msg = NULL;
 	struct samr_Password *nt_pwd, *lm_pwd;
 	struct samr_DomInfo1 *dominfo = NULL;
 	struct userPwdChangeFailureInformation *reject = NULL;
@@ -356,6 +351,8 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 		= lpcfg_ntlm_auth(dce_call->conn->dce_ctx->lp_ctx);
 	gnutls_cipher_hd_t cipher_hnd = NULL;
 	gnutls_datum_t nt_session_key;
+	struct auth_session_info *call_session_info = NULL;
+	struct auth_session_info *old_session_info = NULL;
 	int rc;
 
 	*r->out.dominfo = NULL;
@@ -380,30 +377,41 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 		return NT_STATUS_INVALID_SYSTEM_SERVICE;
 	}
 
-	/* we need the users dn and the domain dn (derived from the
-	   user SID). We also need the current lm and nt password hashes
-	   in order to decrypt the incoming passwords */
-	ret = gendb_search(sam_ctx,
-			   mem_ctx, NULL, &res, attrs,
-			   "(&(sAMAccountName=%s)(objectclass=user))",
-			   ldb_binary_encode_string(mem_ctx, r->in.account->string));
-	if (ret != 1) {
-		status = NT_STATUS_NO_SUCH_USER; /* Converted to WRONG_PASSWORD below */
+	ret = ldb_transaction_start(sam_ctx);
+	if (ret != LDB_SUCCESS) {
+		DEBUG(1, ("Failed to start transaction: %s\n", ldb_errstring(sam_ctx)));
+		return NT_STATUS_TRANSACTION_ABORTED;
+	}
+
+	/*
+	 * We use authsam_search_account() to be consistent with the
+	 * other callers in the bad password and audit log handling
+	 * systems.  It ensures we get DSDB_SEARCH_SHOW_EXTENDED_DN.
+	 */
+	status = authsam_search_account(mem_ctx,
+					sam_ctx,
+					r->in.account->string,
+					ldb_get_default_basedn(sam_ctx),
+					&msg);
+	if (!NT_STATUS_IS_OK(status)) {
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
-	user_dn = res[0]->dn;
-	user_samAccountName = ldb_msg_find_attr_as_string(res[0], "samAccountName", NULL);
-	user_objectSid = samdb_result_dom_sid(res, res[0], "objectSid");
+	user_dn = msg->dn;
+	user_samAccountName = ldb_msg_find_attr_as_string(msg, "samAccountName", NULL);
+	user_objectSid = samdb_result_dom_sid(mem_ctx, msg, "objectSid");
 
 	status = samdb_result_passwords(mem_ctx, dce_call->conn->dce_ctx->lp_ctx,
-					res[0], &lm_pwd, &nt_pwd);
+					msg, &lm_pwd, &nt_pwd);
 	if (!NT_STATUS_IS_OK(status) ) {
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
 	if (!nt_pwd) {
 		status = NT_STATUS_WRONG_PASSWORD;
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
@@ -419,6 +427,7 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 				NULL);
 	if (rc < 0) {
 		status = gnutls_error_to_ntstatus(rc, NT_STATUS_CRYPTO_SYSTEM_INVALID);
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
@@ -428,17 +437,20 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 	gnutls_cipher_deinit(cipher_hnd);
 	if (rc < 0) {
 		status = gnutls_error_to_ntstatus(rc, NT_STATUS_CRYPTO_SYSTEM_INVALID);
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
 	if (!extract_pw_from_buffer(mem_ctx, r->in.nt_password->data, &new_password)) {
 		DEBUG(3,("samr: failed to decode password buffer\n"));
 		status =  NT_STATUS_WRONG_PASSWORD;
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
 	if (r->in.nt_verifier == NULL) {
 		status = NT_STATUS_WRONG_PASSWORD;
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
@@ -448,10 +460,12 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 	E_old_pw_hash(new_nt_hash, nt_pwd->hash, nt_verifier.hash);
 	if (rc != 0) {
 		status = gnutls_error_to_ntstatus(rc, NT_STATUS_ACCESS_DISABLED_BY_POLICY_OTHER);
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 	if (memcmp(nt_verifier.hash, r->in.nt_verifier->hash, 16) != 0) {
 		status = NT_STATUS_WRONG_PASSWORD;
+		ldb_transaction_cancel(sam_ctx);
 		goto failed;
 	}
 
@@ -480,16 +494,16 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 		}
 	}
 
-	/* Connect to a SAMDB with user privileges for the password change */
-	sam_ctx = dcesrv_samdb_connect_as_user(mem_ctx, dce_call);
-	if (sam_ctx == NULL) {
-		return NT_STATUS_INVALID_SYSTEM_SERVICE;
-	}
+	/* Drop to user privileges for the password change */
 
-	ret = ldb_transaction_start(sam_ctx);
+	old_session_info = ldb_get_opaque(sam_ctx, DSDB_SESSION_INFO);
+	call_session_info = dcesrv_call_session_info(dce_call);
+
+	ret = ldb_set_opaque(sam_ctx, DSDB_SESSION_INFO, call_session_info);
 	if (ret != LDB_SUCCESS) {
-		DEBUG(1, ("Failed to start transaction: %s\n", ldb_errstring(sam_ctx)));
-		return NT_STATUS_TRANSACTION_ABORTED;
+		status = NT_STATUS_INVALID_SYSTEM_SERVICE;
+		ldb_transaction_cancel(sam_ctx);
+		goto failed;
 	}
 
 	/* Performs the password modification. We pass the old hashes read out
@@ -502,6 +516,11 @@ NTSTATUS dcesrv_samr_ChangePasswordUser3(struct dcesrv_call_state *dce_call,
 				    lm_pwd, nt_pwd, /* this is a user password change */
 				    &reason,
 				    &dominfo);
+
+	/* Restore our privileges to system level */
+	if (old_session_info != NULL) {
+		ldb_set_opaque(sam_ctx, DSDB_SESSION_INFO, old_session_info);
+	}
 
 	if (!NT_STATUS_IS_OK(status)) {
 		ldb_transaction_cancel(sam_ctx);
@@ -538,7 +557,13 @@ failed:
 
 	/* Only update the badPwdCount if we found the user */
 	if (NT_STATUS_EQUAL(status, NT_STATUS_WRONG_PASSWORD)) {
-		authsam_update_bad_pwd_count(sam_ctx, res[0], ldb_get_default_basedn(sam_ctx));
+		NTSTATUS bad_pwd_status;
+
+		bad_pwd_status = authsam_update_bad_pwd_count(
+			sam_ctx, msg, ldb_get_default_basedn(sam_ctx));
+		if (NT_STATUS_EQUAL(bad_pwd_status, NT_STATUS_ACCOUNT_LOCKED_OUT)) {
+			status = bad_pwd_status;
+		}
 	} else if (NT_STATUS_EQUAL(status, NT_STATUS_NO_SUCH_USER)) {
 		/* Don't give the game away:  (don't allow anonymous users to prove the existence of usernames) */
 		status = NT_STATUS_WRONG_PASSWORD;

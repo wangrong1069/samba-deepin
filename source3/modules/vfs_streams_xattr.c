@@ -482,6 +482,8 @@ static int streams_xattr_unlink_internal(vfs_handle_struct *handle,
 	NTSTATUS status;
 	int ret = -1;
 	char *xattr_name = NULL;
+	struct smb_filename *pathref = NULL;
+	struct files_struct *fsp = smb_fname->fsp;
 
 	if (!is_named_stream(smb_fname)) {
 		return SMB_VFS_NEXT_UNLINKAT(handle,
@@ -497,10 +499,25 @@ static int streams_xattr_unlink_internal(vfs_handle_struct *handle,
 		goto fail;
 	}
 
-	SMB_ASSERT(smb_fname->fsp != NULL);
-	SMB_ASSERT(smb_fname->fsp->base_fsp != NULL);
+	if (fsp == NULL) {
+		status = synthetic_pathref(talloc_tos(),
+					handle->conn->cwd_fsp,
+					smb_fname->base_name,
+					NULL,
+					NULL,
+					smb_fname->twrp,
+					smb_fname->flags,
+					&pathref);
+		if (!NT_STATUS_IS_OK(status)) {
+			errno = ENOENT;
+			goto fail;
+		}
+		fsp = pathref->fsp;
+	} else {
+		fsp = fsp->base_fsp;
+	}
 
-	ret = SMB_VFS_FREMOVEXATTR(smb_fname->fsp->base_fsp, xattr_name);
+	ret = SMB_VFS_FREMOVEXATTR(fsp, xattr_name);
 
 	if ((ret == -1) && (errno == ENOATTR)) {
 		errno = ENOENT;
@@ -511,6 +528,7 @@ static int streams_xattr_unlink_internal(vfs_handle_struct *handle,
 
  fail:
 	TALLOC_FREE(xattr_name);
+	TALLOC_FREE(pathref);
 	return ret;
 }
 
@@ -1536,6 +1554,38 @@ static bool streams_xattr_strict_lock_check(struct vfs_handle_struct *handle,
 	return true;
 }
 
+static int streams_xattr_fcntl(vfs_handle_struct *handle,
+			       files_struct *fsp,
+			       int cmd,
+			       va_list cmd_arg)
+{
+	va_list dup_cmd_arg;
+	void *arg;
+	int ret;
+
+	if (fsp_is_alternate_stream(fsp)) {
+		switch (cmd) {
+		case F_GETFL:
+		case F_SETFL:
+			break;
+		default:
+			DBG_ERR("Unsupported fcntl() cmd [%d] on [%s]\n",
+				cmd, fsp_str_dbg(fsp));
+			errno = EINVAL;
+			return -1;
+		}
+	}
+
+	va_copy(dup_cmd_arg, cmd_arg);
+	arg = va_arg(dup_cmd_arg, void *);
+
+	ret = SMB_VFS_NEXT_FCNTL(handle, fsp, cmd, arg);
+
+	va_end(dup_cmd_arg);
+
+	return ret;
+}
+
 static struct vfs_fn_pointers vfs_streams_xattr_fns = {
 	.fs_capabilities_fn = streams_xattr_fs_capabilities,
 	.connect_fn = streams_xattr_connect,
@@ -1564,6 +1614,7 @@ static struct vfs_fn_pointers vfs_streams_xattr_fns = {
 	.filesystem_sharemode_fn = streams_xattr_filesystem_sharemode,
 	.linux_setlease_fn = streams_xattr_linux_setlease,
 	.strict_lock_check_fn = streams_xattr_strict_lock_check,
+	.fcntl_fn = streams_xattr_fcntl,
 
 	.fchown_fn = streams_xattr_fchown,
 	.fchmod_fn = streams_xattr_fchmod,

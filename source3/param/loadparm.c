@@ -664,7 +664,10 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.client_schannel = true;
 	Globals.winbind_sealed_pipes = true;
 	Globals.require_strong_key = true;
+	Globals.reject_md5_servers = true;
 	Globals.server_schannel = true;
+	Globals.server_schannel_require_seal = true;
+	Globals.reject_md5_clients = true;
 	Globals.read_raw = true;
 	Globals.write_raw = true;
 	Globals.null_passwords = false;
@@ -750,7 +753,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.ldap_debug_level = 0;
 	Globals.ldap_debug_threshold = 10;
 
-	Globals.client_ldap_sasl_wrapping = ADS_AUTH_SASL_SIGN;
+	Globals.client_ldap_sasl_wrapping = ADS_AUTH_SASL_SEAL;
 
 	Globals.ldap_server_require_strong_auth =
 		LDAP_SERVER_REQUIRE_STRONG_AUTH_YES;
@@ -2141,7 +2144,7 @@ struct loadparm_service *lp_servicebynum(int snum)
 	return ServicePtrs[snum];
 }
 
-struct loadparm_service *lp_default_loadparm_service()
+struct loadparm_service *lp_default_loadparm_service(void)
 {
 	return &sDefault;
 }
@@ -2880,7 +2883,7 @@ bool lp_do_section(const char *pszSectionName, void *userdata)
 	/* if we have a current service, tidy it up before moving on */
 	bRetval = true;
 
-	if (iServiceIndex >= 0)
+	if ((iServiceIndex >= 0) && (ServicePtrs[iServiceIndex] != NULL))
 		bRetval = lpcfg_service_ok(ServicePtrs[iServiceIndex]);
 
 	/* if all is still well, move to the next record in the services array */
@@ -4792,7 +4795,7 @@ unsigned int * get_flags(void)
 	return flags_list;
 }
 
-enum samba_weak_crypto lp_weak_crypto()
+enum samba_weak_crypto lp_weak_crypto(void)
 {
 	if (Globals.weak_crypto == SAMBA_WEAK_CRYPTO_UNKNOWN) {
 		Globals.weak_crypto = SAMBA_WEAK_CRYPTO_DISALLOWED;

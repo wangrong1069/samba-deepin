@@ -191,7 +191,7 @@ bool test_SetupCredentials(struct dcerpc_pipe *p, struct torture_context *tctx,
 
 	/* This allows the tests to continue against the more fussy windows 2008 */
 	if (NT_STATUS_EQUAL(a.out.result, NT_STATUS_DOWNGRADE_DETECTED)) {
-		return test_SetupCredentials2(p, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS,
+		return test_SetupCredentials2(p, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES,
 					      credentials,
 					      cli_credentials_get_secure_channel_type(credentials),
 					      creds_out);
@@ -431,7 +431,7 @@ bool test_SetupCredentialsDowngrade(struct torture_context *tctx,
 		"ServerAuthenticate3 failed");
 	torture_assert_ntstatus_equal(tctx, a.out.result, NT_STATUS_DOWNGRADE_DETECTED, "ServerAuthenticate3 should have failed");
 
-	negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES;
 	creds = netlogon_creds_client_init(tctx, a.in.account_name,
 					   a.in.computer_name,
 					   a.in.secure_channel_type,
@@ -498,7 +498,7 @@ static bool test_ServerReqChallenge(
 	const char *machine_name;
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	struct netr_ServerAuthenticate2 a;
-	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES;
 	uint32_t out_negotiate_flags = 0;
 	const struct samr_Password *mach_password = NULL;
 	enum netr_SchannelType sec_chan_type = 0;
@@ -570,7 +570,7 @@ static bool test_ServerReqChallenge_zero_challenge(
 	const char *machine_name;
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	struct netr_ServerAuthenticate2 a;
-	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES;
 	uint32_t out_negotiate_flags = 0;
 	const struct samr_Password *mach_password = NULL;
 	enum netr_SchannelType sec_chan_type = 0;
@@ -647,7 +647,7 @@ static bool test_ServerReqChallenge_5_repeats(
 	const char *machine_name;
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	struct netr_ServerAuthenticate2 a;
-	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES;
 	uint32_t out_negotiate_flags = 0;
 	const struct samr_Password *mach_password = NULL;
 	enum netr_SchannelType sec_chan_type = 0;
@@ -731,7 +731,7 @@ static bool test_ServerReqChallenge_4_repeats(
 	const char *machine_name;
 	struct dcerpc_binding_handle *b = p->binding_handle;
 	struct netr_ServerAuthenticate2 a;
-	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	uint32_t in_negotiate_flags = NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES;
 	uint32_t out_negotiate_flags = 0;
 	const struct samr_Password *mach_password = NULL;
 	enum netr_SchannelType sec_chan_type = 0;
@@ -1527,7 +1527,7 @@ static bool test_SetPassword2_all_zeros(
 	struct netr_CryptPassword new_password;
 	struct dcerpc_pipe *p = NULL;
 	struct dcerpc_binding_handle *b = NULL;
-	uint32_t flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	uint32_t flags = NETLOGON_NEG_AUTH2_ADS_FLAGS; /* no AES desired here */
 
 	if (!test_SetupCredentials2(
 		p1,
@@ -1603,7 +1603,7 @@ static bool test_SetPassword2_maximum_length_password(
 	struct netr_CryptPassword new_password;
 	struct dcerpc_pipe *p = NULL;
 	struct dcerpc_binding_handle *b = NULL;
-	uint32_t flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	uint32_t flags = NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES;
 	DATA_BLOB new_random_pass = data_blob_null;
 
 	if (!test_SetupCredentials2(
@@ -1686,7 +1686,7 @@ static bool test_SetPassword2_all_zero_password(
 	struct netr_CryptPassword new_password;
 	struct dcerpc_pipe *p = NULL;
 	struct dcerpc_binding_handle *b = NULL;
-	uint32_t flags = NETLOGON_NEG_AUTH2_ADS_FLAGS;
+	uint32_t flags = NETLOGON_NEG_AUTH2_ADS_FLAGS; /* no AES desired here */
 
 	if (!test_SetupCredentials2(
 		p1,
@@ -2056,8 +2056,47 @@ bool test_netlogon_capabilities(struct dcerpc_pipe *p, struct torture_context *t
 	r.out.capabilities = &capabilities;
 	r.out.return_authenticator = &return_auth;
 
-	torture_comment(tctx, "Testing LogonGetCapabilities\n");
+	torture_comment(tctx, "Testing LogonGetCapabilities with query_level=0\n");
 
+	r.in.query_level = 0;
+	ZERO_STRUCT(return_auth);
+
+	/*
+	 * we need to operate on a temporary copy of creds
+	 * because dcerpc_netr_LogonGetCapabilities with
+	 * an unknown query level returns DCERPC_NCA_S_FAULT_INVALID_TAG
+	 * => NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE
+	 * without looking a the authenticator.
+	 */
+	tmp_creds = *creds;
+	netlogon_creds_client_authenticator(&tmp_creds, &auth);
+
+	status = dcerpc_netr_LogonGetCapabilities_r(b, tctx, &r);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE,
+				      "LogonGetCapabilities query_level=0 failed");
+
+	torture_comment(tctx, "Testing LogonGetCapabilities with query_level=3\n");
+
+	r.in.query_level = 3;
+	ZERO_STRUCT(return_auth);
+
+	/*
+	 * we need to operate on a temporary copy of creds
+	 * because dcerpc_netr_LogonGetCapabilities with
+	 * an unknown query level returns DCERPC_NCA_S_FAULT_INVALID_TAG
+	 * => NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE
+	 * without looking a the authenticator.
+	 */
+	tmp_creds = *creds;
+	netlogon_creds_client_authenticator(&tmp_creds, &auth);
+
+	status = dcerpc_netr_LogonGetCapabilities_r(b, tctx, &r);
+	torture_assert_ntstatus_equal(tctx, status, NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE,
+				      "LogonGetCapabilities query_level=0 failed");
+
+	torture_comment(tctx, "Testing LogonGetCapabilities with query_level=1\n");
+
+	r.in.query_level = 1;
 	ZERO_STRUCT(return_auth);
 
 	/*
@@ -2074,6 +2113,42 @@ bool test_netlogon_capabilities(struct dcerpc_pipe *p, struct torture_context *t
 	if (NT_STATUS_EQUAL(r.out.result, NT_STATUS_NOT_IMPLEMENTED)) {
 		return true;
 	}
+
+	*creds = tmp_creds;
+
+	torture_assert(tctx, netlogon_creds_client_check(creds,
+							 &r.out.return_authenticator->cred),
+		       "Credential chaining failed");
+
+	torture_assert_int_equal(tctx, creds->negotiate_flags,
+				 capabilities.server_capabilities,
+				 "negotiate flags");
+
+	torture_comment(tctx, "Testing LogonGetCapabilities with query_level=2\n");
+
+	r.in.query_level = 2;
+	ZERO_STRUCT(return_auth);
+
+	/*
+	 * we need to operate on a temporary copy of creds
+	 * because dcerpc_netr_LogonGetCapabilities with
+	 * an query level 2 may returns DCERPC_NCA_S_FAULT_INVALID_TAG
+	 * => NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE
+	 * without looking a the authenticator.
+	 */
+	tmp_creds = *creds;
+	netlogon_creds_client_authenticator(&tmp_creds, &auth);
+
+	status = dcerpc_netr_LogonGetCapabilities_r(b, tctx, &r);
+	if (NT_STATUS_EQUAL(status, NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE)) {
+		/*
+		 * an server without KB5028166 returns
+		 * DCERPC_NCA_S_FAULT_INVALID_TAG =>
+		 * NT_STATUS_RPC_ENUM_VALUE_OUT_OF_RANGE
+		 */
+		return true;
+	}
+	torture_assert_ntstatus_ok(tctx, status, "LogonGetCapabilities query_level=2 failed");
 
 	*creds = tmp_creds;
 
@@ -4046,7 +4121,7 @@ static bool test_netr_GetForestTrustInformation(struct torture_context *tctx,
 	struct dcerpc_pipe *p = NULL;
 	struct dcerpc_binding_handle *b = NULL;
 
-	if (!test_SetupCredentials3(p1, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS,
+	if (!test_SetupCredentials3(p1, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES,
 				    machine_credentials, &creds)) {
 		return false;
 	}
@@ -4985,7 +5060,7 @@ static bool test_GetDomainInfo(struct torture_context *tctx,
 
 	torture_comment(tctx, "Testing netr_LogonGetDomainInfo\n");
 
-	if (!test_SetupCredentials3(p1, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS,
+	if (!test_SetupCredentials3(p1, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES,
 				    machine_credentials, &creds)) {
 		return false;
 	}
@@ -5560,7 +5635,7 @@ static bool test_GetDomainInfo_async(struct torture_context *tctx,
 
 	torture_comment(tctx, "Testing netr_LogonGetDomainInfo - async count %d\n", ASYNC_COUNT);
 
-	if (!test_SetupCredentials3(p, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS,
+	if (!test_SetupCredentials3(p, tctx, NETLOGON_NEG_AUTH2_ADS_FLAGS | NETLOGON_NEG_SUPPORTS_AES,
 				    machine_credentials, &creds)) {
 		return false;
 	}

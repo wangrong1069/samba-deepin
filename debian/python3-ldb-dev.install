@@ -1,8 +1,3 @@
-#! /bin/sh
-PY3_INCDIR=$(${PYTHON:-python3}-config --includes |
-             sed 's,^-I\([^ ]*\).*,\1,')
-echo "\
-usr/include/samba-4.0/pyldb.h $PY3_INCDIR
+usr/include/samba-4.0/pyldb.h
 usr/lib/*/libpyldb-util.cpython-*.so
 usr/lib/*/pkgconfig/pyldb-util.cpython-*.pc
-"

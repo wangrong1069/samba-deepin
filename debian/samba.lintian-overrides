@@ -1,2 +1,5 @@
 # Standard path for [printers] section is world-writeable with sticky bit set
 samba: non-standard-dir-perm var/spool/samba/ 1777 != 0755
+samba: hardening-no-fortify-functions */samba/libmscat-samba4.so.*
+# documentation and specifications for the schemas, keep them in the same place
+samba: package-contains-documentation-outside-usr-share-doc *usr/share/samba/setup/*

@@ -1,0 +1,11 @@
+samba (2:3.6.5-2) unstable; urgency=low
+
+    NSS modules have been split out from libpam-winbind to
+    libnss-winbind.
+
+    If Recommends: installs are disabled on your system you may need
+    to manually install the libnss-winbind package after upgrading
+    from former versions of winbind (for instance from squeeze) or
+    from former versions of libpam-winbind.
+
+ -- Christian Perrier <bubulle@debian.org>  Mon, 07 May 2012 22:16:32 +0200

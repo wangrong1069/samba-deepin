@@ -5,11 +5,7 @@ set -e
 
 . debian/tests/util
 
-k_ver=$(uname -r | cut -d - -f 1)
-if ! check_kernel_version ${k_ver}; then
-    echo "uring not available in kernel version ${k_ver}, skipping test"
-    exit 77
-fi
+ensure_uring_available
 
 username="smbtest$$"
 password="$$"

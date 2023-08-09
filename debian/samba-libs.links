@@ -1,0 +1,15 @@
+# libndr.so.X mess.  This library does not have stable ABI and can change.
+# But it is used by other software (eg, sssd, openchange, evolution-mapi).
+# openchange and evolution-mapi are not in debian (bullseye/bookworm).
+# Only a small subset of the symbols is actually used.
+# Since we package libndr.so.N inside samba-libs package, not inside its own
+# libndrN package (because it links with all internal samba libs, and different
+# libndrNs can't co-exist), we have to deal with the soname bumps somehow.
+
+# 4.15 changed soname of libndr.so.1 in incompatible way and bumbed soname to .2
+# Only small subset of symbols is actually used by sssd, neither of which were
+# affected, so we can "assume" the ABI in .2 is "sufficienly compatible" with .1
+# Provide compat symlink.
+# This is a gross hack, but it let us to survive.
+# Remove past bookworm.
+usr/lib/${DEB_HOST_MULTIARCH}/libndr.so.3 usr/lib/${DEB_HOST_MULTIARCH}/libndr.so.1

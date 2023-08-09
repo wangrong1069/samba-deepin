@@ -672,12 +672,10 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 	krb5_error_code krb5_ret;
 	const char *cc = NULL;
 	const char *principal_s = NULL;
-	const char *service = NULL;
 	char *realm = NULL;
 	fstring name_namespace, name_domain, name_user;
 	time_t ticket_lifetime = 0;
 	time_t renewal_until = 0;
-	ADS_STRUCT *ads;
 	time_t time_offset = 0;
 	const char *user_ccache_file;
 	struct PAC_LOGON_INFO *logon_info = NULL;
@@ -716,9 +714,8 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 	/* 2nd step:
 	 * get kerberos properties */
 
-	if (domain->private_data) {
-		ads = (ADS_STRUCT *)domain->private_data;
-		time_offset = ads->auth.time_offset;
+	if (domain->backend_data.ads_conn != NULL) {
+		time_offset = domain->backend_data.ads_conn->auth.time_offset;
 	}
 
 
@@ -754,11 +751,6 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 					      realm);
 	}
 	if (principal_s == NULL) {
-		return NT_STATUS_NO_MEMORY;
-	}
-
-	service = talloc_asprintf(mem_ctx, "%s/%s@%s", KRB5_TGS_NAME, realm, realm);
-	if (service == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
 
@@ -850,7 +842,6 @@ static NTSTATUS winbindd_raw_kerberos_login(TALLOC_CTX *mem_ctx,
 
 		result = add_ccache_to_list(principal_s,
 					    cc,
-					    service,
 					    user,
 					    pass,
 					    realm,
@@ -1182,7 +1173,6 @@ static NTSTATUS winbindd_dual_pam_auth_cached(struct winbindd_domain *domain,
 			const char *cc = NULL;
 			char *realm = NULL;
 			const char *principal_s = NULL;
-			const char *service = NULL;
 			const char *user_ccache_file;
 
 			if (domain->alt_name == NULL) {
@@ -1217,11 +1207,6 @@ static NTSTATUS winbindd_dual_pam_auth_cached(struct winbindd_domain *domain,
 				return NT_STATUS_NO_MEMORY;
 			}
 
-			service = talloc_asprintf(state->mem_ctx, "%s/%s@%s", KRB5_TGS_NAME, realm, realm);
-			if (service == NULL) {
-				return NT_STATUS_NO_MEMORY;
-			}
-
 			if (user_ccache_file != NULL) {
 
 				fstrcpy(state->response->data.auth.krb5ccname,
@@ -1229,7 +1214,6 @@ static NTSTATUS winbindd_dual_pam_auth_cached(struct winbindd_domain *domain,
 
 				result = add_ccache_to_list(principal_s,
 							    cc,
-							    service,
 							    state->request->data.auth.user,
 							    state->request->data.auth.pass,
 							    realm,
@@ -2686,18 +2670,6 @@ enum winbindd_result winbindd_dual_pam_auth_crap(struct winbindd_domain *domain,
 
 	DEBUG(3, ("[%5lu]: pam auth crap domain: %s user: %s\n", (unsigned long)state->pid,
 		  name_domain, name_user));
-
-	if (state->request->data.auth_crap.lm_resp_len > sizeof(state->request->data.auth_crap.lm_resp)
-		|| state->request->data.auth_crap.nt_resp_len > sizeof(state->request->data.auth_crap.nt_resp)) {
-		if (!(state->request->flags & WBFLAG_BIG_NTLMV2_BLOB) ||
-		     state->request->extra_len != state->request->data.auth_crap.nt_resp_len) {
-			DEBUG(0, ("winbindd_pam_auth_crap: invalid password length %u/%u\n",
-				  state->request->data.auth_crap.lm_resp_len,
-				  state->request->data.auth_crap.nt_resp_len));
-			result = NT_STATUS_INVALID_PARAMETER;
-			goto done;
-		}
-	}
 
 	lm_resp = data_blob_talloc(state->mem_ctx, state->request->data.auth_crap.lm_resp,
 					state->request->data.auth_crap.lm_resp_len);

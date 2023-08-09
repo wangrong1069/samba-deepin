@@ -2,7 +2,6 @@ libsmbclient-ensure-lfs-221618.patch
 README_nosmbldap-tools.patch
 smbclient-pager.patch
 usershare.patch
-VERSION.patch
 heimdal-rfc3454.txt
 add-so-version-to-private-libraries
 smbd.service-Run-update-apparmor-samba-profile-befor.patch
@@ -12,8 +11,12 @@ Force-LDB-as-standalone.patch
 use-bzero-instead-of-memset_s.diff
 weak-crypto-allowed-clarify.diff
 spelling.patch
-waf-add-support-for-GNU-kFreeBSD.patch
 ctdb_etcd_lock-path.patch
+ctdb-create-piddir.patch
 silence-waf-uselib_local.diff
 disable-setuid-confchecks.patch
+move-msg.sock-from-var-lib-samba-to-run-samba.patch
+testparm-do-not-fail-if-pid-dir-does-not-exist.patch
+add-missing-libs-deps.diff
+dont-ignore-errors-in-random-number-generation-CVE-2022-1615.patch
 add-sunway-support.patch

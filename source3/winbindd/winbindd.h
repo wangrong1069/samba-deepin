@@ -43,6 +43,9 @@
 
 #define WB_REPLACE_CHAR		'_'
 
+struct winbind_internal_pipes;
+struct ads_struct;
+
 struct winbindd_cli_state {
 	struct winbindd_cli_state *prev, *next;   /* Linked list pointers */
 	int sock;                                 /* Open socket from client */
@@ -153,9 +156,10 @@ struct winbindd_domain {
 	 */
 	struct winbindd_methods *backend;
 
-        /* Private data for the backends (used for connection cache) */
-
-	void *private_data;
+	struct {
+		struct winbind_internal_pipes *samr_pipes;
+		struct ads_struct *ads_conn;
+	} backend_data;
 
 	/* A working DC */
 	char *dcname;

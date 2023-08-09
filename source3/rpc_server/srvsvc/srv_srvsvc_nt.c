@@ -536,6 +536,7 @@ static bool is_hidden_share(int snum)
 static bool is_enumeration_allowed(struct pipes_struct *p,
                                    int snum)
 {
+	bool allowed;
 	struct dcesrv_call_state *dce_call = p->dce_call;
 	struct auth_session_info *session_info =
 		dcesrv_call_session_info(dce_call);
@@ -552,9 +553,19 @@ static bool is_enumeration_allowed(struct pipes_struct *p,
 		return false;
 	}
 
-	return share_access_check(session_info->security_token,
-				  lp_servicename(talloc_tos(), lp_sub, snum),
-				  FILE_READ_DATA, NULL);
+
+	/*
+	 * share_access_check() must be opened as root
+	 * because it ultimately gets a R/W db handle on share_info.tdb
+	 * which has 0o600 permissions
+	 */
+	become_root();
+	allowed = share_access_check(session_info->security_token,
+				     lp_servicename(talloc_tos(), lp_sub, snum),
+				     FILE_READ_DATA, NULL);
+	unbecome_root();
+
+	return allowed;
 }
 
 /****************************************************************************
@@ -610,6 +621,9 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 				      uint32_t *total_entries,
 				      bool all_shares)
 {
+	struct dcesrv_call_state *dce_call = p->dce_call;
+	struct auth_session_info *session_info =
+		dcesrv_call_session_info(dce_call);
 	const struct loadparm_substitution *lp_sub =
 		loadparm_s3_global_substitution();
 	uint32_t num_entries = 0;
@@ -622,19 +636,42 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 	bool *allowed = 0;
 	union srvsvc_NetShareCtr ctr;
 	uint32_t resume_handle = resume_handle_p ? *resume_handle_p : 0;
+	const char *unix_name = session_info->unix_info->unix_name;
+	int existing_home = -1;
+	int added_home = -1;
+	WERROR ret = WERR_OK;
 
 	DEBUG(5,("init_srv_share_info_ctr\n"));
 
-	/* Ensure all the usershares are loaded. */
+	/*
+	 * We need to make sure to reload the services for the connecting user.
+	 * It is possible that we have includes with substitutions.
+	 *
+	 *  include = /etc/samba/%U.conf
+	 *
+	 * We also need all printers and usershares.
+	 *
+	 * We need to be root in order to have access to registry shares
+	 * and root only smb.conf files.
+	 */
 	become_root();
+	lp_kill_all_services();
+	lp_load_with_shares(get_dyn_CONFIGFILE());
 	delete_and_reload_printers();
 	load_usershare_shares(NULL, connections_snum_used);
 	load_registry_shares();
-	num_services = lp_numservices();
+	existing_home = lp_servicenumber(unix_name);
+	if (existing_home == -1) {
+		added_home = register_homes_share(unix_name);
+	}
 	unbecome_root();
 
+	num_services = lp_numservices();
+
         allowed = talloc_zero_array(ctx, bool, num_services);
-        W_ERROR_HAVE_NO_MEMORY(allowed);
+	if (allowed == NULL) {
+		goto nomem;
+	}
 
         /* Count the number of entries. */
         for (snum = 0; snum < num_services; snum++) {
@@ -652,7 +689,7 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
         }
 
 	if (!num_entries || (resume_handle >= num_entries)) {
-		return WERR_OK;
+		goto done;
 	}
 
 	/* Calculate alloc entries. */
@@ -660,11 +697,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 	switch (info_ctr->level) {
 	case 0:
 		ctr.ctr0 = talloc_zero(ctx, struct srvsvc_NetShareCtr0);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr0);
+		if (ctr.ctr0 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr0->count = alloc_entries;
 		ctr.ctr0->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo0, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr0->array);
+		if (ctr.ctr0->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -677,11 +718,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 1:
 		ctr.ctr1 = talloc_zero(ctx, struct srvsvc_NetShareCtr1);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1);
+		if (ctr.ctr1 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr1->count = alloc_entries;
 		ctr.ctr1->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo1, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1->array);
+		if (ctr.ctr1->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -694,11 +739,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 2:
 		ctr.ctr2 = talloc_zero(ctx, struct srvsvc_NetShareCtr2);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr2);
+		if (ctr.ctr2 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr2->count = alloc_entries;
 		ctr.ctr2->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo2, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr2->array);
+		if (ctr.ctr2->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -712,11 +761,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 501:
 		ctr.ctr501 = talloc_zero(ctx, struct srvsvc_NetShareCtr501);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr501);
+		if (ctr.ctr501 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr501->count = alloc_entries;
 		ctr.ctr501->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo501, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr501->array);
+		if (ctr.ctr501->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -729,11 +782,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 502:
 		ctr.ctr502 = talloc_zero(ctx, struct srvsvc_NetShareCtr502);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr502);
+		if (ctr.ctr502 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr502->count = alloc_entries;
 		ctr.ctr502->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo502, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr502->array);
+		if (ctr.ctr502->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -746,11 +803,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 1004:
 		ctr.ctr1004 = talloc_zero(ctx, struct srvsvc_NetShareCtr1004);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1004);
+		if (ctr.ctr1004 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr1004->count = alloc_entries;
 		ctr.ctr1004->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo1004, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1004->array);
+		if (ctr.ctr1004->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -763,11 +824,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 1005:
 		ctr.ctr1005 = talloc_zero(ctx, struct srvsvc_NetShareCtr1005);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1005);
+		if (ctr.ctr1005 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr1005->count = alloc_entries;
 		ctr.ctr1005->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo1005, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1005->array);
+		if (ctr.ctr1005->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -780,11 +845,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 1006:
 		ctr.ctr1006 = talloc_zero(ctx, struct srvsvc_NetShareCtr1006);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1006);
+		if (ctr.ctr1006 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr1006->count = alloc_entries;
 		ctr.ctr1006->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo1006, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1006->array);
+		if (ctr.ctr1006->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -797,11 +866,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 1007:
 		ctr.ctr1007 = talloc_zero(ctx, struct srvsvc_NetShareCtr1007);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1007);
+		if (ctr.ctr1007 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr1007->count = alloc_entries;
 		ctr.ctr1007->array = talloc_zero_array(ctx, struct srvsvc_NetShareInfo1007, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1007->array);
+		if (ctr.ctr1007->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -814,11 +887,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 
 	case 1501:
 		ctr.ctr1501 = talloc_zero(ctx, struct srvsvc_NetShareCtr1501);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1501);
+		if (ctr.ctr1501 == NULL) {
+			goto nomem;
+		}
 
 		ctr.ctr1501->count = alloc_entries;
 		ctr.ctr1501->array = talloc_zero_array(ctx, struct sec_desc_buf, alloc_entries);
-		W_ERROR_HAVE_NO_MEMORY(ctr.ctr1501->array);
+		if (ctr.ctr1501->array == NULL) {
+			goto nomem;
+		}
 
 		for (snum = 0; snum < num_services; snum++) {
 			if (allowed[snum] &&
@@ -834,7 +911,8 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 	default:
 		DEBUG(5,("init_srv_share_info_ctr: unsupported switch value %d\n",
 			info_ctr->level));
-		return WERR_INVALID_LEVEL;
+		ret = WERR_INVALID_LEVEL;
+		goto done;
 	}
 
 	*total_entries = alloc_entries;
@@ -847,8 +925,15 @@ static WERROR init_srv_share_info_ctr(struct pipes_struct *p,
 	}
 
 	info_ctr->ctr = ctr;
-
-	return WERR_OK;
+	ret = WERR_OK;
+	goto done;
+nomem:
+	ret = WERR_NOT_ENOUGH_MEMORY;
+done:
+	if (added_home != -1) {
+		lp_killservice(added_home);
+	}
+	return ret;
 }
 
 /*******************************************************************
@@ -2511,7 +2596,7 @@ WERROR _srvsvc_NetGetFileSecurity(struct pipes_struct *p,
 		goto error_exit;
 	}
 
-	nt_status = SMB_VFS_FGET_NT_ACL(fsp,
+	nt_status = SMB_VFS_FGET_NT_ACL(metadata_fsp(fsp),
 				       (SECINFO_OWNER
 					|SECINFO_GROUP
 					|SECINFO_DACL), sd_buf, &sd_buf->sd);

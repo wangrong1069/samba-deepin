@@ -13,7 +13,6 @@ usr/bin/ping_pong
 usr/libexec/ctdb/
 usr/lib/*/samba/libctdb-event-client-samba4.so.0
 usr/lib/*/samba/libtalloc-report-samba4.so.0
-usr/lib/tmpfiles.d/ctdb.conf
 usr/sbin/ctdbd
 usr/sbin/ctdbd_wrapper
 usr/share/ctdb/events/legacy/*.script
@@ -30,5 +29,5 @@ usr/share/man/man5/ctdb.sysconfig.5
 usr/share/man/man7/ctdb-etcd.7
 usr/share/man/man7/ctdb-statistics.7
 usr/share/man/man7/ctdb-tunables.7
-[amd64 arm64 armel armhf i386 mips64el mipsel ppc64el ppc64 s390x x32] usr/share/man/man7/ctdb_mutex_ceph_rados_helper.7
+[amd64 arm64 armel armhf i386 mips64el mipsel ppc64el s390x] usr/share/man/man7/ctdb_mutex_ceph_rados_helper.7
 usr/share/man/man7/ctdb.7

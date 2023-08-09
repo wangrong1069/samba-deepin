@@ -1253,7 +1253,7 @@ static bool user_can_read_fsp(struct files_struct *fsp)
 		return false;
         }
 
-	status = SMB_VFS_FGET_NT_ACL(fsp,
+	status = SMB_VFS_FGET_NT_ACL(metadata_fsp(fsp),
 			(SECINFO_OWNER |
 			 SECINFO_GROUP |
 			 SECINFO_DACL),
@@ -2019,11 +2019,17 @@ NTSTATUS can_delete_directory_fsp(files_struct *fsp)
 		}
 
 		if (!is_visible_fsp(direntry_fname->fsp)) {
-			TALLOC_FREE(talloced);
-			TALLOC_FREE(fullname);
-			TALLOC_FREE(smb_dname_full);
-			TALLOC_FREE(direntry_fname);
-			continue;
+			/*
+			 * Hidden file.
+			 * Allow if "delete veto files = yes"
+			 */
+			if (lp_delete_veto_files(SNUM(conn))) {
+				TALLOC_FREE(talloced);
+				TALLOC_FREE(fullname);
+				TALLOC_FREE(smb_dname_full);
+				TALLOC_FREE(direntry_fname);
+				continue;
+			}
 		}
 
 		TALLOC_FREE(talloced);

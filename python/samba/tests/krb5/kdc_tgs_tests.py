@@ -23,7 +23,7 @@ import os
 import ldb
 
 
-from samba import dsdb
+from samba import dsdb, ntstatus
 
 from samba.dcerpc import krb5pac, security
 
@@ -38,11 +38,14 @@ from samba.tests.krb5.rfc4120_constants import (
     ARCFOUR_HMAC_MD5,
     KRB_ERROR,
     KRB_TGS_REP,
+    KDC_ERR_BADKEYVER,
     KDC_ERR_BADMATCH,
+    KDC_ERR_ETYPE_NOSUPP,
     KDC_ERR_GENERIC,
     KDC_ERR_MODIFIED,
     KDC_ERR_NOT_US,
     KDC_ERR_POLICY,
+    KDC_ERR_PREAUTH_REQUIRED,
     KDC_ERR_C_PRINCIPAL_UNKNOWN,
     KDC_ERR_S_PRINCIPAL_UNKNOWN,
     KDC_ERR_TGT_REVOKED,
@@ -58,7 +61,251 @@ global_asn1_print = False
 global_hexdump = False
 
 
-class KdcTgsTests(KDCBaseTest):
+class KdcTgsBaseTests(KDCBaseTest):
+    def _as_req(self,
+                creds,
+                expected_error,
+                target_creds,
+                etype,
+                expected_ticket_etype=None):
+        user_name = creds.get_username()
+        cname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
+                                          names=user_name.split('/'))
+
+        target_name = target_creds.get_username()
+        sname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
+                                          names=['host', target_name[:-1]])
+
+        if expected_error:
+            expected_sname = sname
+        else:
+            expected_sname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
+                                                       names=[target_name])
+
+        realm = creds.get_realm()
+        salt = creds.get_salt()
+
+        till = self.get_KerberosTime(offset=36000)
+
+        ticket_decryption_key = (
+            self.TicketDecryptionKey_from_creds(target_creds,
+                                                etype=expected_ticket_etype))
+        expected_etypes = target_creds.tgs_supported_enctypes
+
+        kdc_options = ('forwardable,'
+                       'renewable,'
+                       'canonicalize,'
+                       'renewable-ok')
+        kdc_options = krb5_asn1.KDCOptions(kdc_options)
+
+        if expected_error:
+            initial_error = (KDC_ERR_PREAUTH_REQUIRED, expected_error)
+        else:
+            initial_error = KDC_ERR_PREAUTH_REQUIRED
+
+        rep, kdc_exchange_dict = self._test_as_exchange(
+            cname=cname,
+            realm=realm,
+            sname=sname,
+            till=till,
+            client_as_etypes=etype,
+            expected_error_mode=initial_error,
+            expected_crealm=realm,
+            expected_cname=cname,
+            expected_srealm=realm,
+            expected_sname=sname,
+            expected_salt=salt,
+            expected_supported_etypes=expected_etypes,
+            etypes=etype,
+            padata=None,
+            kdc_options=kdc_options,
+            preauth_key=None,
+            ticket_decryption_key=ticket_decryption_key)
+        self.assertIsNotNone(rep)
+        self.assertEqual(KRB_ERROR, rep['msg-type'])
+        error_code = rep['error-code']
+        if expected_error:
+            self.assertIn(error_code, initial_error)
+            if error_code == expected_error:
+                return
+        else:
+            self.assertEqual(initial_error, error_code)
+
+        etype_info2 = kdc_exchange_dict['preauth_etype_info2']
+
+        preauth_key = self.PasswordKey_from_etype_info2(creds,
+                                                        etype_info2[0],
+                                                        creds.get_kvno())
+
+        ts_enc_padata = self.get_enc_timestamp_pa_data_from_key(preauth_key)
+
+        padata = [ts_enc_padata]
+
+        expected_realm = realm.upper()
+
+        rep, kdc_exchange_dict = self._test_as_exchange(
+            cname=cname,
+            realm=realm,
+            sname=sname,
+            till=till,
+            client_as_etypes=etype,
+            expected_error_mode=expected_error,
+            expected_crealm=expected_realm,
+            expected_cname=cname,
+            expected_srealm=expected_realm,
+            expected_sname=expected_sname,
+            expected_salt=salt,
+            expected_supported_etypes=expected_etypes,
+            etypes=etype,
+            padata=padata,
+            kdc_options=kdc_options,
+            preauth_key=preauth_key,
+            ticket_decryption_key=ticket_decryption_key,
+            expect_edata=False)
+        if expected_error:
+            self.check_error_rep(rep, expected_error)
+            return None
+
+        self.check_as_reply(rep)
+        return kdc_exchange_dict['rep_ticket_creds']
+
+    def _tgs_req(self, tgt, expected_error, target_creds,
+                 armor_tgt=None,
+                 kdc_options='0',
+                 expected_cname=None,
+                 expected_sname=None,
+                 additional_ticket=None,
+                 generate_padata_fn=None,
+                 sname=None,
+                 srealm=None,
+                 use_fast=False,
+                 expect_claims=True,
+                 etypes=None,
+                 expected_ticket_etype=None,
+                 expected_supported_etypes=None,
+                 expect_pac=True,
+                 expect_pac_attrs=None,
+                 expect_pac_attrs_pac_request=None,
+                 expect_requester_sid=None,
+                 expect_edata=False,
+                 expected_sid=None,
+                 expected_status=None):
+        if srealm is False:
+            srealm = None
+        elif srealm is None:
+            srealm = target_creds.get_realm()
+
+        if sname is False:
+            sname = None
+            if expected_sname is None:
+                expected_sname = self.get_krbtgt_sname()
+        else:
+            if sname is None:
+                target_name = target_creds.get_username()
+                if target_name == 'krbtgt':
+                    sname = self.PrincipalName_create(
+                        name_type=NT_SRV_INST,
+                        names=[target_name, srealm])
+                else:
+                    if target_name[-1] == '$':
+                        target_name = target_name[:-1]
+                    sname = self.PrincipalName_create(
+                        name_type=NT_PRINCIPAL,
+                        names=['host', target_name])
+
+            if expected_sname is None:
+                expected_sname = sname
+
+        if additional_ticket is not None:
+            additional_tickets = [additional_ticket.ticket]
+            decryption_key = additional_ticket.session_key
+        else:
+            additional_tickets = None
+            decryption_key = self.TicketDecryptionKey_from_creds(
+                target_creds, etype=expected_ticket_etype)
+
+        subkey = self.RandomKey(tgt.session_key.etype)
+
+        if armor_tgt is not None:
+            armor_subkey = self.RandomKey(subkey.etype)
+            explicit_armor_key = self.generate_armor_key(armor_subkey,
+                                                         armor_tgt.session_key)
+            armor_key = kcrypto.cf2(explicit_armor_key.key,
+                                    subkey.key,
+                                    b'explicitarmor',
+                                    b'tgsarmor')
+            armor_key = Krb5EncryptionKey(armor_key, None)
+
+            generate_fast_fn = self.generate_simple_fast
+            generate_fast_armor_fn = self.generate_ap_req
+
+            pac_options = '1'  # claims support
+        else:
+            armor_subkey = None
+            armor_key = None
+            generate_fast_fn = None
+            generate_fast_armor_fn = None
+
+            pac_options = None
+
+        if etypes is None:
+            etypes = (AES256_CTS_HMAC_SHA1_96, ARCFOUR_HMAC_MD5)
+
+        if expected_error:
+            check_error_fn = self.generic_check_kdc_error
+            check_rep_fn = None
+        else:
+            check_error_fn = None
+            check_rep_fn = self.generic_check_kdc_rep
+
+        if expected_cname is None:
+            expected_cname = tgt.cname
+
+        kdc_exchange_dict = self.tgs_exchange_dict(
+            expected_crealm=tgt.crealm,
+            expected_cname=expected_cname,
+            expected_srealm=srealm,
+            expected_sname=expected_sname,
+            ticket_decryption_key=decryption_key,
+            generate_padata_fn=generate_padata_fn,
+            generate_fast_fn=generate_fast_fn,
+            generate_fast_armor_fn=generate_fast_armor_fn,
+            check_error_fn=check_error_fn,
+            check_rep_fn=check_rep_fn,
+            check_kdc_private_fn=self.generic_check_kdc_private,
+            expected_error_mode=expected_error,
+            expected_status=expected_status,
+            tgt=tgt,
+            armor_key=armor_key,
+            armor_tgt=armor_tgt,
+            armor_subkey=armor_subkey,
+            pac_options=pac_options,
+            authenticator_subkey=subkey,
+            kdc_options=kdc_options,
+            expected_supported_etypes=expected_supported_etypes,
+            expect_edata=expect_edata,
+            expect_pac=expect_pac,
+            expect_pac_attrs=expect_pac_attrs,
+            expect_pac_attrs_pac_request=expect_pac_attrs_pac_request,
+            expect_requester_sid=expect_requester_sid,
+            expected_sid=expected_sid,
+            expect_claims=expect_claims)
+
+        rep = self._generic_kdc_exchange(kdc_exchange_dict,
+                                         cname=None,
+                                         realm=srealm,
+                                         sname=sname,
+                                         etypes=etypes,
+                                         additional_tickets=additional_tickets)
+        if expected_error:
+            self.check_error_rep(rep, expected_error)
+            return None
+        else:
+            self.check_reply(rep, KRB_TGS_REP)
+            return kdc_exchange_dict['rep_ticket_creds']
+
+
+class KdcTgsTests(KdcTgsBaseTests):
 
     def setUp(self):
         super().setUp()
@@ -230,90 +477,6 @@ class KdcTgsTests(KDCBaseTest):
             sid,
             pac_data.account_sid,
             "rep = {%s},%s" % (rep, pac_data))
-
-    def _make_tgs_request(self, client_creds, service_creds, tgt,
-                          client_account=None,
-                          client_name_type=NT_PRINCIPAL,
-                          kdc_options=None,
-                          pac_request=None, expect_pac=True,
-                          expect_error=False,
-                          expected_cname=None,
-                          expected_account_name=None,
-                          expected_upn_name=None,
-                          expected_sid=None):
-        if client_account is None:
-            client_account = client_creds.get_username()
-        cname = self.PrincipalName_create(name_type=client_name_type,
-                                          names=client_account.split('/'))
-
-        service_account = service_creds.get_username()
-        sname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
-                                          names=[service_account])
-
-        realm = service_creds.get_realm()
-
-        expected_crealm = realm
-        if expected_cname is None:
-            expected_cname = cname
-        expected_srealm = realm
-        expected_sname = sname
-
-        expected_supported_etypes = service_creds.tgs_supported_enctypes
-
-        etypes = (AES256_CTS_HMAC_SHA1_96, ARCFOUR_HMAC_MD5)
-
-        if kdc_options is None:
-            kdc_options = 'canonicalize'
-        kdc_options = str(krb5_asn1.KDCOptions(kdc_options))
-
-        target_decryption_key = self.TicketDecryptionKey_from_creds(
-            service_creds)
-
-        authenticator_subkey = self.RandomKey(kcrypto.Enctype.AES256)
-
-        if expect_error:
-            expected_error_mode = KDC_ERR_TGT_REVOKED
-            check_error_fn = self.generic_check_kdc_error
-            check_rep_fn = None
-        else:
-            expected_error_mode = 0
-            check_error_fn = None
-            check_rep_fn = self.generic_check_kdc_rep
-
-        kdc_exchange_dict = self.tgs_exchange_dict(
-            expected_crealm=expected_crealm,
-            expected_cname=expected_cname,
-            expected_srealm=expected_srealm,
-            expected_sname=expected_sname,
-            expected_account_name=expected_account_name,
-            expected_upn_name=expected_upn_name,
-            expected_sid=expected_sid,
-            expected_supported_etypes=expected_supported_etypes,
-            ticket_decryption_key=target_decryption_key,
-            check_error_fn=check_error_fn,
-            check_rep_fn=check_rep_fn,
-            check_kdc_private_fn=self.generic_check_kdc_private,
-            expected_error_mode=expected_error_mode,
-            tgt=tgt,
-            authenticator_subkey=authenticator_subkey,
-            kdc_options=kdc_options,
-            pac_request=pac_request,
-            expect_pac=expect_pac,
-            expect_edata=False)
-
-        rep = self._generic_kdc_exchange(kdc_exchange_dict,
-                                         cname=cname,
-                                         realm=realm,
-                                         sname=sname,
-                                         etypes=etypes)
-        if expect_error:
-            self.check_error_rep(rep, expected_error_mode)
-
-            return None
-        else:
-            self.check_reply(rep, KRB_TGS_REP)
-
-            return kdc_exchange_dict['rep_ticket_creds']
 
     def test_request(self):
         client_creds = self.get_client_creds()
@@ -1437,6 +1600,52 @@ class KdcTgsTests(KDCBaseTest):
         self._fast(tgt, creds, expected_error=KDC_ERR_TGT_REVOKED,
                    expected_sname=self.get_krbtgt_sname())
 
+    # Test making a TGS request with an RC4-encrypted TGT.
+    def test_tgs_rc4(self):
+        creds = self._get_creds()
+        tgt = self._get_tgt(creds, etype=kcrypto.Enctype.RC4)
+        self._run_tgs(tgt, expected_error=(KDC_ERR_GENERIC,
+                                           KDC_ERR_BADKEYVER),
+                      expect_edata=True,
+                      expected_status=ntstatus.NT_STATUS_INSUFFICIENT_RESOURCES)
+
+    def test_renew_rc4(self):
+        creds = self._get_creds()
+        tgt = self._get_tgt(creds, renewable=True, etype=kcrypto.Enctype.RC4)
+        self._renew_tgt(tgt, expected_error=(KDC_ERR_GENERIC,
+                                             KDC_ERR_BADKEYVER),
+                        expect_pac_attrs=True,
+                        expect_pac_attrs_pac_request=True,
+                        expect_requester_sid=True)
+
+    def test_validate_rc4(self):
+        creds = self._get_creds()
+        tgt = self._get_tgt(creds, invalid=True, etype=kcrypto.Enctype.RC4)
+        self._validate_tgt(tgt, expected_error=(KDC_ERR_GENERIC,
+                                                KDC_ERR_BADKEYVER),
+                           expect_pac_attrs=True,
+                           expect_pac_attrs_pac_request=True,
+                           expect_requester_sid=True)
+
+    def test_s4u2self_rc4(self):
+        creds = self._get_creds()
+        tgt = self._get_tgt(creds, etype=kcrypto.Enctype.RC4)
+        self._s4u2self(tgt, creds, expected_error=(KDC_ERR_GENERIC,
+                                                   KDC_ERR_BADKEYVER),
+                       expect_edata=True,
+                       expected_status=ntstatus.NT_STATUS_INSUFFICIENT_RESOURCES)
+
+    def test_user2user_rc4(self):
+        creds = self._get_creds()
+        tgt = self._get_tgt(creds, etype=kcrypto.Enctype.RC4)
+        self._user2user(tgt, creds, expected_error=KDC_ERR_ETYPE_NOSUPP)
+
+    def test_fast_rc4(self):
+        creds = self._get_creds()
+        tgt = self._get_tgt(creds, etype=kcrypto.Enctype.RC4)
+        self._fast(tgt, creds, expected_error=KDC_ERR_GENERIC,
+                   expect_edata=self.expect_padata_outer)
+
     # Test user-to-user with incorrect service principal names.
     def test_user2user_matching_sname_host(self):
         creds = self._get_creds()
@@ -2419,14 +2628,7 @@ class KdcTgsTests(KDCBaseTest):
 
     def _modify_renewable(self, enc_part):
         # Set the renewable flag.
-        renewable_flag = krb5_asn1.TicketFlags('renewable')
-        pos = len(tuple(renewable_flag)) - 1
-
-        flags = enc_part['flags']
-        self.assertLessEqual(pos, len(flags))
-
-        new_flags = flags[:pos] + '1' + flags[pos + 1:]
-        enc_part['flags'] = new_flags
+        enc_part = self.modify_ticket_flag(enc_part, 'renewable', value=True)
 
         # Set the renew-till time to be in the future.
         renew_till = self.get_KerberosTime(offset=100 * 60 * 60)
@@ -2436,14 +2638,7 @@ class KdcTgsTests(KDCBaseTest):
 
     def _modify_invalid(self, enc_part):
         # Set the invalid flag.
-        invalid_flag = krb5_asn1.TicketFlags('invalid')
-        pos = len(tuple(invalid_flag)) - 1
-
-        flags = enc_part['flags']
-        self.assertLessEqual(pos, len(flags))
-
-        new_flags = flags[:pos] + '1' + flags[pos + 1:]
-        enc_part['flags'] = new_flags
+        enc_part = self.modify_ticket_flag(enc_part, 'invalid', value=True)
 
         # Set the ticket start time to be in the past.
         past_time = self.get_KerberosTime(offset=-100 * 60 * 60)
@@ -2462,7 +2657,9 @@ class KdcTgsTests(KDCBaseTest):
                  can_modify_logon_info=True,
                  can_modify_requester_sid=True,
                  remove_pac_attrs=False,
-                 remove_requester_sid=False):
+                 remove_requester_sid=False,
+                 etype=None,
+                 cksum_etype=None):
         self.assertFalse(renewable and invalid)
 
         if remove_pac:
@@ -2481,7 +2678,9 @@ class KdcTgsTests(KDCBaseTest):
             can_modify_logon_info=can_modify_logon_info,
             can_modify_requester_sid=can_modify_requester_sid,
             remove_pac_attrs=remove_pac_attrs,
-            remove_requester_sid=remove_requester_sid)
+            remove_requester_sid=remove_requester_sid,
+            etype=etype,
+            cksum_etype=cksum_etype)
 
     def _modify_tgt(self,
                     tgt,
@@ -2496,7 +2695,9 @@ class KdcTgsTests(KDCBaseTest):
                     can_modify_logon_info=True,
                     can_modify_requester_sid=True,
                     remove_pac_attrs=False,
-                    remove_requester_sid=False):
+                    remove_requester_sid=False,
+                    etype=None,
+                    cksum_etype=None):
         if from_rodc:
             krbtgt_creds = self.get_mock_rodc_krbtgt_creds()
         else:
@@ -2535,13 +2736,19 @@ class KdcTgsTests(KDCBaseTest):
         else:
             change_sid_fn = None
 
-        krbtgt_key = self.TicketDecryptionKey_from_creds(krbtgt_creds)
+        krbtgt_key = self.TicketDecryptionKey_from_creds(krbtgt_creds,
+                                                         etype)
 
         if remove_pac:
             checksum_keys = None
         else:
+            if etype == cksum_etype:
+                cksum_key = krbtgt_key
+            else:
+                cksum_key = self.TicketDecryptionKey_from_creds(krbtgt_creds,
+                                                                cksum_etype)
             checksum_keys = {
-                krb5pac.PAC_TYPE_KDC_CHECKSUM: krbtgt_key
+                krb5pac.PAC_TYPE_KDC_CHECKSUM: cksum_key
             }
 
         if renewable:
@@ -2694,7 +2901,8 @@ class KdcTgsTests(KDCBaseTest):
 
     def _run_tgs(self, tgt, expected_error, expect_pac=True,
                  expect_pac_attrs=None, expect_pac_attrs_pac_request=None,
-                 expect_requester_sid=None, expected_sid=None):
+                 expect_requester_sid=None, expected_sid=None,
+                 expect_edata=False, expected_status=None):
         target_creds = self.get_service_creds()
         return self._tgs_req(
             tgt, expected_error, target_creds,
@@ -2702,7 +2910,9 @@ class KdcTgsTests(KDCBaseTest):
             expect_pac_attrs=expect_pac_attrs,
             expect_pac_attrs_pac_request=expect_pac_attrs_pac_request,
             expect_requester_sid=expect_requester_sid,
-            expected_sid=expected_sid)
+            expected_sid=expected_sid,
+            expect_edata=expect_edata,
+            expected_status=expected_status)
 
     # These tests fail against Windows, which does not implement ticket
     # renewal.
@@ -2766,7 +2976,8 @@ class KdcTgsTests(KDCBaseTest):
                              expect_pac=expect_pac)
 
     def _user2user(self, tgt, tgt_creds, expected_error, sname=None,
-                   srealm=None, user_tgt=None, expect_pac=True):
+                   srealm=None, user_tgt=None, expect_pac=True,
+                   expected_status=None):
         if user_tgt is None:
             user_creds = self._get_mach_creds()
             user_tgt = self.get_tgt(user_creds)
@@ -2777,10 +2988,11 @@ class KdcTgsTests(KDCBaseTest):
                              additional_ticket=tgt,
                              sname=sname,
                              srealm=srealm,
-                             expect_pac=expect_pac)
+                             expect_pac=expect_pac,
+                             expected_status=expected_status)
 
     def _fast(self, armor_tgt, armor_tgt_creds, expected_error,
-              expected_sname=None, expect_pac=True):
+              expected_sname=None, expect_pac=True, expect_edata=False):
         user_creds = self._get_mach_creds()
         user_tgt = self.get_tgt(user_creds)
 
@@ -2789,137 +3001,8 @@ class KdcTgsTests(KDCBaseTest):
         return self._tgs_req(user_tgt, expected_error, target_creds,
                              armor_tgt=armor_tgt,
                              expected_sname=expected_sname,
-                             expect_pac=expect_pac)
-
-    def _tgs_req(self, tgt, expected_error, target_creds,
-                 armor_tgt=None,
-                 kdc_options='0',
-                 expected_cname=None,
-                 expected_sname=None,
-                 additional_ticket=None,
-                 generate_padata_fn=None,
-                 sname=None,
-                 srealm=None,
-                 use_fast=False,
-                 expect_claims=True,
-                 expect_pac=True,
-                 expect_pac_attrs=None,
-                 expect_pac_attrs_pac_request=None,
-                 expect_requester_sid=None,
-                 expect_edata=False,
-                 expected_sid=None,
-                 expected_status=None):
-        if srealm is False:
-            srealm = None
-        elif srealm is None:
-            srealm = target_creds.get_realm()
-
-        if sname is False:
-            sname = None
-            if expected_sname is None:
-                expected_sname = self.get_krbtgt_sname()
-        else:
-            if sname is None:
-                target_name = target_creds.get_username()
-                if target_name == 'krbtgt':
-                    sname = self.PrincipalName_create(
-                        name_type=NT_SRV_INST,
-                        names=[target_name, srealm])
-                else:
-                    if target_name[-1] == '$':
-                        target_name = target_name[:-1]
-                    sname = self.PrincipalName_create(
-                        name_type=NT_PRINCIPAL,
-                        names=['host', target_name])
-
-            if expected_sname is None:
-                expected_sname = sname
-
-        if additional_ticket is not None:
-            additional_tickets = [additional_ticket.ticket]
-            decryption_key = additional_ticket.session_key
-        else:
-            additional_tickets = None
-            decryption_key = self.TicketDecryptionKey_from_creds(
-                target_creds)
-
-        subkey = self.RandomKey(tgt.session_key.etype)
-
-        if armor_tgt is not None:
-            armor_subkey = self.RandomKey(subkey.etype)
-            explicit_armor_key = self.generate_armor_key(armor_subkey,
-                                                         armor_tgt.session_key)
-            armor_key = kcrypto.cf2(explicit_armor_key.key,
-                                    subkey.key,
-                                    b'explicitarmor',
-                                    b'tgsarmor')
-            armor_key = Krb5EncryptionKey(armor_key, None)
-
-            generate_fast_fn = self.generate_simple_fast
-            generate_fast_armor_fn = self.generate_ap_req
-
-            pac_options = '1'  # claims support
-        else:
-            armor_subkey = None
-            armor_key = None
-            generate_fast_fn = None
-            generate_fast_armor_fn = None
-
-            pac_options = None
-
-        etypes = (AES256_CTS_HMAC_SHA1_96, ARCFOUR_HMAC_MD5)
-
-        if expected_error:
-            check_error_fn = self.generic_check_kdc_error
-            check_rep_fn = None
-        else:
-            check_error_fn = None
-            check_rep_fn = self.generic_check_kdc_rep
-
-        if expected_cname is None:
-            expected_cname = tgt.cname
-
-        kdc_exchange_dict = self.tgs_exchange_dict(
-            expected_crealm=tgt.crealm,
-            expected_cname=expected_cname,
-            expected_srealm=srealm,
-            expected_sname=expected_sname,
-            ticket_decryption_key=decryption_key,
-            generate_padata_fn=generate_padata_fn,
-            generate_fast_fn=generate_fast_fn,
-            generate_fast_armor_fn=generate_fast_armor_fn,
-            check_error_fn=check_error_fn,
-            check_rep_fn=check_rep_fn,
-            check_kdc_private_fn=self.generic_check_kdc_private,
-            expected_error_mode=expected_error,
-            expected_status=expected_status,
-            tgt=tgt,
-            armor_key=armor_key,
-            armor_tgt=armor_tgt,
-            armor_subkey=armor_subkey,
-            pac_options=pac_options,
-            authenticator_subkey=subkey,
-            kdc_options=kdc_options,
-            expect_edata=expect_edata,
-            expect_pac=expect_pac,
-            expect_pac_attrs=expect_pac_attrs,
-            expect_pac_attrs_pac_request=expect_pac_attrs_pac_request,
-            expect_requester_sid=expect_requester_sid,
-            expected_sid=expected_sid,
-            expect_claims=expect_claims)
-
-        rep = self._generic_kdc_exchange(kdc_exchange_dict,
-                                         cname=None,
-                                         realm=srealm,
-                                         sname=sname,
-                                         etypes=etypes,
-                                         additional_tickets=additional_tickets)
-        if expected_error:
-            self.check_error_rep(rep, expected_error)
-            return None
-        else:
-            self.check_reply(rep, KRB_TGS_REP)
-            return kdc_exchange_dict['rep_ticket_creds']
+                             expect_pac=expect_pac,
+                             expect_edata=expect_edata)
 
 
 if __name__ == "__main__":

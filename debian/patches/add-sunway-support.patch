@@ -4,15 +4,13 @@ Author: Miao Changwei <miaochangwei@uniontech.com>
 ---
 Last-Update: 2022-05-15
 
-Index: samba/third_party/waf/waflib/Tools/c_config.py
-===================================================================
---- samba.orig/third_party/waf/waflib/Tools/c_config.py
-+++ samba/third_party/waf/waflib/Tools/c_config.py
-@@ -67,6 +67,7 @@ MACRO_TO_DEST_CPU = {
+--- a/third_party/waf/waflib/Tools/c_config.py
++++ b/third_party/waf/waflib/Tools/c_config.py
+@@ -67,6 +67,7 @@
  '__s390x__'   : 's390x',
  '__s390__'    : 's390',
  '__sh__'      : 'sh',
 +'__sw_64__'   : 'sw_64',
  '__xtensa__'  : 'xtensa',
  '__e2k__'     : 'e2k',
- }
+ '__riscv'     : 'riscv',

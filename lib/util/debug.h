@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    SMB debug stuff
    Copyright (C) Andrew Tridgell 1992-1998
@@ -23,6 +23,7 @@
 #ifndef _SAMBA_DEBUG_H
 #define _SAMBA_DEBUG_H
 
+#include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -49,7 +50,7 @@ bool dbgsetclass(int level, int cls);
 
 /*
  * Define all new debug classes here. A class is represented by an entry in
- * the DEBUGLEVEL_CLASS array. Index zero of this arrray is equivalent to the
+ * the DEBUGLEVEL_CLASS array. Index zero of this array is equivalent to the
  * old DEBUGLEVEL. Any source file that does NOT add the following lines:
  *
  *   #undef  DBGC_CLASS
@@ -112,7 +113,7 @@ bool dbgsetclass(int level, int cls);
  *
  * DEBUGLVL()
  *   If the 'file specific' debug class level >= level OR the system-wide
- *   DEBUGLEVEL (synomym for DEBUGLEVEL_CLASS[ DBGC_ALL ]) >= level then
+ *   DEBUGLEVEL (synonym for DEBUGLEVEL_CLASS[ DBGC_ALL ]) >= level then
  *   generate a header using the default macros for file, line, and
  *   function name. Returns True if the debug level was <= DEBUGLEVEL.
  *
@@ -120,7 +121,7 @@ bool dbgsetclass(int level, int cls);
  *
  * DEBUG()
  *   If the 'file specific' debug class level >= level OR the system-wide
- *   DEBUGLEVEL (synomym for DEBUGLEVEL_CLASS[ DBGC_ALL ]) >= level then
+ *   DEBUGLEVEL (synonym for DEBUGLEVEL_CLASS[ DBGC_ALL ]) >= level then
  *   generate a header using the default macros for file, line, and
  *   function name. Each call to DEBUG() generates a new header *unless* the
  *   previous debug output was unterminated (i.e. no '\n').
@@ -130,7 +131,7 @@ bool dbgsetclass(int level, int cls);
  *
  * DEBUGC()
  *   If the 'macro specified' debug class level >= level OR the system-wide
- *   DEBUGLEVEL (synomym for DEBUGLEVEL_CLASS[ DBGC_ALL ]) >= level then
+ *   DEBUGLEVEL (synonym for DEBUGLEVEL_CLASS[ DBGC_ALL ]) >= level then
  *   generate a header using the default macros for file, line, and
  *   function name. Each call to DEBUG() generates a new header *unless* the
  *   previous debug output was unterminated (i.e. no '\n').
@@ -138,7 +139,7 @@ bool dbgsetclass(int level, int cls);
  *
  *   Example: DEBUGC( DBGC_TDB, 2, ("Some text and a value %d.\n", value) );
  *
- *  DEBUGADD(), DEBUGADDC()
+ * DEBUGADD(), DEBUGADDC()
  *    Same as DEBUG() and DEBUGC() except the text is appended to the previous
  *    DEBUG(), DEBUGC(), DEBUGADD(), DEBUGADDC() with out another interviening
  *    header.
@@ -146,7 +147,7 @@ bool dbgsetclass(int level, int cls);
  *    Example: DEBUGADD( 2, ("Some text and a value %d.\n", value) );
  *             DEBUGADDC( DBGC_TDB, 2, ("Some text and a value %d.\n", value) );
  *
- * Note: If the debug class has not be redeined (see above) then the optimizer
+ * Note: If the debug class has not be redefined (see above) then the optimizer
  * will remove the extra conditional test.
  */
 
@@ -198,6 +199,25 @@ void debuglevel_set_class(size_t idx, int level);
        && (dbghdrclass( level, DBGC_CLASS, __location__, __FUNCTION__ )) \
        && (dbgtext body) )
 
+/**
+ * @brief DEBUGLF is same as DEBUG with explicit location and function arguments
+ *
+ * To be used when passing location and function of a caller appearig earlier in
+ * the call stack instead of some helper function.
+ *
+ * @code
+ *     DEBUGLF( 2, ("Some text.\n"), "foo.c:1", "foo" );
+ *     DEBUGLF( 5, ("Some text.\n"), location, function );
+ * @endcode
+ *
+ * @return void.
+ */
+#define DEBUGLF( level, body, location, function ) \
+  (void)( ((level) <= MAX_DEBUG_LEVEL) && \
+       unlikely(debuglevel_get_class(DBGC_CLASS) >= (level))     \
+       && (dbghdrclass( level, DBGC_CLASS, location, function )) \
+       && (dbgtext body) )
+
 #define DEBUGC( dbgc_class, level, body ) \
   (void)( ((level) <= MAX_DEBUG_LEVEL) && \
        unlikely(debuglevel_get_class(dbgc_class) >= (level))             \
@@ -235,6 +255,16 @@ void debuglevel_set_class(size_t idx, int level);
 		&& (dbghdrclass(level, dbgc_class, __location__, __func__ )) \
 		&& (dbgtext("%s: ", __func__))				\
 		&& (dbgtext body) )
+
+
+#ifdef DEVELOPER
+#define DBG_DEV(...) \
+  (void)( (debug_developer_enabled())				\
+	  && (dbgtext("%s:DEV:%d: ", __func__, getpid()))	\
+	  && (dbgtext(__VA_ARGS__)) )
+#else
+#define DBG_DEV(...) /* DBG_DEV was here */
+#endif
 
 /*
  * Debug levels matching RFC 3164
@@ -281,11 +311,11 @@ void debuglevel_set_class(size_t idx, int level);
 
 /* The following definitions come from lib/debug.c  */
 
-/** Possible destinations for the debug log (in order of precedence -
- * once set to DEBUG_FILE, it is not possible to reset to DEBUG_STDOUT
- * for example.  This makes it easy to override for debug to stderr on
- * the command line, as the smb.conf cannot reset it back to
- * file-based logging */
+/**
+ * Possible destinations for the debug log.
+ *
+ * Set via setup_logging(); higher values have precedence.
+ */
 enum debug_logtype {
 	DEBUG_DEFAULT_STDERR = 0,
 	DEBUG_DEFAULT_STDOUT = 1,
@@ -295,12 +325,18 @@ enum debug_logtype {
 	DEBUG_CALLBACK = 5
 };
 
+enum debug_syslog_format {
+	DEBUG_SYSLOG_FORMAT_NO = 0,
+	DEBUG_SYSLOG_FORMAT_IN_LOGS = 1,
+	DEBUG_SYSLOG_FORMAT_ALWAYS = 2,
+};
+
 struct debug_settings {
 	size_t max_log_size;
 	bool timestamp_logs;
 	bool debug_prefix_timestamp;
 	bool debug_hires_timestamp;
-	bool debug_syslog_format;
+	enum debug_syslog_format debug_syslog_format;
 	bool debug_pid;
 	bool debug_uid;
 	bool debug_class;
@@ -328,6 +364,9 @@ bool debug_get_output_is_stderr(void);
 bool debug_get_output_is_stdout(void);
 void debug_schedule_reopen_logs(void);
 char *debug_list_class_names_and_levels(void);
+bool debug_developer_enabled(void);
+void debug_developer_enable(void);
+void debug_developer_disable(void);
 
 typedef void (*debug_callback_fn)(void *private_ptr, int level, const char *msg);
 
@@ -338,5 +377,13 @@ void debug_set_callback(void *private_ptr, debug_callback_fn fn);
 
 char *debug_get_ringbuf(void);
 size_t debug_get_ringbuf_size(void);
+
+/* Explicitly set new traceid. The old id is returned. */
+uint64_t debug_traceid_set(uint64_t id);
+
+/* Get the current traceid. */
+uint64_t debug_traceid_get(void);
+
+size_t *debug_call_depth_addr(void);
 
 #endif /* _SAMBA_DEBUG_H */

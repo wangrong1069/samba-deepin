@@ -37,6 +37,32 @@
 #include <assert.h>
 #endif
 
+static struct tevent_context *
+test_tevent_context_init(TALLOC_CTX *mem_ctx)
+{
+	struct tevent_context *ev = NULL;
+
+	ev = tevent_context_init(mem_ctx);
+	if (ev != NULL) {
+		samba_tevent_set_debug(ev, "<default>");
+	}
+
+	return ev;
+}
+
+static struct tevent_context *
+test_tevent_context_init_byname(TALLOC_CTX *mem_ctx, const char *name)
+{
+	struct tevent_context *ev = NULL;
+
+	ev = tevent_context_init_byname(mem_ctx, name);
+	if (ev != NULL) {
+		samba_tevent_set_debug(ev, name);
+	}
+
+	return ev;
+}
+
 static int fde_count;
 
 static void do_read(int fd, void *buf, size_t count)
@@ -143,7 +169,7 @@ static bool test_event_context(struct torture_context *test,
 	struct timeval t;
 	int ret;
 
-	ev_ctx = tevent_context_init_byname(test, backend);
+	ev_ctx = test_tevent_context_init_byname(test, backend);
 	if (ev_ctx == NULL) {
 		torture_comment(test, "event backend '%s' not supported\n", backend);
 		return true;
@@ -233,6 +259,112 @@ static bool test_event_context(struct torture_context *test,
 	talloc_free(ev_ctx);
 
 	return true;
+}
+
+static void fde_handler_do_read(struct tevent_context *ev_ctx, struct tevent_fd *f,
+			uint16_t flags, void *private_data)
+{
+	int *fd = (int *)private_data;
+	char c = 0;
+
+	do_read(fd[0], &c, 1);
+	fde_count++;
+}
+
+static void fde_handler_do_write(struct tevent_context *ev_ctx, struct tevent_fd *f,
+			uint16_t flags, void *private_data)
+{
+	int *fd = (int *)private_data;
+	char c = 0;
+
+	do_write(fd[1], &c, 1);
+}
+
+static void fde_handler_ignore(struct tevent_context *ev_ctx, struct tevent_fd *f,
+			uint16_t flags, void *private_data)
+{
+}
+
+static bool test_fd_speedX(struct torture_context *test,
+			   const void *test_data,
+			   size_t additional_fdes)
+{
+	struct tevent_context *ev_ctx = NULL;
+	int fd[2] = { -1, -1 };
+	const char *backend = (const char *)test_data;
+	struct tevent_fd *fde_read = NULL;
+	struct tevent_fd *fde_write = NULL;
+	int finished=0;
+	struct timeval t;
+	size_t i;
+	int ret;
+
+	ev_ctx = test_tevent_context_init_byname(test, backend);
+	if (ev_ctx == NULL) {
+		torture_comment(test, "event backend '%s' not supported\n", backend);
+		return true;
+	}
+
+	torture_comment(test, "backend '%s' - test_fd_speed%zu\n",
+			backend, 1 + additional_fdes);
+
+	/* reset globals */
+	fde_count = 0;
+
+	/* create a pipe */
+	ret = pipe(fd);
+	torture_assert_int_equal(test, ret, 0, "pipe failed");
+
+	fde_read = tevent_add_fd(ev_ctx, ev_ctx, fd[0], TEVENT_FD_READ,
+				 fde_handler_do_read, fd);
+
+	fde_write = tevent_add_fd(ev_ctx, ev_ctx, fd[1], TEVENT_FD_WRITE,
+				  fde_handler_do_write, fd);
+
+	for (i = 0; i < additional_fdes; i++) {
+		tevent_add_fd(ev_ctx, ev_ctx, fd[0], TEVENT_FD_WRITE,
+			      fde_handler_ignore, fd);
+		tevent_add_fd(ev_ctx, ev_ctx, fd[1], TEVENT_FD_READ,
+			      fde_handler_ignore, fd);
+	}
+
+	tevent_fd_set_auto_close(fde_read);
+	tevent_fd_set_auto_close(fde_write);
+
+	tevent_add_timer(ev_ctx, ev_ctx, timeval_current_ofs(600,0),
+			 finished_handler, &finished);
+
+	t = timeval_current();
+	while (!finished && fde_count < 1000000) {
+		errno = 0;
+		if (tevent_loop_once(ev_ctx) == -1) {
+			TALLOC_FREE(ev_ctx);
+			torture_fail(test, talloc_asprintf(test, "Failed event loop %s\n", strerror(errno)));
+			return false;
+		}
+	}
+
+	talloc_free(fde_read);
+	talloc_free(fde_write);
+
+	torture_comment(test, "Got %.2f pipe events\n", (double)fde_count);
+	torture_comment(test, "Got %.2f pipe events/sec\n", fde_count/timeval_elapsed(&t));
+
+	talloc_free(ev_ctx);
+
+	return true;
+}
+
+static bool test_fd_speed1(struct torture_context *test,
+			   const void *test_data)
+{
+	return test_fd_speedX(test, test_data, 0);
+}
+
+static bool test_fd_speed2(struct torture_context *test,
+			   const void *test_data)
+{
+	return test_fd_speedX(test, test_data, 1);
 }
 
 struct test_event_fd1_state {
@@ -383,7 +515,7 @@ static bool test_event_fd1(struct torture_context *tctx,
 	state.tctx = tctx;
 	state.backend = (const char *)test_data;
 
-	state.ev = tevent_context_init_byname(tctx, state.backend);
+	state.ev = test_tevent_context_init_byname(tctx, state.backend);
 	if (state.ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -391,7 +523,6 @@ static bool test_event_fd1(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(state.ev);
 	torture_comment(tctx, "backend '%s' - %s\n",
 			state.backend, __FUNCTION__);
 
@@ -623,7 +754,7 @@ static bool test_event_fd2(struct torture_context *tctx,
 	state.tctx = tctx;
 	state.backend = (const char *)test_data;
 
-	state.ev = tevent_context_init_byname(tctx, state.backend);
+	state.ev = test_tevent_context_init_byname(tctx, state.backend);
 	if (state.ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -631,7 +762,6 @@ static bool test_event_fd2(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(state.ev);
 	torture_comment(tctx, "backend '%s' - %s\n",
 			state.backend, __FUNCTION__);
 
@@ -956,7 +1086,7 @@ static bool test_wrapper(struct torture_context *tctx,
 	bool ok = false;
 	bool ret2;
 
-	ev = tevent_context_init_byname(tctx, backend);
+	ev = test_tevent_context_init_byname(tctx, backend);
 	if (ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -964,7 +1094,6 @@ static bool test_wrapper(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(ev);
 	torture_comment(tctx, "tevent backend '%s'\n", backend);
 
 	wrap_ev = tevent_context_wrapper_create(
@@ -1068,7 +1197,7 @@ static void test_free_wrapper_signal_handler(struct tevent_context *ev,
 	 * signal handlers have highest priority in tevent, so this signal
 	 * handler will always be started before the other handlers
 	 * below. Freeing the (wrapper) event context here tests that the
-	 * wrapper implementation correclty handles the wrapper ev going away
+	 * wrapper implementation correctly handles the wrapper ev going away
 	 * with pending events.
 	 */
 	talloc_free(ev);
@@ -1130,7 +1259,7 @@ static bool test_free_wrapper(struct torture_context *tctx,
 	int ret;
 	bool ok = false;
 
-	ev = tevent_context_init_byname(frame, backend);
+	ev = test_tevent_context_init_byname(frame, backend);
 	if (ev == NULL) {
 		torture_skip(tctx, talloc_asprintf(tctx,
 			     "event backend '%s' not supported\n",
@@ -1138,7 +1267,6 @@ static bool test_free_wrapper(struct torture_context *tctx,
 		return true;
 	}
 
-	tevent_set_debug_stderr(ev);
 	torture_comment(tctx, "tevent backend '%s'\n", backend);
 
 	wrap_ev = tevent_context_wrapper_create(
@@ -1294,7 +1422,7 @@ static bool test_event_context_threaded(struct torture_context *test,
 	int ret;
 	char c = 0;
 
-	ev = tevent_context_init_byname(test, "poll_mt");
+	ev = test_tevent_context_init_byname(test, "poll_mt");
 	torture_assert(test, ev != NULL, "poll_mt not supported");
 
 	tevent_set_trace_callback(ev, test_event_threaded_trace, NULL);
@@ -1411,11 +1539,10 @@ static bool test_multi_tevent_threaded(struct torture_context *test,
 	thread_test_ctx = test;
 	thread_counter = 0;
 
-	master_ev = tevent_context_init(NULL);
+	master_ev = test_tevent_context_init(NULL);
 	if (master_ev == NULL) {
 		return false;
 	}
-	tevent_set_debug_stderr(master_ev);
 
 	tp = tevent_thread_proxy_create(master_ev);
 	if (tp == NULL) {
@@ -1612,11 +1739,10 @@ static bool test_multi_tevent_threaded_1(struct torture_context *test,
 	thread_test_ctx = test;
 	thread_counter = 0;
 
-	master_ev = tevent_context_init(NULL);
+	master_ev = test_tevent_context_init(NULL);
 	if (master_ev == NULL) {
 		return false;
 	}
-	tevent_set_debug_stderr(master_ev);
 
 	master_tp = tevent_thread_proxy_create(master_ev);
 	if (master_tp == NULL) {
@@ -1714,7 +1840,7 @@ static bool test_multi_tevent_threaded_2(struct torture_context *test,
 	thread_test_ctx = test;
 	thread_counter = 0;
 
-	ev = tevent_context_init(test);
+	ev = test_tevent_context_init(test);
 	torture_assert(test, ev != NULL, "tevent_context_init failed");
 
 	/*
@@ -1761,7 +1887,74 @@ static bool test_multi_tevent_threaded_2(struct torture_context *test,
 	talloc_free(ev);
 	return true;
 }
+
+struct test_cached_pid_thread_state {
+	pid_t thread_cached_pid;
+	pid_t thread_pid;
+};
+
+static void *test_cached_pid_thread(void *private_data)
+{
+	struct test_cached_pid_thread_state *state =
+		(struct test_cached_pid_thread_state *)private_data;
+
+	state->thread_cached_pid = tevent_cached_getpid();
+	state->thread_pid = getpid();
+
+	return NULL;
+}
 #endif
+
+static bool test_cached_pid(struct torture_context *test,
+			    const void *test_data)
+{
+	pid_t parent_pid = getpid();
+	pid_t child_pid;
+	pid_t finished_pid;
+	int child_status;
+
+	torture_assert(test, tevent_cached_getpid() == parent_pid, "tevent_cached_getpid()");
+
+#ifdef HAVE_PTHREAD
+	{
+		struct test_cached_pid_thread_state state = { .thread_cached_pid = -1, };
+		pthread_t thread;
+		void *retval = NULL;
+		int ret;
+
+		ret = pthread_create(&thread, NULL, test_cached_pid_thread, &state);
+		torture_assert(test, ret == 0, "pthread_create failed");
+
+		ret = pthread_join(thread, &retval);
+		torture_assert(test, ret == 0, "pthread_join failed");
+
+		torture_assert(test, state.thread_pid == parent_pid, "getpid() in thread");
+		torture_assert(test, state.thread_cached_pid == parent_pid, "tevent_cached_getpid() in thread");
+	}
+#endif /* HAVE_PTHREAD */
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		/* child */
+		pid_t pid = getpid();
+		pid_t cached_pid = tevent_cached_getpid();
+
+		if (parent_pid == pid) {
+			exit(1);
+		}
+		if (pid != cached_pid) {
+			exit(2);
+		}
+		exit(0);
+	}
+	torture_assert(test, child_pid > 0, "fork failed");
+
+	finished_pid = waitpid(child_pid, &child_status, 0);
+	torture_assert(test, finished_pid == child_pid, "wrong child");
+	torture_assert(test, child_status == 0, "child_status");
+
+	return true;
+}
 
 struct torture_suite *torture_local_event(TALLOC_CTX *mem_ctx)
 {
@@ -1777,6 +1970,14 @@ struct torture_suite *torture_local_event(TALLOC_CTX *mem_ctx)
 		torture_suite_add_simple_tcase_const(backend_suite,
 					       "context",
 					       test_event_context,
+					       (const void *)list[i]);
+		torture_suite_add_simple_tcase_const(backend_suite,
+					       "fd_speed1",
+					       test_fd_speed1,
+					       (const void *)list[i]);
+		torture_suite_add_simple_tcase_const(backend_suite,
+					       "fd_speed2",
+					       test_fd_speed2,
 					       (const void *)list[i]);
 		torture_suite_add_simple_tcase_const(backend_suite,
 					       "fd1",
@@ -1816,6 +2017,10 @@ struct torture_suite *torture_local_event(TALLOC_CTX *mem_ctx)
 					     NULL);
 
 #endif
+
+	torture_suite_add_simple_tcase_const(suite, "tevent_cached_getpid",
+					     test_cached_pid,
+					     NULL);
 
 	return suite;
 }

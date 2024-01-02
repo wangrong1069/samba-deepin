@@ -699,12 +699,8 @@ int rep_strerror_r(int errnum, char *buf, size_t buflen);
 #include <stdbool.h>
 #endif
 
-#if !defined(HAVE_BOOL)
-#ifdef HAVE__Bool
-#define bool _Bool
-#else
-typedef int bool;
-#endif
+#ifndef HAVE_BOOL
+#error Need a real boolean type
 #endif
 
 #if !defined(HAVE_INTPTR_T)
@@ -847,6 +843,24 @@ typedef unsigned long long ptrdiff_t ;
 #define ZERO_ARRAY_LEN(x, l) memset_s((char *)(x), (l), 0, (l))
 
 /**
+ * Explicitly zero data from memory. This is guaranteed to be not optimized
+ * away.
+ */
+#define BURN_DATA(x) memset_s((char *)&(x), sizeof(x), 0, sizeof(x))
+
+/**
+ * Explicitly zero data from memory. This is guaranteed to be not optimized
+ * away.
+ */
+#define BURN_DATA_SIZE(x, s) memset_s((char *)&(x), (s), 0, (s))
+
+/**
+ * Explicitly zero data from memory. This is guaranteed to be not optimized
+ * away.
+ */
+#define BURN_PTR_SIZE(x, s) memset_s((x), (s), 0, (s))
+
+/**
  * Explicitly zero data in string. This is guaranteed to be not optimized
  * away.
  */
@@ -870,6 +884,21 @@ typedef unsigned long long ptrdiff_t ;
  */
 #define ARRAY_DEL_ELEMENT(a,i,n) \
 if((i)<((n)-1)){memmove(&((a)[(i)]),&((a)[(i)+1]),(sizeof(*(a))*((n)-(i)-1)));}
+
+/**
+ * Insert an array element by moving the rest one up
+ *
+ */
+#define ARRAY_INSERT_ELEMENT(__array,__old_last_idx,__new_elem,__new_idx) do { \
+	if ((__new_idx) < (__old_last_idx)) { \
+		const void *__src = &((__array)[(__new_idx)]); \
+		void *__dst = &((__array)[(__new_idx)+1]); \
+		size_t __num = (__old_last_idx)-(__new_idx); \
+		size_t __len = sizeof(*(__array)) * __num; \
+		memmove(__dst, __src, __len); \
+	} \
+	(__array)[(__new_idx)] = (__new_elem); \
+} while(0)
 
 /**
  * Pointer difference macro
@@ -1009,7 +1038,7 @@ static inline bool __rep_cwrap_enabled_fn(struct __rep_cwrap_enabled_state *stat
 	state->retval = false;
 	state->cached = true;
 
-	__wrapper_enabled_fn = dlsym(RTLD_DEFAULT, state->fnname);
+	__wrapper_enabled_fn = (bool (*)(void))dlsym(RTLD_DEFAULT, state->fnname);
 	if (__wrapper_enabled_fn == NULL) {
 		return state->retval;
 	}
@@ -1066,6 +1095,18 @@ static inline bool hex_byte(const char *in, uint8_t *out)
 /* Needed for Solaris atomic_add_XX functions. */
 #if defined(HAVE_SYS_ATOMIC_H)
 #include <sys/atomic.h>
+#endif
+
+/*
+ * This handles the case of missing pthread support and ensures code can use
+ * __thread unconditionally, such that when built on a platform without pthread
+ * support, the __thread qualifier is an empty define.
+ */
+#ifndef HAVE___THREAD
+# ifdef HAVE_PTHREAD
+# error Configure failed to detect pthread library with missing TLS support
+# endif
+#define HAVE___THREAD
 #endif
 
 #endif /* _LIBREPLACE_REPLACE_H */

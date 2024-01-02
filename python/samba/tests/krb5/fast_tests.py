@@ -67,16 +67,6 @@ global_hexdump = False
 
 
 class FAST_Tests(KDCBaseTest):
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-
-        cls.user_tgt = None
-        cls.user_service_ticket = None
-
-        cls.mach_tgt = None
-        cls.mach_service_ticket = None
-
     def setUp(self):
         super().setUp()
         self.do_asn1_print = global_asn1_print
@@ -201,6 +191,47 @@ class FAST_Tests(KDCBaseTest):
                 'gen_tgt_fn': self.get_user_tgt
             }
         ])
+
+    def test_fast_rodc_issued_armor(self):
+        self._run_test_sequence([
+            {
+                'rep_type': KRB_AS_REP,
+                'expected_error_mode': KDC_ERR_PREAUTH_REQUIRED,
+                'use_fast': True,
+                'fast_armor': FX_FAST_ARMOR_AP_REQUEST,
+                'gen_armor_tgt_fn': self.get_rodc_issued_mach_tgt,
+            },
+            {
+                'rep_type': KRB_AS_REP,
+                # Test that RODC-issued armor tickets are permitted.
+                'expected_error_mode': 0,
+                'use_fast': True,
+                'gen_padata_fn': self.generate_enc_challenge_padata,
+                'fast_armor': FX_FAST_ARMOR_AP_REQUEST,
+                'gen_armor_tgt_fn': self.get_rodc_issued_mach_tgt,
+            }
+        ],
+        armor_opts={
+            'allowed_replication_mock': True,
+            'revealed_to_mock_rodc': True,
+        })
+
+    def test_fast_tgs_rodc_issued_armor(self):
+        self._run_test_sequence([
+            {
+                'rep_type': KRB_TGS_REP,
+                # Test that RODC-issued armor tickets are not permitted.
+                'expected_error_mode': 0,
+                'use_fast': True,
+                'gen_tgt_fn': self.get_user_tgt,
+                'gen_armor_tgt_fn': self.get_rodc_issued_mach_tgt,
+                'fast_armor': FX_FAST_ARMOR_AP_REQUEST,
+            }
+        ],
+        armor_opts={
+            'allowed_replication_mock': True,
+            'revealed_to_mock_rodc': True,
+        })
 
     def test_simple_enc_pa_rep(self):
         self._run_test_sequence([
@@ -1387,6 +1418,86 @@ class FAST_Tests(KDCBaseTest):
             }
         ])
 
+    def test_fx_cookie_fast(self):
+        """Test that the FAST cookie is present and that its value is as
+        expected when FAST is used."""
+        kdc_exchange_dict = self._run_test_sequence([
+            {
+                'rep_type': KRB_AS_REP,
+                'expected_error_mode': KDC_ERR_PREAUTH_REQUIRED,
+                'use_fast': True,
+                'fast_armor': FX_FAST_ARMOR_AP_REQUEST,
+                'gen_armor_tgt_fn': self.get_mach_tgt
+            },
+        ])
+
+        cookie = kdc_exchange_dict.get('fast_cookie')
+        self.assertEqual(b'Microsoft', cookie)
+
+    def test_fx_cookie_no_fast(self):
+        """Test that the FAST cookie is present and that its value is as
+        expected when FAST is not used."""
+        kdc_exchange_dict = self._run_test_sequence([
+            {
+                'rep_type': KRB_AS_REP,
+                'expected_error_mode': KDC_ERR_PREAUTH_REQUIRED,
+                'use_fast': False
+            },
+        ])
+
+        cookie = kdc_exchange_dict.get('fast_cookie')
+        self.assertEqual(b'Microsof\x00', cookie)
+
+    def test_unsolicited_fx_cookie_preauth(self):
+        """Test sending an unsolicited FX-COOKIE in an AS-REQ without
+        pre-authentication data."""
+
+        # Include a FAST cookie.
+        fast_cookie = self.create_fast_cookie('Samba-Test')
+
+        kdc_exchange_dict = self._run_test_sequence([
+            {
+                'rep_type': KRB_AS_REP,
+                'expected_error_mode': KDC_ERR_PREAUTH_REQUIRED,
+                'use_fast': True,
+                'fast_armor': FX_FAST_ARMOR_AP_REQUEST,
+                'gen_armor_tgt_fn': self.get_mach_tgt,
+                'fast_cookie': fast_cookie,
+            },
+        ])
+
+        got_cookie = kdc_exchange_dict.get('fast_cookie')
+        self.assertEqual(b'Microsoft', got_cookie)
+
+    def test_unsolicited_fx_cookie_fast(self):
+        """Test sending an unsolicited FX-COOKIE in an AS-REQ with
+        pre-authentication data."""
+
+        # Include a FAST cookie.
+        fast_cookie = self.create_fast_cookie('Samba-Test')
+
+        kdc_exchange_dict = self._run_test_sequence([
+            {
+                'rep_type': KRB_AS_REP,
+                'expected_error_mode': KDC_ERR_PREAUTH_REQUIRED,
+                'use_fast': True,
+                'fast_armor': FX_FAST_ARMOR_AP_REQUEST,
+                'gen_armor_tgt_fn': self.get_mach_tgt,
+            },
+            {
+                'rep_type': KRB_AS_REP,
+                'expected_error_mode': 0,
+                'use_fast': True,
+                'gen_padata_fn': self.generate_enc_challenge_padata,
+                'fast_armor': FX_FAST_ARMOR_AP_REQUEST,
+                'gen_armor_tgt_fn': self.get_mach_tgt,
+                'fast_cookie': fast_cookie,
+            }
+        ])
+
+        got_cookie = kdc_exchange_dict.get('fast_cookie')
+        self.assertIsNone(got_cookie)
+
     def generate_enc_timestamp_padata(self,
                                       kdc_exchange_dict,
                                       callback_dict,
@@ -1461,7 +1572,8 @@ class FAST_Tests(KDCBaseTest):
 
     def _run_test_sequence(self, test_sequence,
                            client_account=KDCBaseTest.AccountType.USER,
-                           client_opts=None):
+                           client_opts=None,
+                           armor_opts=None):
         if self.strict_checking:
             self.check_kdc_fast_support()
 
@@ -1528,7 +1640,7 @@ class FAST_Tests(KDCBaseTest):
 
                 gen_armor_tgt_fn = kdc_dict.pop('gen_armor_tgt_fn', None)
                 if gen_armor_tgt_fn is not None:
-                    armor_tgt = gen_armor_tgt_fn()
+                    armor_tgt = gen_armor_tgt_fn(armor_opts)
                 else:
                     armor_tgt = None
 
@@ -1542,7 +1654,7 @@ class FAST_Tests(KDCBaseTest):
 
             if rep_type == KRB_TGS_REP:
                 gen_tgt_fn = kdc_dict.pop('gen_tgt_fn')
-                tgt = gen_tgt_fn()
+                tgt = gen_tgt_fn(opts=client_opts)
             else:
                 self.assertNotIn('gen_tgt_fn', kdc_dict)
                 tgt = None
@@ -1665,6 +1777,11 @@ class FAST_Tests(KDCBaseTest):
                 preauth_key = None
 
             if use_fast:
+                try:
+                    fast_cookie = kdc_dict.pop('fast_cookie')
+                except KeyError:
+                    pass
+
                 generate_fast_padata_fn = gen_padata_fn
                 generate_padata_fn = (functools.partial(_generate_padata_copy,
                                                          padata=[fast_cookie])
@@ -1720,6 +1837,7 @@ class FAST_Tests(KDCBaseTest):
                     decryption_key = krbtgt_decryption_key
 
                 kdc_exchange_dict = self.as_exchange_dict(
+                    creds=client_creds,
                     expected_crealm=expected_crealm,
                     expected_cname=expected_cname,
                     expected_anon=expected_anon,
@@ -1739,7 +1857,6 @@ class FAST_Tests(KDCBaseTest):
                     check_kdc_private_fn=self.generic_check_kdc_private,
                     callback_dict={},
                     expected_error_mode=expected_error_mode,
-                    client_as_etypes=etypes,
                     expected_salt=expected_salt,
                     authenticator_subkey=authenticator_subkey,
                     preauth_key=preauth_key,
@@ -1758,6 +1875,7 @@ class FAST_Tests(KDCBaseTest):
                     expect_edata=expect_edata)
             else:  # KRB_TGS_REP
                 kdc_exchange_dict = self.tgs_exchange_dict(
+                    creds=client_creds,
                     expected_crealm=expected_crealm,
                     expected_cname=expected_cname,
                     expected_anon=expected_anon,
@@ -1836,6 +1954,8 @@ class FAST_Tests(KDCBaseTest):
             # Ensure we used all the parameters given to us.
             self.assertEqual({}, kdc_dict)
 
+        return kdc_exchange_dict
+
     def generate_enc_pa_rep_padata(self,
                                    kdc_exchange_dict,
                                    callback_dict,
@@ -1878,8 +1998,8 @@ class FAST_Tests(KDCBaseTest):
 
         return auth_data
 
-    def gen_tgt_fast_armor_auth_data(self):
-        user_tgt = self.get_user_tgt()
+    def gen_tgt_fast_armor_auth_data(self, opts):
+        user_tgt = self.get_user_tgt(opts)
 
         auth_data = self.generate_fast_armor_auth_data()
 
@@ -1890,7 +2010,7 @@ class FAST_Tests(KDCBaseTest):
 
         checksum_keys = self.get_krbtgt_checksum_key()
 
-        # Use our modifed TGT to replace the one in the request.
+        # Use our modified TGT to replace the one in the request.
         return self.modified_ticket(user_tgt,
                                     modify_fn=modify_fn,
                                     checksum_keys=checksum_keys)
@@ -1923,40 +2043,44 @@ class FAST_Tests(KDCBaseTest):
         self.assertTrue(
             security.KERB_ENCTYPE_CLAIMS_SUPPORTED & krbtgt_etypes)
 
-    def get_mach_tgt(self):
-        if self.mach_tgt is None:
-            mach_creds = self.get_mach_creds()
-            type(self).mach_tgt = self.get_tgt(mach_creds)
+    def get_mach_tgt(self, opts):
+        if opts is None:
+            opts = {}
+        mach_creds = self.get_cached_creds(
+            account_type=self.AccountType.COMPUTER,
+            opts={
+                **opts,
+                'fast_support': True,
+                'claims_support': True,
+                'compound_id_support': True,
+                'supported_enctypes': (
+                    security.KERB_ENCTYPE_RC4_HMAC_MD5 |
+                    security.KERB_ENCTYPE_AES256_CTS_HMAC_SHA1_96_SK
+                ),
+            })
+        return self.get_tgt(mach_creds)
 
-        return self.mach_tgt
+    def get_rodc_issued_mach_tgt(self, opts):
+        return self.issued_by_rodc(self.get_mach_tgt(opts))
 
-    def get_user_tgt(self):
-        if self.user_tgt is None:
-            user_creds = self.get_client_creds()
-            type(self).user_tgt = self.get_tgt(user_creds)
+    def get_user_tgt(self, opts):
+        user_creds = self.get_cached_creds(
+            account_type=self.AccountType.USER,
+            opts=opts)
+        return self.get_tgt(user_creds)
 
-        return self.user_tgt
+    def get_user_service_ticket(self, opts):
+        user_tgt = self.get_user_tgt(opts)
+        service_creds = self.get_service_creds()
+        return self.get_service_ticket(user_tgt, service_creds)
 
-    def get_user_service_ticket(self):
-        if self.user_service_ticket is None:
-            user_tgt = self.get_user_tgt()
-            service_creds = self.get_service_creds()
-            type(self).user_service_ticket = (
-                self.get_service_ticket(user_tgt, service_creds))
+    def get_mach_service_ticket(self, opts):
+        mach_tgt = self.get_mach_tgt(opts)
+        service_creds = self.get_service_creds()
+        return self.get_service_ticket(mach_tgt, service_creds)
 
-        return self.user_service_ticket
-
-    def get_mach_service_ticket(self):
-        if self.mach_service_ticket is None:
-            mach_tgt = self.get_mach_tgt()
-            service_creds = self.get_service_creds()
-            type(self).mach_service_ticket = (
-                self.get_service_ticket(mach_tgt, service_creds))
-
-        return self.mach_service_ticket
-
-    def get_service_ticket_invalid_checksum(self):
-        ticket = self.get_user_service_ticket()
+    def get_service_ticket_invalid_checksum(self, opts):
+        ticket = self.get_user_service_ticket(opts)
 
         krbtgt_creds = self.get_krbtgt_creds()
         krbtgt_key = self.TicketDecryptionKey_from_creds(krbtgt_creds)

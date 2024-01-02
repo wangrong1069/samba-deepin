@@ -50,6 +50,14 @@ get_default(kadm5_server_context *context, krb5_principal princ,
     ret = kadm5_s_get_principal(context, def_principal, def,
 				KADM5_PRINCIPAL_NORMAL_MASK);
     krb5_free_principal (context->context, def_principal);
+
+    if (ret) {
+        /* Copy defaults from kadmin/init.c */
+        memset(def, 0, sizeof(*def));
+        def->max_life = 24 * 60 * 60;
+        def->max_renewable_life = 7 * def->max_life;
+        def->attributes = KRB5_KDB_DISALLOW_ALL_TIX;
+    }
     return ret;
 }
 
@@ -248,14 +256,12 @@ kadm5_s_create_principal(void *server_handle,
     if ((mask & KADM5_ATTRIBUTES) &&
         (princ->attributes & (KRB5_KDB_VIRTUAL_KEYS | KRB5_KDB_VIRTUAL)) &&
         !(princ->attributes & KRB5_KDB_MATERIALIZE)) {
-        ret = KADM5_DUP; /* XXX */
-        goto out;
+	return _kadm5_error_code(KADM5_DUP); /* XXX More like EINVAL */
     }
     if ((mask & KADM5_ATTRIBUTES) &&
         (princ->attributes & KRB5_KDB_VIRTUAL_KEYS) &&
         (princ->attributes & KRB5_KDB_VIRTUAL)) {
-        ret = KADM5_DUP; /* XXX */
-        goto out;
+	return _kadm5_error_code(KADM5_DUP); /* XXX More like EINVAL */
     }
 
     if ((mask & KADM5_ATTRIBUTES) &&

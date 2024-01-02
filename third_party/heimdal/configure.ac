@@ -56,7 +56,6 @@ if ! test -f "$srcdir/lib/asn1/der-protos.h" ||
     AC_KRB_PROG_PERL
     AC_KRB_PERL_MOD(Getopt::Std)
     AC_KRB_PERL_MOD(File::Compare)
-    AC_KRB_PERL_MOD(JSON)
 fi
 
 AC_KRB_PROG_YACC
@@ -244,6 +243,13 @@ fi
 AM_CONDITIONAL([HAVE_CJSON], [test "$with_cjson" != "no"])
 AC_SUBST([CJSON_CFLAGS])
 AC_SUBST([CJSON_LIBS])
+
+dnl mitkrb5
+AC_ARG_WITH([mitkrb5],
+  AC_HELP_STRING([--with-mitkrb5], [Path to MIT Kerberos for interop testing @<:@default=check@:>@]),
+  [],
+  [with_mikrb5=check])
+AM_CONDITIONAL([MITKRB5], [test "$with_mitkrb5" != "no"])
 
 dnl Check for sqlite
 rk_TEST_PACKAGE(sqlite3,
@@ -505,16 +511,20 @@ rk_WIN32_EXPORT(BUILD_ROKEN_LIB, ROKEN_LIB)
 rk_WIN32_EXPORT(BUILD_GSSAPI_LIB, GSSAPI_LIB)
 rk_WIN32_EXPORT(BUILD_KDC_LIB, KDC_LIB)
 
-dnl Deal with switch FALLTHROUGH
+dnl Deal with switch fallthrough warnings
 AH_TOP([
-#if defined(__GNUC__)
-#if __GNUC__ >= 7
-# define fallthrough __attribute__((fallthrough))
+#if defined(DISPATCH_FALLTHROUGH)
+# define HEIM_FALLTHROUGH DISPATCH_FALLTHROUGH
 #else
-# define fallthrough do {} while (0) /* fallthrough */
-#endif
-#else
-# define fallthrough  do {} while (0) /* fallthrough */
+# if defined(__GNUC__)
+#  if __GNUC__ >= 7
+#   define HEIM_FALLTHROUGH __attribute__((fallthrough))
+#  else
+#   define HEIM_FALLTHROUGH do {} while (0) /* fallthrough */
+#  endif
+# else
+#  define HEIM_FALLTHROUGH do {} while (0) /* fallthrough */
+# endif
 #endif
 ])
 
@@ -753,16 +763,16 @@ if test -d "$srcdir/.git"; then
 #ifndef VERSION_HIDDEN
 #define VERSION_HIDDEN
 #endif
-VERSION_HIDDEN const char *heimdal_long_version = "@([#])\$Version: $PACKAGE_STRING by @USER@ on @HOST@ @BRANCH@ @TAG@ ($host) @COMMIT@ @DATE@ \$";
-VERSION_HIDDEN const char *heimdal_version = "AC_PACKAGE_STRING";
+VERSION_HIDDEN const char *const heimdal_long_version = "@([#])\$Version: $PACKAGE_STRING by @USER@ on @HOST@ @BRANCH@ @TAG@ ($host) @COMMIT@ @DATE@ \$";
+VERSION_HIDDEN const char *const heimdal_version = "AC_PACKAGE_STRING";
 EOF
 else
     cat > include/newversion.h.in <<EOF
 #ifndef VERSION_HIDDEN
 #define VERSION_HIDDEN
 #endif
-VERSION_HIDDEN const char *heimdal_long_version = "@([#])\$Version: $PACKAGE_STRING by @USER@ on @HOST@ ($host) @DATE@ \$";
-VERSION_HIDDEN const char *heimdal_version = "AC_PACKAGE_STRING";
+VERSION_HIDDEN const char *const heimdal_long_version = "@([#])\$Version: $PACKAGE_STRING by @USER@ on @HOST@ ($host) @DATE@ \$";
+VERSION_HIDDEN const char *const heimdal_version = "AC_PACKAGE_STRING";
 EOF
 fi
 

@@ -98,7 +98,7 @@ static DIR *shadow_copy_fdopendir(vfs_handle_struct *handle, files_struct *fsp, 
 	while (True) {
 		struct dirent *d;
 
-		d = SMB_VFS_NEXT_READDIR(handle, fsp, p, NULL);
+		d = SMB_VFS_NEXT_READDIR(handle, fsp, p);
 		if (d == NULL) {
 			break;
 		}
@@ -127,8 +127,7 @@ static DIR *shadow_copy_fdopendir(vfs_handle_struct *handle, files_struct *fsp, 
 
 static struct dirent *shadow_copy_readdir(vfs_handle_struct *handle,
 					  struct files_struct *dirfsp,
-					  DIR *_dirp,
-					  SMB_STRUCT_STAT *sbuf)
+					  DIR *_dirp)
 {
 	shadow_copy_Dir *dirp = (shadow_copy_Dir *)_dirp;
 
@@ -137,21 +136,6 @@ static struct dirent *shadow_copy_readdir(vfs_handle_struct *handle,
 	}
 
 	return NULL;
-}
-
-static void shadow_copy_seekdir(struct vfs_handle_struct *handle, DIR *_dirp, long offset)
-{
-	shadow_copy_Dir *dirp = (shadow_copy_Dir *)_dirp;
-
-	if (offset < dirp->num) {
-		dirp->pos = offset ;
-	}
-}
-
-static long shadow_copy_telldir(struct vfs_handle_struct *handle, DIR *_dirp)
-{
-	shadow_copy_Dir *dirp = (shadow_copy_Dir *)_dirp;
-	return( dirp->pos ) ;
 }
 
 static void shadow_copy_rewinddir(struct vfs_handle_struct *handle, DIR *_dirp)
@@ -178,7 +162,7 @@ static int shadow_copy_get_shadow_copy_data(vfs_handle_struct *handle,
 	struct smb_Dir *dir_hnd = NULL;
 	const char *dname = NULL;
 	char *talloced = NULL;
-	long offset = 0;
+	NTSTATUS status;
 	struct smb_filename *smb_fname = synthetic_smb_fname(talloc_tos(),
 						fsp->conn->connectpath,
 						NULL,
@@ -190,10 +174,16 @@ static int shadow_copy_get_shadow_copy_data(vfs_handle_struct *handle,
 		return -1;
 	}
 
-	dir_hnd = OpenDir(talloc_tos(), handle->conn, smb_fname, NULL, 0);
+	status = OpenDir(talloc_tos(),
+			 handle->conn,
+			 smb_fname,
+			 NULL,
+			 0,
+			 &dir_hnd);
 	TALLOC_FREE(smb_fname);
-	if (dir_hnd == NULL) {
+	if (!NT_STATUS_IS_OK(status)) {
 		DBG_ERR("OpenDir() failed for [%s]\n", fsp->conn->connectpath);
+		errno = map_errno_from_nt_status(status);
 		return -1;
 	}
 
@@ -204,7 +194,7 @@ static int shadow_copy_get_shadow_copy_data(vfs_handle_struct *handle,
 		SHADOW_COPY_LABEL *tlabels;
 		int ret;
 
-		dname = ReadDirName(dir_hnd, &offset, NULL, &talloced);
+		dname = ReadDirName(dir_hnd, &talloced);
 		if (dname == NULL) {
 			break;
 		}
@@ -255,8 +245,6 @@ static int shadow_copy_get_shadow_copy_data(vfs_handle_struct *handle,
 static struct vfs_fn_pointers vfs_shadow_copy_fns = {
 	.fdopendir_fn = shadow_copy_fdopendir,
 	.readdir_fn = shadow_copy_readdir,
-	.seekdir_fn = shadow_copy_seekdir,
-	.telldir_fn = shadow_copy_telldir,
 	.rewind_dir_fn = shadow_copy_rewinddir,
 	.closedir_fn = shadow_copy_closedir,
 	.get_shadow_copy_data_fn = shadow_copy_get_shadow_copy_data,

@@ -338,7 +338,7 @@ static int net_getauthuser(struct net_context *c, int argc, const char **argv)
 
 		SAFE_FREE(user);
 		SAFE_FREE(domain);
-		SAFE_FREE(password);
+		BURN_FREE_STR(password);
 		d_printf(_("No authorised user configured\n"));
 		return 0;
 	}
@@ -351,7 +351,7 @@ static int net_getauthuser(struct net_context *c, int argc, const char **argv)
 
 	SAFE_FREE(user);
 	SAFE_FREE(domain);
-	SAFE_FREE(password);
+	BURN_FREE_STR(password);
 
 	return 0;
 }
@@ -1225,6 +1225,13 @@ static struct functable net_func[] = {
 			.arg        = &c->opt_follow_symlink,
 			.descrip    = "follow symlinks",
 		},
+		/* Options for 'net ads dns register' */
+		{
+			.longName   = "dns-ttl",
+			.argInfo    = POPT_ARG_INT,
+			.arg        = &c->opt_dns_ttl,
+			.descrip    = "TTL in seconds of DNS records",
+		},
 		POPT_COMMON_SAMBA
 		POPT_COMMON_CONNECTION
 		POPT_COMMON_CREDENTIALS
@@ -1323,7 +1330,7 @@ static struct functable net_func[] = {
 
 #if defined(HAVE_BIND_TEXTDOMAIN_CODESET)
 	/* Bind our gettext results to 'unix charset'
-	   
+
 	   This ensures that the translations and any embedded strings are in the
 	   same charset.  It won't be the one from the user's locale (we no
 	   longer auto-detect that), but it will be self-consistent.

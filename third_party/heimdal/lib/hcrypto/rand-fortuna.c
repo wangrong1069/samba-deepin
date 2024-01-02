@@ -336,7 +336,7 @@ add_entropy(FState * st, const unsigned char *data, unsigned len)
 	st->pool0_bytes += len;
 
     memset_s(hash, sizeof(hash), 0, sizeof(hash));
-    memset_s(&md, sizeof(hash), 0, sizeof(md));
+    memset_s(&md, sizeof(md), 0, sizeof(md));
 }
 
 /*
@@ -501,10 +501,9 @@ fortuna_reseed(void)
 	/* add /etc/shadow */
 	fd = open("/etc/shadow", O_RDONLY, 0);
 	if (fd >= 0) {
-	    ssize_t n;
 	    rk_cloexec(fd);
 	    /* add_entropy will hash the buf */
-	    while ((n = read(fd, (char *)u.shad, sizeof(u.shad))) > 0)
+	    while (read(fd, (char *)u.shad, sizeof(u.shad)) > 0)
 		add_entropy(&main_state, u.shad, sizeof(u.shad));
 	    close(fd);
 	}

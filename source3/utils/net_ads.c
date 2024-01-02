@@ -232,6 +232,36 @@ static int net_ads_cldap_netlogon_json
 		goto failure;
 	}
 
+	ret = json_add_bool(&flagsobj, "Runs on Windows 2012R2 or later",
+			    reply->server_type & NBT_SERVER_DS_9);
+	if (ret != 0) {
+		goto failure;
+	}
+
+	ret = json_add_bool(&flagsobj, "Runs on Windows 2016 or later",
+			    reply->server_type & NBT_SERVER_DS_10);
+	if (ret != 0) {
+		goto failure;
+	}
+
+	ret = json_add_bool(&flagsobj, "Has a DNS name",
+			    reply->server_type & NBT_SERVER_HAS_DNS_NAME);
+	if (ret != 0) {
+		goto failure;
+	}
+
+	ret = json_add_bool(&flagsobj, "Is a default NC",
+			    reply->server_type & NBT_SERVER_IS_DEFAULT_NC);
+	if (ret != 0) {
+		goto failure;
+	}
+
+	ret = json_add_bool(&flagsobj, "Is the forest root",
+			    reply->server_type & NBT_SERVER_FOREST_ROOT);
+	if (ret != 0) {
+		goto failure;
+	}
+
 	ret = json_add_string(&jsobj, "Forest", reply->forest);
 	if (ret != 0) {
 		goto failure;
@@ -372,7 +402,12 @@ static int net_ads_cldap_netlogon(struct net_context *c, ADS_STRUCT *ads)
 		   "\tIs NT6 DC that has some secrets:            %s\n"
 		   "\tIs NT6 DC that has all secrets:             %s\n"
 		   "\tRuns Active Directory Web Services:         %s\n"
-		   "\tRuns on Windows 2012 or later:              %s\n"),
+		   "\tRuns on Windows 2012 or later:              %s\n"
+		   "\tRuns on Windows 2012R2 or later:            %s\n"
+		   "\tRuns on Windows 2016 or later:              %s\n"
+		   "\tHas a DNS name:                             %s\n"
+		   "\tIs a default NC:                            %s\n"
+		   "\tIs the forest root:                         %s\n"),
 		   (reply.server_type & NBT_SERVER_PDC) ? _("yes") : _("no"),
 		   (reply.server_type & NBT_SERVER_GC) ? _("yes") : _("no"),
 		   (reply.server_type & NBT_SERVER_LDAP) ? _("yes") : _("no"),
@@ -386,7 +421,12 @@ static int net_ads_cldap_netlogon(struct net_context *c, ADS_STRUCT *ads)
 		   (reply.server_type & NBT_SERVER_SELECT_SECRET_DOMAIN_6) ? _("yes") : _("no"),
 		   (reply.server_type & NBT_SERVER_FULL_SECRET_DOMAIN_6) ? _("yes") : _("no"),
 		   (reply.server_type & NBT_SERVER_ADS_WEB_SERVICE) ? _("yes") : _("no"),
-		   (reply.server_type & NBT_SERVER_DS_8) ? _("yes") : _("no"));
+		   (reply.server_type & NBT_SERVER_DS_8) ? _("yes") : _("no"),
+		   (reply.server_type & NBT_SERVER_DS_9) ? _("yes") : _("no"),
+		   (reply.server_type & NBT_SERVER_DS_10) ? _("yes") : _("no"),
+		   (reply.server_type & NBT_SERVER_HAS_DNS_NAME) ? _("yes") : _("no"),
+		   (reply.server_type & NBT_SERVER_IS_DEFAULT_NC) ? _("yes") : _("no"),
+		   (reply.server_type & NBT_SERVER_FOREST_ROOT) ? _("yes") : _("no"));
 
 
 	printf(_("Forest: %s\n"), reply.forest);
@@ -414,8 +454,10 @@ static int net_ads_cldap_netlogon(struct net_context *c, ADS_STRUCT *ads)
 */
 static int net_ads_lookup(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	int ret;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf("%s\n"
@@ -423,22 +465,28 @@ static int net_ads_lookup(struct net_context *c, int argc, const char **argv)
 			 "    %s",
 			 _("Usage:"),
 			 _("Find the ADS DC using CLDAP lookup.\n"));
-		return 0;
-	}
-
-	if (!ADS_ERR_OK(ads_startup_nobind(c, false, &ads))) {
-		d_fprintf(stderr, _("Didn't find the cldap server!\n"));
-		ads_destroy(&ads);
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
+	status = ads_startup_nobind(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("Didn't find the cldap server!\n"));
+		goto out;
+	}
+
 	if (!ads->config.realm) {
-		ads->config.realm = discard_const_p(char, c->opt_target_workgroup);
+		ads->config.realm = talloc_strdup(ads, c->opt_target_workgroup);
+		if (ads->config.realm == NULL) {
+			d_fprintf(stderr, _("Out of memory\n"));
+			goto out;
+		}
 		ads->ldap.port = 389;
 	}
 
 	ret = net_ads_cldap_netlogon(c, ads);
-	ads_destroy(&ads);
+out:
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
@@ -513,7 +561,6 @@ static int net_ads_info_json(ADS_STRUCT *ads)
 	ret = output_json(&jsobj);
 failure:
 	json_free(&jsobj);
-	ads_destroy(&ads);
 
 	return ret;
 }
@@ -533,9 +580,12 @@ static int net_ads_info_json(ADS_STRUCT *ads)
 
 static int net_ads_info(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	char addr[INET6_ADDRSTRLEN];
 	time_t pass_time;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf("%s\n"
@@ -544,18 +594,19 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 			 _("Usage:"),
 			 _("Display information about an Active Directory "
 			   "server.\n"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
-	if (!ADS_ERR_OK(ads_startup_nobind(c, false, &ads))) {
+	status = ads_startup_nobind(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("Didn't find the ldap server!\n"));
-		return -1;
+		goto out;
 	}
 
 	if (!ads || !ads->config.realm) {
 		d_fprintf(stderr, _("Didn't find the ldap server!\n"));
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
 
 	/* Try to set the server's current time since we didn't do a full
@@ -566,7 +617,8 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 	}
 
 	if (c->opt_json) {
-		return net_ads_info_json(ads);
+		ret = net_ads_info_json(ads);
+		goto out;
 	}
 
 	pass_time = secrets_fetch_pass_last_set_time(ads->server.workgroup);
@@ -579,20 +631,25 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 	d_printf(_("Bind Path: %s\n"), ads->config.bind_path);
 	d_printf(_("LDAP port: %d\n"), ads->ldap.port);
 	d_printf(_("Server time: %s\n"),
-			 http_timestring(talloc_tos(), ads->config.current_time));
+			 http_timestring(tmp_ctx, ads->config.current_time));
 
 	d_printf(_("KDC server: %s\n"), ads->auth.kdc_server );
 	d_printf(_("Server time offset: %d\n"), ads->auth.time_offset );
 
 	d_printf(_("Last machine account password change: %s\n"),
-		 http_timestring(talloc_tos(), pass_time));
+		 http_timestring(tmp_ctx, pass_time));
 
-	ads_destroy(&ads);
-	return 0;
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
-static ADS_STATUS ads_startup_int(struct net_context *c, bool only_own_domain,
-				  uint32_t auth_flags, ADS_STRUCT **ads_ret)
+static ADS_STATUS ads_startup_int(struct net_context *c,
+				  bool only_own_domain,
+				  uint32_t auth_flags,
+				  TALLOC_CTX *mem_ctx,
+				  ADS_STRUCT **ads_ret)
 {
 	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
@@ -618,10 +675,14 @@ retry_connect:
 		realm = assume_own_realm(c);
 	}
 
-	ads = ads_init(realm,
-			c->opt_target_workgroup,
-			c->opt_host,
-			ADS_SASL_PLAIN);
+	ads = ads_init(mem_ctx,
+		       realm,
+		       c->opt_target_workgroup,
+		       c->opt_host,
+		       ADS_SASL_PLAIN);
+	if (ads == NULL) {
+		return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+	}
 
 	if (!c->opt_user_name) {
 		c->opt_user_name = "administrator";
@@ -635,19 +696,27 @@ retry:
 	if (!c->opt_password && need_password && !c->opt_machine_pass) {
 		c->opt_password = net_prompt_pass(c, c->opt_user_name);
 		if (!c->opt_password) {
-			ads_destroy(&ads);
+			TALLOC_FREE(ads);
 			return ADS_ERROR(LDAP_NO_MEMORY);
 		}
 	}
 
 	if (c->opt_password) {
 		use_in_memory_ccache();
-		SAFE_FREE(ads->auth.password);
-		ads->auth.password = smb_xstrdup(c->opt_password);
+		ADS_TALLOC_CONST_FREE(ads->auth.password);
+		ads->auth.password = talloc_strdup(ads, c->opt_password);
+		if (ads->auth.password == NULL) {
+			TALLOC_FREE(ads);
+			return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+		}
 	}
 
-	SAFE_FREE(ads->auth.user_name);
-	ads->auth.user_name = smb_xstrdup(c->opt_user_name);
+	ADS_TALLOC_CONST_FREE(ads->auth.user_name);
+	ads->auth.user_name = talloc_strdup(ads, c->opt_user_name);
+	if (ads->auth.user_name == NULL) {
+		TALLOC_FREE(ads);
+		return ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+	}
 
 	ads->auth.flags |= auth_flags;
 
@@ -675,13 +744,23 @@ retry:
         */
        if ((cp = strchr_m(ads->auth.user_name, '@'))!=0) {
 		*cp++ = '\0';
-		SAFE_FREE(ads->auth.realm);
-		ads->auth.realm = smb_xstrdup(cp);
-		if (!strupper_m(ads->auth.realm)) {
-			ads_destroy(&ads);
+		ADS_TALLOC_CONST_FREE(ads->auth.realm);
+		ads->auth.realm = talloc_asprintf_strupper_m(ads, "%s", cp);
+		if (ads->auth.realm == NULL) {
+			TALLOC_FREE(ads);
 			return ADS_ERROR(LDAP_NO_MEMORY);
 		}
-       }
+	} else if (ads->auth.realm == NULL) {
+		const char *c_realm = cli_credentials_get_realm(c->creds);
+
+		if (c_realm != NULL) {
+			ads->auth.realm = talloc_strdup(ads, c_realm);
+			if (ads->auth.realm == NULL) {
+				TALLOC_FREE(ads);
+				return ADS_ERROR(LDAP_NO_MEMORY);
+			}
+		}
+	}
 
 	status = ads_connect(ads);
 
@@ -690,7 +769,7 @@ retry:
 		if (NT_STATUS_EQUAL(ads_ntstatus(status),
 				    NT_STATUS_NO_LOGON_SERVERS)) {
 			DEBUG(0,("ads_connect: %s\n", ads_errstr(status)));
-			ads_destroy(&ads);
+			TALLOC_FREE(ads);
 			return status;
 		}
 
@@ -699,7 +778,7 @@ retry:
 			second_time = true;
 			goto retry;
 		} else {
-			ads_destroy(&ads);
+			TALLOC_FREE(ads);
 			return status;
 		}
 	}
@@ -717,25 +796,34 @@ retry:
 			namecache_delete(ads->server.realm, 0x1C);
 			namecache_delete(ads->server.workgroup, 0x1C);
 
-			ads_destroy(&ads);
-			ads = NULL;
+			TALLOC_FREE(ads);
 
 			goto retry_connect;
 		}
 	}
 
-	*ads_ret = ads;
+	*ads_ret = talloc_move(mem_ctx, &ads);
 	return status;
 }
 
-ADS_STATUS ads_startup(struct net_context *c, bool only_own_domain, ADS_STRUCT **ads)
+ADS_STATUS ads_startup(struct net_context *c,
+		       bool only_own_domain,
+		       TALLOC_CTX *mem_ctx,
+		       ADS_STRUCT **ads)
 {
-	return ads_startup_int(c, only_own_domain, 0, ads);
+	return ads_startup_int(c, only_own_domain, 0, mem_ctx, ads);
 }
 
-ADS_STATUS ads_startup_nobind(struct net_context *c, bool only_own_domain, ADS_STRUCT **ads)
+ADS_STATUS ads_startup_nobind(struct net_context *c,
+			      bool only_own_domain,
+			      TALLOC_CTX *mem_ctx,
+			      ADS_STRUCT **ads)
 {
-	return ads_startup_int(c, only_own_domain, ADS_AUTH_NO_BIND, ads);
+	return ads_startup_int(c,
+			       only_own_domain,
+			       ADS_AUTH_NO_BIND,
+			       mem_ctx,
+			       ads);
 }
 
 /*
@@ -743,35 +831,42 @@ ADS_STATUS ads_startup_nobind(struct net_context *c, bool only_own_domain, ADS_S
   ads_startup() stores the password in opt_password if it needs to so
   that rpc or rap can use it without re-prompting.
 */
-static int net_ads_check_int(const char *realm, const char *workgroup, const char *host)
+static int net_ads_check_int(struct net_context *c,
+			     const char *realm,
+			     const char *workgroup,
+			     const char *host)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads;
 	ADS_STATUS status;
+	int ret = -1;
 
-	ads = ads_init(realm, workgroup, host, ADS_SASL_PLAIN);
-	if (ads == NULL ) {
-		return -1;
+	ads = ads_init(tmp_ctx, realm, workgroup, host, ADS_SASL_PLAIN);
+	if (ads == NULL) {
+		goto out;
 	}
 
 	ads->auth.flags |= ADS_AUTH_NO_BIND;
 
         status = ads_connect(ads);
         if ( !ADS_ERR_OK(status) ) {
-                return -1;
+                goto out;
         }
 
-	ads_destroy(&ads);
-	return 0;
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 int net_ads_check_our_domain(struct net_context *c)
 {
-	return net_ads_check_int(lp_realm(), lp_workgroup(), NULL);
+	return net_ads_check_int(c, lp_realm(), lp_workgroup(), NULL);
 }
 
 int net_ads_check(struct net_context *c)
 {
-	return net_ads_check_int(NULL, c->opt_workgroup, c->opt_host);
+	return net_ads_check_int(c, NULL, c->opt_workgroup, c->opt_host);
 }
 
 /*
@@ -779,8 +874,12 @@ int net_ads_check(struct net_context *c)
  */
 static int net_ads_workgroup(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	struct NETLOGON_SAM_LOGON_RESPONSE_EX reply;
+	bool ok = false;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf  ("%s\n"
@@ -788,30 +887,39 @@ static int net_ads_workgroup(struct net_context *c, int argc, const char **argv)
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Print the workgroup name"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
-	if (!ADS_ERR_OK(ads_startup_nobind(c, false, &ads))) {
+	status = ads_startup_nobind(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("Didn't find the cldap server!\n"));
-		return -1;
+		goto out;
 	}
 
 	if (!ads->config.realm) {
-		ads->config.realm = discard_const_p(char, c->opt_target_workgroup);
+		ads->config.realm = talloc_strdup(ads, c->opt_target_workgroup);
+		if (ads->config.realm == NULL) {
+			d_fprintf(stderr, _("Out of memory\n"));
+			goto out;
+		}
 		ads->ldap.port = 389;
 	}
 
-	if ( !ads_cldap_netlogon_5(talloc_tos(), &ads->ldap.ss, ads->server.realm, &reply ) ) {
+	ok = ads_cldap_netlogon_5(tmp_ctx,
+				  &ads->ldap.ss, ads->server.realm, &reply);
+	if (!ok) {
 		d_fprintf(stderr, _("CLDAP query failed!\n"));
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
 
 	d_printf(_("Workgroup: %s\n"), reply.domain_name);
 
-	ads_destroy(&ads);
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
 
-	return 0;
+	return ret;
 }
 
 
@@ -851,22 +959,25 @@ static int net_ads_user_usage(struct net_context *c, int argc, const char **argv
 
 static int ads_user_add(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
 	char *upn, *userdn;
 	LDAPMessage *res=NULL;
 	int rc = -1;
 	char *ou_str = NULL;
 
-	if (argc < 1 || c->display_usage)
+	if (argc < 1 || c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_user_usage(c, argc, argv);
+	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto done;
 	}
 
 	status = ads_find_user_acct(ads, &res, argv[0]);
-
 	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("ads_user_add: %s\n"), ads_errstr(status));
 		goto done;
@@ -885,7 +996,6 @@ static int ads_user_add(struct net_context *c, int argc, const char **argv)
 	}
 
 	status = ads_add_user_acct(ads, argv[0], ou_str, c->opt_comment);
-
 	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("Could not add user %s: %s\n"), argv[0],
 			 ads_errstr(status));
@@ -900,101 +1010,102 @@ static int ads_user_add(struct net_context *c, int argc, const char **argv)
 	}
 
 	/* try setting the password */
-	if (asprintf(&upn, "%s@%s", argv[0], ads->config.realm) == -1) {
+	upn = talloc_asprintf(tmp_ctx,
+			      "%s@%s",
+			      argv[0],
+			      ads->config.realm);
+	if (upn == NULL) {
 		goto done;
 	}
+
 	status = ads_krb5_set_password(ads->auth.kdc_server, upn, argv[1],
 				       ads->auth.time_offset);
-	SAFE_FREE(upn);
 	if (ADS_ERR_OK(status)) {
 		d_printf(_("User %s added\n"), argv[0]);
 		rc = 0;
 		goto done;
 	}
+	TALLOC_FREE(upn);
 
 	/* password didn't set, delete account */
 	d_fprintf(stderr, _("Could not add user %s. "
 			    "Error setting password %s\n"),
 		 argv[0], ads_errstr(status));
+
 	ads_msgfree(ads, res);
+	res = NULL;
+
 	status=ads_find_user_acct(ads, &res, argv[0]);
 	if (ADS_ERR_OK(status)) {
-		userdn = ads_get_dn(ads, talloc_tos(), res);
+		userdn = ads_get_dn(ads, tmp_ctx, res);
 		ads_del_dn(ads, userdn);
 		TALLOC_FREE(userdn);
 	}
 
  done:
-	if (res)
-		ads_msgfree(ads, res);
-	ads_destroy(&ads);
+	ads_msgfree(ads, res);
 	SAFE_FREE(ou_str);
+	TALLOC_FREE(tmp_ctx);
 	return rc;
 }
 
 static int ads_user_info(struct net_context *c, int argc, const char **argv)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads = NULL;
-	ADS_STATUS rc;
+	ADS_STATUS status;
 	LDAPMessage *res = NULL;
-	TALLOC_CTX *frame;
-	int ret = 0;
+	int ret = -1;
 	wbcErr wbc_status;
 	const char *attrs[] = {"memberOf", "primaryGroupID", NULL};
-	char *searchstring=NULL;
-	char **grouplist;
-	char *primary_group;
-	char *escaped_user;
+	char *searchstring = NULL;
+	char **grouplist = NULL;
+	char *primary_group = NULL;
+	char *escaped_user = NULL;
 	struct dom_sid primary_group_sid;
 	uint32_t group_rid;
 	enum wbcSidType type;
 
 	if (argc < 1 || c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_user_usage(c, argc, argv);
 	}
 
-	frame = talloc_new(talloc_tos());
-	if (frame == NULL) {
-		return -1;
-	}
-
-	escaped_user = escape_ldap_string(frame, argv[0]);
+	escaped_user = escape_ldap_string(tmp_ctx, argv[0]);
 	if (!escaped_user) {
 		d_fprintf(stderr,
 			  _("ads_user_info: failed to escape user %s\n"),
 			  argv[0]);
-		return -1;
+		goto out;
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		ret = -1;
-		goto error;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
-	if (asprintf(&searchstring, "(sAMAccountName=%s)", escaped_user) == -1) {
-		ret =-1;
-		goto error;
+	searchstring = talloc_asprintf(tmp_ctx,
+				       "(sAMAccountName=%s)",
+				       escaped_user);
+	if (searchstring == NULL) {
+		goto out;
 	}
-	rc = ads_search(ads, &res, searchstring, attrs);
-	SAFE_FREE(searchstring);
 
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("ads_search: %s\n"), ads_errstr(rc));
-		ret = -1;
-		goto error;
+	status = ads_search(ads, &res, searchstring, attrs);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("ads_search: %s\n"), ads_errstr(status));
+		goto out;
 	}
 
 	if (!ads_pull_uint32(ads, res, "primaryGroupID", &group_rid)) {
 		d_fprintf(stderr, _("ads_pull_uint32 failed\n"));
-		ret = -1;
-		goto error;
+		goto out;
 	}
 
-	rc = ads_domain_sid(ads, &primary_group_sid);
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("ads_domain_sid: %s\n"), ads_errstr(rc));
-		ret = -1;
-		goto error;
+	status = ads_domain_sid(ads, &primary_group_sid);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("ads_domain_sid: %s\n"), ads_errstr(status));
+		goto out;
 	}
 
 	sid_append_rid(&primary_group_sid, group_rid);
@@ -1006,8 +1117,7 @@ static int ads_user_info(struct net_context *c, int argc, const char **argv)
 	if (!WBC_ERROR_IS_OK(wbc_status)) {
 		d_fprintf(stderr, "wbcLookupSid: %s\n",
 			  wbcErrorString(wbc_status));
-		ret = -1;
-		goto error;
+		goto out;
 	}
 
 	d_printf("%s\n", primary_group);
@@ -1028,48 +1138,57 @@ static int ads_user_info(struct net_context *c, int argc, const char **argv)
 		ldap_value_free(grouplist);
 	}
 
-error:
-	if (res) ads_msgfree(ads, res);
-	if (ads) ads_destroy(&ads);
-	TALLOC_FREE(frame);
+	ret = 0;
+out:
+	ads_msgfree(ads, res);
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
 static int ads_user_delete(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	LDAPMessage *res = NULL;
-	char *userdn;
+	char *userdn = NULL;
+	int ret = -1;
 
 	if (argc < 1) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_user_usage(c, argc, argv);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
-	rc = ads_find_user_acct(ads, &res, argv[0]);
-	if (!ADS_ERR_OK(rc) || ads_count_replies(ads, res) != 1) {
+	status = ads_find_user_acct(ads, &res, argv[0]);
+	if (!ADS_ERR_OK(status) || ads_count_replies(ads, res) != 1) {
 		d_printf(_("User %s does not exist.\n"), argv[0]);
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
-	userdn = ads_get_dn(ads, talloc_tos(), res);
+
+	userdn = ads_get_dn(ads, tmp_ctx, res);
+	if (userdn == NULL) {
+		goto out;
+	}
+
+	status = ads_del_dn(ads, userdn);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("Error deleting user %s: %s\n"), argv[0],
+			  ads_errstr(status));
+		goto out;
+	}
+
+	d_printf(_("User %s deleted\n"), argv[0]);
+
+	ret = 0;
+out:
 	ads_msgfree(ads, res);
-	rc = ads_del_dn(ads, userdn);
-	TALLOC_FREE(userdn);
-	if (ADS_ERR_OK(rc)) {
-		d_printf(_("User %s deleted\n"), argv[0]);
-		ads_destroy(&ads);
-		return 0;
-	}
-	d_fprintf(stderr, _("Error deleting user %s: %s\n"), argv[0],
-		 ads_errstr(rc));
-	ads_destroy(&ads);
-	return -1;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 int net_ads_user(struct net_context *c, int argc, const char **argv)
@@ -1101,42 +1220,55 @@ int net_ads_user(struct net_context *c, int argc, const char **argv)
 		},
 		{NULL, NULL, 0, NULL, NULL}
 	};
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	const char *shortattrs[] = {"sAMAccountName", NULL};
 	const char *longattrs[] = {"sAMAccountName", "description", NULL};
 	char *disp_fields[2] = {NULL, NULL};
+	int ret = -1;
 
-	if (argc == 0) {
-		if (c->display_usage) {
-			d_printf(  "%s\n"
-			           "net ads user\n"
-				   "    %s\n",
-				 _("Usage:"),
-				 _("List AD users"));
-			net_display_usage_from_functable(func);
-			return 0;
-		}
-
-		if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-			return -1;
-		}
-
-		if (c->opt_long_list_entries)
-			d_printf(_("\nUser name             Comment"
-				   "\n-----------------------------\n"));
-
-		rc = ads_do_search_all_fn(ads, ads->config.bind_path,
-					  LDAP_SCOPE_SUBTREE,
-					  "(objectCategory=user)",
-					  c->opt_long_list_entries ? longattrs :
-					  shortattrs, usergrp_display,
-					  disp_fields);
-		ads_destroy(&ads);
-		return ADS_ERR_OK(rc) ? 0 : -1;
+	if (argc > 0) {
+		TALLOC_FREE(tmp_ctx);
+		return net_run_function(c, argc, argv, "net ads user", func);
 	}
 
-	return net_run_function(c, argc, argv, "net ads user", func);
+	if (c->display_usage) {
+		d_printf(  "%s\n"
+		           "net ads user\n"
+			   "    %s\n",
+			 _("Usage:"),
+			 _("List AD users"));
+		net_display_usage_from_functable(func);
+		TALLOC_FREE(tmp_ctx);
+		return -1;
+	}
+
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
+	}
+
+	if (c->opt_long_list_entries)
+		d_printf(_("\nUser name             Comment"
+			   "\n-----------------------------\n"));
+
+	status = ads_do_search_all_fn(ads,
+				      ads->config.bind_path,
+				      LDAP_SCOPE_SUBTREE,
+				      "(objectCategory=user)",
+				      c->opt_long_list_entries ?
+				              longattrs : shortattrs,
+				      usergrp_display,
+				      disp_fields);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
+	}
+
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 static int net_ads_group_usage(struct net_context *c, int argc, const char **argv)
@@ -1146,30 +1278,32 @@ static int net_ads_group_usage(struct net_context *c, int argc, const char **arg
 
 static int ads_group_add(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
-	LDAPMessage *res=NULL;
-	int rc = -1;
+	LDAPMessage *res = NULL;
+	int ret = -1;
 	char *ou_str = NULL;
 
 	if (argc < 1 || c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_group_usage(c, argc, argv);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
 	status = ads_find_user_acct(ads, &res, argv[0]);
-
 	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("ads_group_add: %s\n"), ads_errstr(status));
-		goto done;
+		goto out;
 	}
 
 	if (ads_count_replies(ads, res)) {
 		d_fprintf(stderr, _("ads_group_add: Group %s already exists\n"), argv[0]);
-		goto done;
+		goto out;
 	}
 
 	if (c->opt_container) {
@@ -1179,58 +1313,65 @@ static int ads_group_add(struct net_context *c, int argc, const char **argv)
 	}
 
 	status = ads_add_group_acct(ads, argv[0], ou_str, c->opt_comment);
-
-	if (ADS_ERR_OK(status)) {
-		d_printf(_("Group %s added\n"), argv[0]);
-		rc = 0;
-	} else {
+	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("Could not add group %s: %s\n"), argv[0],
-			 ads_errstr(status));
+			  ads_errstr(status));
+		goto out;
 	}
 
- done:
-	if (res)
-		ads_msgfree(ads, res);
-	ads_destroy(&ads);
+	d_printf(_("Group %s added\n"), argv[0]);
+
+	ret = 0;
+ out:
+	ads_msgfree(ads, res);
 	SAFE_FREE(ou_str);
-	return rc;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 static int ads_group_delete(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	LDAPMessage *res = NULL;
-	char *groupdn;
+	char *groupdn = NULL;
+	int ret = -1;
 
 	if (argc < 1 || c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_group_usage(c, argc, argv);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
-	rc = ads_find_user_acct(ads, &res, argv[0]);
-	if (!ADS_ERR_OK(rc) || ads_count_replies(ads, res) != 1) {
+	status = ads_find_user_acct(ads, &res, argv[0]);
+	if (!ADS_ERR_OK(status) || ads_count_replies(ads, res) != 1) {
 		d_printf(_("Group %s does not exist.\n"), argv[0]);
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
-	groupdn = ads_get_dn(ads, talloc_tos(), res);
+
+	groupdn = ads_get_dn(ads, tmp_ctx, res);
+	if (groupdn == NULL) {
+		goto out;
+	}
+
+	status = ads_del_dn(ads, groupdn);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("Error deleting group %s: %s\n"), argv[0],
+			  ads_errstr(status));
+		goto out;
+	}
+	d_printf(_("Group %s deleted\n"), argv[0]);
+
+	ret = 0;
+out:
 	ads_msgfree(ads, res);
-	rc = ads_del_dn(ads, groupdn);
-	TALLOC_FREE(groupdn);
-	if (ADS_ERR_OK(rc)) {
-		d_printf(_("Group %s deleted\n"), argv[0]);
-		ads_destroy(&ads);
-		return 0;
-	}
-	d_fprintf(stderr, _("Error deleting group %s: %s\n"), argv[0],
-		 ads_errstr(rc));
-	ads_destroy(&ads);
-	return -1;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 int net_ads_group(struct net_context *c, int argc, const char **argv)
@@ -1254,48 +1395,64 @@ int net_ads_group(struct net_context *c, int argc, const char **argv)
 		},
 		{NULL, NULL, 0, NULL, NULL}
 	};
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	const char *shortattrs[] = {"sAMAccountName", NULL};
 	const char *longattrs[] = {"sAMAccountName", "description", NULL};
 	char *disp_fields[2] = {NULL, NULL};
+	int ret = -1;
 
-	if (argc == 0) {
-		if (c->display_usage) {
-			d_printf(  "%s\n"
-				   "net ads group\n"
-				   "    %s\n",
-				 _("Usage:"),
-				 _("List AD groups"));
-			net_display_usage_from_functable(func);
-			return 0;
-		}
-
-		if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-			return -1;
-		}
-
-		if (c->opt_long_list_entries)
-			d_printf(_("\nGroup name            Comment"
-				   "\n-----------------------------\n"));
-		rc = ads_do_search_all_fn(ads, ads->config.bind_path,
-					  LDAP_SCOPE_SUBTREE,
-					  "(objectCategory=group)",
-					  c->opt_long_list_entries ? longattrs :
-					  shortattrs, usergrp_display,
-					  disp_fields);
-
-		ads_destroy(&ads);
-		return ADS_ERR_OK(rc) ? 0 : -1;
+	if (argc >= 0) {
+		TALLOC_FREE(tmp_ctx);
+		return net_run_function(c, argc, argv, "net ads group", func);
 	}
-	return net_run_function(c, argc, argv, "net ads group", func);
+
+	if (c->display_usage) {
+		d_printf(  "%s\n"
+			   "net ads group\n"
+			   "    %s\n",
+			 _("Usage:"),
+			 _("List AD groups"));
+		net_display_usage_from_functable(func);
+		TALLOC_FREE(tmp_ctx);
+		return -1;
+	}
+
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
+	}
+
+	if (c->opt_long_list_entries)
+		d_printf(_("\nGroup name            Comment"
+			   "\n-----------------------------\n"));
+
+	status = ads_do_search_all_fn(ads,
+				      ads->config.bind_path,
+				      LDAP_SCOPE_SUBTREE,
+				      "(objectCategory=group)",
+				      c->opt_long_list_entries ?
+				              longattrs : shortattrs,
+				      usergrp_display,
+				      disp_fields);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
+	}
+
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 static int net_ads_status(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
-	LDAPMessage *res;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	LDAPMessage *res = NULL;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -1303,31 +1460,37 @@ static int net_ads_status(struct net_context *c, int argc, const char **argv)
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Display machine account details"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
 	net_warn_member_options();
 
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		return -1;
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
-	rc = ads_find_machine_acct(ads, &res, lp_netbios_name());
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("ads_find_machine_acct: %s\n"), ads_errstr(rc));
-		ads_destroy(&ads);
-		return -1;
+	status = ads_find_machine_acct(ads, &res, lp_netbios_name());
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("ads_find_machine_acct: %s\n"),
+			  ads_errstr(status));
+		goto out;
 	}
 
 	if (ads_count_replies(ads, res) == 0) {
-		d_fprintf(stderr, _("No machine account for '%s' found\n"), lp_netbios_name());
-		ads_destroy(&ads);
-		return -1;
+		d_fprintf(stderr, _("No machine account for '%s' found\n"),
+			  lp_netbios_name());
+		goto out;
 	}
 
 	ads_dump(ads, res);
-	ads_destroy(&ads);
-	return 0;
+
+	ret = 0;
+out:
+	ads_msgfree(ads, res);
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 /*******************************************************************
@@ -1339,9 +1502,10 @@ static int net_ads_status(struct net_context *c, int argc, const char **argv)
 
 static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 {
-	TALLOC_CTX *ctx;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	struct libnet_UnjoinCtx *r = NULL;
 	WERROR werr;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -1349,16 +1513,13 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Leave an AD domain"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
 	if (!*lp_realm()) {
 		d_fprintf(stderr, _("No realm set, are we joined ?\n"));
-		return -1;
-	}
-
-	if (!(ctx = talloc_init("net_ads_leave"))) {
-		d_fprintf(stderr, _("Could not initialise talloc context.\n"));
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
@@ -1369,13 +1530,13 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 	if (!c->msg_ctx) {
 		d_fprintf(stderr, _("Could not initialise message context. "
 			"Try running as root\n"));
-		return -1;
+		goto done;
 	}
 
-	werr = libnet_init_UnjoinCtx(ctx, &r);
+	werr = libnet_init_UnjoinCtx(tmp_ctx, &r);
 	if (!W_ERROR_IS_OK(werr)) {
 		d_fprintf(stderr, _("Could not initialise unjoin context.\n"));
-		return -1;
+		goto done;
 	}
 
 	r->in.debug		= true;
@@ -1398,7 +1559,7 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 
 	r->in.msg_ctx		= c->msg_ctx;
 
-	werr = libnet_Unjoin(ctx, r);
+	werr = libnet_Unjoin(tmp_ctx, r);
 	if (!W_ERROR_IS_OK(werr)) {
 		d_printf(_("Failed to leave domain: %s\n"),
 			 r->out.error_string ? r->out.error_string :
@@ -1409,6 +1570,7 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 	if (r->out.deleted_machine_account) {
 		d_printf(_("Deleted account for '%s' in realm '%s'\n"),
 			r->in.machine_name, r->out.dns_domain_name);
+		ret = 0;
 		goto done;
 	}
 
@@ -1416,7 +1578,7 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 	if (r->out.disabled_machine_account) {
 		d_printf(_("Disabled account for '%s' in realm '%s'\n"),
 			r->in.machine_name, r->out.dns_domain_name);
-		werr = WERR_OK;
+		ret = 0;
 		goto done;
 	}
 
@@ -1426,19 +1588,15 @@ static int net_ads_leave(struct net_context *c, int argc, const char **argv)
 	d_fprintf(stderr, _("Machine '%s' Left domain '%s'\n"),
 		  r->in.machine_name, r->out.dns_domain_name);
 
+	ret = 0;
  done:
-	TALLOC_FREE(r);
-	TALLOC_FREE(ctx);
-
-	if (W_ERROR_IS_OK(werr)) {
-		return 0;
-	}
-
-	return -1;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
-static NTSTATUS net_ads_join_ok(struct net_context *c)
+static ADS_STATUS net_ads_join_ok(struct net_context *c)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
 	fstring dc_name;
@@ -1446,7 +1604,8 @@ static NTSTATUS net_ads_join_ok(struct net_context *c)
 
 	if (!secrets_init()) {
 		DEBUG(1,("Failed to initialise secrets database\n"));
-		return NT_STATUS_ACCESS_DENIED;
+		TALLOC_FREE(tmp_ctx);
+		return ADS_ERROR_NT(NT_STATUS_ACCESS_DENIED);
 	}
 
 	net_warn_member_options();
@@ -1455,13 +1614,15 @@ static NTSTATUS net_ads_join_ok(struct net_context *c)
 
 	get_dc_name(lp_workgroup(), lp_realm(), dc_name, &dcip);
 
-	status = ads_startup(c, true, &ads);
+	status = ads_startup(c, true, tmp_ctx, &ads);
 	if (!ADS_ERR_OK(status)) {
-		return ads_ntstatus(status);
+		goto out;
 	}
 
-	ads_destroy(&ads);
-	return NT_STATUS_OK;
+	status = ADS_ERROR_NT(NT_STATUS_OK);
+out:
+	TALLOC_FREE(tmp_ctx);
+	return  status;
 }
 
 /*
@@ -1469,7 +1630,7 @@ static NTSTATUS net_ads_join_ok(struct net_context *c)
  */
 int net_ads_testjoin(struct net_context *c, int argc, const char **argv)
 {
-	NTSTATUS status;
+	ADS_STATUS status;
 	use_in_memory_ccache();
 
 	if (c->display_usage) {
@@ -1478,16 +1639,16 @@ int net_ads_testjoin(struct net_context *c, int argc, const char **argv)
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Test if the existing join is ok"));
-		return 0;
+		return -1;
 	}
 
 	net_warn_member_options();
 
 	/* Display success or failure */
 	status = net_ads_join_ok(c);
-	if (!NT_STATUS_IS_OK(status)) {
+	if (!ADS_ERR_OK(status)) {
 		fprintf(stderr, _("Join to domain is not valid: %s\n"),
-			get_friendly_nt_error_msg(status));
+			get_friendly_nt_error_msg(ads_ntstatus(status)));
 		return -1;
 	}
 
@@ -1558,7 +1719,7 @@ static int net_ads_join_usage(struct net_context *c, int argc, const char **argv
 
 int net_ads_join(struct net_context *c, int argc, const char **argv)
 {
-	TALLOC_CTX *ctx = NULL;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	struct libnet_JoinCtx *r = NULL;
 	const char *domain = lp_realm();
 	WERROR werr = WERR_NERR_SETUPNOTJOINED;
@@ -1573,14 +1734,16 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	const char *os_servicepack = NULL;
 	bool modify_config = lp_config_backend_is_registry();
 	enum libnetjoin_JoinDomNameType domain_name_type = JoinDomNameTypeDNS;
+	int ret = -1;
 
-	if (c->display_usage)
+	if (c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_join_usage(c, argc, argv);
+	}
 
 	net_warn_member_options();
 
 	if (!modify_config) {
-
 		werr = check_ads_config();
 		if (!W_ERROR_IS_OK(werr)) {
 			d_fprintf(stderr, _("Invalid configuration.  Exiting....\n"));
@@ -1588,17 +1751,11 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 		}
 	}
 
-	if (!(ctx = talloc_init("net_ads_join"))) {
-		d_fprintf(stderr, _("Could not initialise talloc context.\n"));
-		werr = WERR_NOT_ENOUGH_MEMORY;
-		goto fail;
-	}
-
 	if (!c->opt_kerberos) {
 		use_in_memory_ccache();
 	}
 
-	werr = libnet_init_JoinCtx(ctx, &r);
+	werr = libnet_init_JoinCtx(tmp_ctx, &r);
 	if (!W_ERROR_IS_OK(werr)) {
 		goto fail;
 	}
@@ -1647,8 +1804,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 				werr = WERR_INVALID_PARAMETER;
 				goto fail;
 			}
-		}
-		else {
+		} else {
 			domain = argv[i];
 			if (strchr(domain, '.') == NULL) {
 				domain_name_type = JoinDomNameTypeUnknown;
@@ -1694,12 +1850,12 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 				  WKSSVC_JOIN_FLAGS_DOMAIN_JOIN_IF_JOINED;
 	r->in.msg_ctx		= c->msg_ctx;
 
-	werr = libnet_Join(ctx, r);
+	werr = libnet_Join(tmp_ctx, r);
 	if (W_ERROR_EQUAL(werr, WERR_NERR_DCNOTFOUND) &&
 	    strequal(domain, lp_realm())) {
 		r->in.domain_name = lp_workgroup();
 		r->in.domain_name_type = JoinDomNameTypeNBT;
-		werr = libnet_Join(ctx, r);
+		werr = libnet_Join(tmp_ctx, r);
 	}
 	if (!W_ERROR_IS_OK(werr)) {
 		goto fail;
@@ -1738,22 +1894,22 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	 * operation as succeeded if we came this far.
 	 */
 	if (!c->opt_no_dns_updates) {
-		net_ads_join_dns_updates(c, ctx, r);
+		net_ads_join_dns_updates(c, tmp_ctx, r);
 	}
 
-	TALLOC_FREE(r);
-	TALLOC_FREE( ctx );
-
-	return 0;
+	ret = 0;
 
 fail:
-	/* issue an overall failure message at the end. */
-	d_printf(_("Failed to join domain: %s\n"),
-		r && r->out.error_string ? r->out.error_string :
-		get_friendly_werror_msg(werr));
-	TALLOC_FREE( ctx );
+	if (ret != 0) {
+		/* issue an overall failure message at the end. */
+		d_printf(_("Failed to join domain: %s\n"),
+			r && r->out.error_string ? r->out.error_string :
+			get_friendly_werror_msg(werr));
+	}
 
-        return -1;
+	TALLOC_FREE(tmp_ctx);
+
+	return ret;
 }
 
 /*******************************************************************
@@ -1762,15 +1918,16 @@ fail:
 static int net_ads_dns_register(struct net_context *c, int argc, const char **argv)
 {
 #if defined(HAVE_KRB5)
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
 	NTSTATUS ntstatus;
-	TALLOC_CTX *ctx;
 	const char *hostname = NULL;
 	const char **addrs_list = NULL;
 	struct sockaddr_storage *addrs = NULL;
 	int num_addrs = 0;
 	int count;
+	int ret = -1;
 
 #ifdef DEVELOPER
 	talloc_enable_leak_report();
@@ -1785,15 +1942,12 @@ static int net_ads_dns_register(struct net_context *c, int argc, const char **ar
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
-			   "net ads dns register [hostname [IP [IP...]]]\n"
+			   "net ads dns register [hostname [IP [IP...]]] "
+			   "[--force] [--dns-ttl TTL]\n"
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Register hostname with DNS\n"));
-		return -1;
-	}
-
-	if (!(ctx = talloc_init("net_ads_dns"))) {
-		d_fprintf(stderr, _("Could not initialise talloc context\n"));
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
@@ -1810,11 +1964,12 @@ static int net_ads_dns_register(struct net_context *c, int argc, const char **ar
 	}
 
 	if (num_addrs > 0) {
-		addrs = talloc_zero_array(ctx, struct sockaddr_storage, num_addrs);
+		addrs = talloc_zero_array(tmp_ctx,
+					  struct sockaddr_storage,
+					  num_addrs);
 		if (addrs == NULL) {
 			d_fprintf(stderr, _("Error allocating memory!\n"));
-			talloc_free(ctx);
-			return -1;
+			goto out;
 		}
 	}
 
@@ -1823,32 +1978,35 @@ static int net_ads_dns_register(struct net_context *c, int argc, const char **ar
 			d_fprintf(stderr, "%s '%s'.\n",
 					  _("Cannot interpret address"),
 					  addrs_list[count]);
-			talloc_free(ctx);
-			return -1;
+			goto out;
 		}
 	}
 
-	status = ads_startup(c, true, &ads);
+	status = ads_startup(c, true, tmp_ctx, &ads);
 	if ( !ADS_ERR_OK(status) ) {
 		DEBUG(1, ("error on ads_startup: %s\n", ads_errstr(status)));
-		TALLOC_FREE(ctx);
-		return -1;
+		goto out;
 	}
 
-	ntstatus = net_update_dns_ext(c, ctx, ads, hostname, addrs, num_addrs, false);
+	ntstatus = net_update_dns_ext(c,
+				      tmp_ctx,
+				      ads,
+				      hostname,
+				      addrs,
+				      num_addrs,
+				      false);
 	if (!NT_STATUS_IS_OK(ntstatus)) {
 		d_fprintf( stderr, _("DNS update failed!\n") );
-		ads_destroy( &ads );
-		TALLOC_FREE( ctx );
-		return -1;
+		goto out;
 	}
 
 	d_fprintf( stderr, _("Successfully registered hostname with DNS\n") );
 
-	ads_destroy(&ads);
-	TALLOC_FREE( ctx );
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
 
-	return 0;
+	return ret;
 #else
 	d_fprintf(stderr,
 		  _("DNS update support not enabled at compile time!\n"));
@@ -1861,11 +2019,12 @@ static int net_ads_dns_unregister(struct net_context *c,
 				  const char **argv)
 {
 #if defined(HAVE_KRB5)
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
 	NTSTATUS ntstatus;
-	TALLOC_CTX *ctx;
 	const char *hostname = NULL;
+	int ret = -1;
 
 #ifdef DEVELOPER
 	talloc_enable_leak_report();
@@ -1880,40 +2039,40 @@ static int net_ads_dns_unregister(struct net_context *c,
 			   "net ads dns unregister [hostname]\n"
 			   "    %s\n",
 			 _("Usage:"),
-			 _("Remove all IP Address entires for a given\n"
+			 _("Remove all IP Address entries for a given\n"
                            "    hostname from the Active Directory server.\n"));
-		return -1;
-	}
-
-	if (!(ctx = talloc_init("net_ads_dns"))) {
-		d_fprintf(stderr, _("Could not initialise talloc context\n"));
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
 	/* Get the hostname for un-registering */
 	hostname = argv[0];
 
-	status = ads_startup(c, true, &ads);
+	status = ads_startup(c, true, tmp_ctx, &ads);
 	if ( !ADS_ERR_OK(status) ) {
 		DEBUG(1, ("error on ads_startup: %s\n", ads_errstr(status)));
-		TALLOC_FREE(ctx);
-		return -1;
+		goto out;
 	}
 
-	ntstatus = net_update_dns_ext(c, ctx, ads, hostname, NULL, 0, true);
+	ntstatus = net_update_dns_ext(c,
+				      tmp_ctx,
+				      ads,
+				      hostname,
+				      NULL,
+				      0,
+				      true);
 	if (!NT_STATUS_IS_OK(ntstatus)) {
 		d_fprintf( stderr, _("DNS update failed!\n") );
-		ads_destroy( &ads );
-		TALLOC_FREE( ctx );
-		return -1;
+		goto out;
 	}
 
 	d_fprintf( stderr, _("Successfully un-registered hostname from DNS\n"));
 
-	ads_destroy(&ads);
-	TALLOC_FREE( ctx );
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
 
-	return 0;
+	return ret;
 #else
 	d_fprintf(stderr,
 		  _("DNS update support not enabled at compile time!\n"));
@@ -2052,11 +2211,15 @@ int net_ads_printer_usage(struct net_context *c, int argc, const char **argv)
 /*******************************************************************
  ********************************************************************/
 
-static int net_ads_printer_search(struct net_context *c, int argc, const char **argv)
+static int net_ads_printer_search(struct net_context *c,
+				  int argc,
+				  const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	LDAPMessage *res = NULL;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -2064,41 +2227,47 @@ static int net_ads_printer_search(struct net_context *c, int argc, const char **
 			   "    %s\n",
 			 _("Usage:"),
 			 _("List printers in the AD"));
-		return 0;
-	}
-
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
-	rc = ads_find_printers(ads, &res);
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
+	}
 
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("ads_find_printer: %s\n"), ads_errstr(rc));
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-	 	return -1;
+	status = ads_find_printers(ads, &res);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("ads_find_printer: %s\n"),
+			  ads_errstr(status));
+		goto out;
 	}
 
 	if (ads_count_replies(ads, res) == 0) {
 		d_fprintf(stderr, _("No results found\n"));
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
 
 	ads_dump(ads, res);
+
+	ret = 0;
+out:
 	ads_msgfree(ads, res);
-	ads_destroy(&ads);
-	return 0;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
-static int net_ads_printer_info(struct net_context *c, int argc, const char **argv)
+static int net_ads_printer_info(struct net_context *c,
+				int argc,
+				const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
-	const char *servername, *printername;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	const char *servername = NULL;
+	const char *printername = NULL;
 	LDAPMessage *res = NULL;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf("%s\n%s",
@@ -2107,11 +2276,13 @@ static int net_ads_printer_info(struct net_context *c, int argc, const char **ar
 			   "  Display printer info from AD\n"
 			   "    printername\tPrinter name or wildcard\n"
 			   "    servername\tName of the print server\n"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
 	if (argc > 0) {
@@ -2126,45 +2297,49 @@ static int net_ads_printer_info(struct net_context *c, int argc, const char **ar
 		servername = lp_netbios_name();
 	}
 
-	rc = ads_find_printer_on_server(ads, &res, printername, servername);
-
-	if (!ADS_ERR_OK(rc)) {
+	status = ads_find_printer_on_server(ads, &res, printername, servername);
+	if (!ADS_ERR_OK(status)) {
 		d_fprintf(stderr, _("Server '%s' not found: %s\n"),
-			servername, ads_errstr(rc));
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-		return -1;
+			  servername, ads_errstr(status));
+		goto out;
 	}
 
 	if (ads_count_replies(ads, res) == 0) {
 		d_fprintf(stderr, _("Printer '%s' not found\n"), printername);
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
 
 	ads_dump(ads, res);
-	ads_msgfree(ads, res);
-	ads_destroy(&ads);
 
-	return 0;
+	ret = 0;
+out:
+	ads_msgfree(ads, res);
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
-static int net_ads_printer_publish(struct net_context *c, int argc, const char **argv)
+static int net_ads_printer_publish(struct net_context *c,
+				   int argc,
+				   const char **argv)
 {
-        ADS_STRUCT *ads;
-        ADS_STATUS rc;
-	const char *servername, *printername;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	const char *servername = NULL;
+	const char *printername = NULL;
 	struct cli_state *cli = NULL;
 	struct rpc_pipe_client *pipe_hnd = NULL;
-	struct sockaddr_storage server_ss;
+	struct sockaddr_storage server_ss = { 0 };
 	NTSTATUS nt_status;
-	TALLOC_CTX *mem_ctx = talloc_init("net_ads_printer_publish");
-	ADS_MODLIST mods = ads_init_mods(mem_ctx);
-	char *prt_dn, *srv_dn, **srv_cn;
-	char *srv_cn_escaped = NULL, *printername_escaped = NULL;
+	ADS_MODLIST mods = NULL;
+	char *prt_dn = NULL;
+	char *srv_dn = NULL;
+	char **srv_cn = NULL;
+	char *srv_cn_escaped = NULL;
+	char *printername_escaped = NULL;
 	LDAPMessage *res = NULL;
 	bool ok;
+	int ret = -1;
 
 	if (argc < 1 || c->display_usage) {
 		d_printf("%s\n%s",
@@ -2173,13 +2348,19 @@ static int net_ads_printer_publish(struct net_context *c, int argc, const char *
 			   "  Publish printer in AD\n"
 			   "    printername\tName of the printer\n"
 			   "    servername\tName of the print server\n"));
-		talloc_destroy(mem_ctx);
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		talloc_destroy(mem_ctx);
-		return -1;
+	mods = ads_init_mods(tmp_ctx);
+	if (mods == NULL) {
+		d_fprintf(stderr, _("Out of memory\n"));
+		goto out;
+	}
+
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
 	printername = argv[0];
@@ -2196,9 +2377,7 @@ static int net_ads_printer_publish(struct net_context *c, int argc, const char *
 	if (!ok) {
 		d_fprintf(stderr, _("Could not find server %s\n"),
 			  servername);
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	cli_credentials_set_kerberos_state(c->creds,
@@ -2215,9 +2394,7 @@ static int net_ads_printer_publish(struct net_context *c, int argc, const char *
 		d_fprintf(stderr, _("Unable to open a connection to %s to "
 			            "obtain data for %s\n"),
 			  servername, printername);
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	/* Publish on AD server */
@@ -2228,9 +2405,7 @@ static int net_ads_printer_publish(struct net_context *c, int argc, const char *
 		d_fprintf(stderr, _("Could not find machine account for server "
 				    "%s\n"),
 			 servername);
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	srv_dn = ldap_get_dn((LDAP *)ads->ldap.ld, (LDAPMessage *)res);
@@ -2242,18 +2417,19 @@ static int net_ads_printer_publish(struct net_context *c, int argc, const char *
 		SAFE_FREE(srv_cn_escaped);
 		SAFE_FREE(printername_escaped);
 		d_fprintf(stderr, _("Internal error, out of memory!"));
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
-	if (asprintf(&prt_dn, "cn=%s-%s,%s", srv_cn_escaped, printername_escaped, srv_dn) == -1) {
+	prt_dn = talloc_asprintf(tmp_ctx,
+				 "cn=%s-%s,%s",
+				 srv_cn_escaped,
+				 printername_escaped,
+				 srv_dn);
+	if (prt_dn == NULL) {
 		SAFE_FREE(srv_cn_escaped);
 		SAFE_FREE(printername_escaped);
 		d_fprintf(stderr, _("Internal error, out of memory!"));
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
 	SAFE_FREE(srv_cn_escaped);
@@ -2263,44 +2439,43 @@ static int net_ads_printer_publish(struct net_context *c, int argc, const char *
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		d_fprintf(stderr, _("Unable to open a connection to the spoolss pipe on %s\n"),
 			 servername);
-		SAFE_FREE(prt_dn);
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
-	if (!W_ERROR_IS_OK(get_remote_printer_publishing_data(pipe_hnd, mem_ctx, &mods,
+	if (!W_ERROR_IS_OK(get_remote_printer_publishing_data(pipe_hnd,
+							      tmp_ctx,
+							      &mods,
 							      printername))) {
-		SAFE_FREE(prt_dn);
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-		return -1;
+		goto out;
 	}
 
-        rc = ads_add_printer_entry(ads, prt_dn, mem_ctx, &mods);
-        if (!ADS_ERR_OK(rc)) {
-                d_fprintf(stderr, "ads_publish_printer: %s\n", ads_errstr(rc));
-		SAFE_FREE(prt_dn);
-		ads_destroy(&ads);
-		talloc_destroy(mem_ctx);
-                return -1;
+        status = ads_add_printer_entry(ads, prt_dn, tmp_ctx, &mods);
+        if (!ADS_ERR_OK(status)) {
+                d_fprintf(stderr, "ads_publish_printer: %s\n",
+			  ads_errstr(status));
+		goto out;
         }
 
         d_printf("published printer\n");
-	SAFE_FREE(prt_dn);
-	ads_destroy(&ads);
-	talloc_destroy(mem_ctx);
 
-	return 0;
+	ret = 0;
+out:
+	talloc_destroy(tmp_ctx);
+
+	return ret;
 }
 
-static int net_ads_printer_remove(struct net_context *c, int argc, const char **argv)
+static int net_ads_printer_remove(struct net_context *c,
+				  int argc,
+				  const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
-	const char *servername;
-	char *prt_dn;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	const char *servername = NULL;
+	char *prt_dn = NULL;
 	LDAPMessage *res = NULL;
+	int ret = -1;
 
 	if (argc < 1 || c->display_usage) {
 		d_printf("%s\n%s",
@@ -2309,11 +2484,13 @@ static int net_ads_printer_remove(struct net_context *c, int argc, const char **
 			   "  Remove a printer from the AD\n"
 			   "    printername\tName of the printer\n"
 			   "    servername\tName of the print server\n"));
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		return -1;
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
 	if (argc > 1) {
@@ -2322,35 +2499,35 @@ static int net_ads_printer_remove(struct net_context *c, int argc, const char **
 		servername = lp_netbios_name();
 	}
 
-	rc = ads_find_printer_on_server(ads, &res, argv[0], servername);
-
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("ads_find_printer_on_server: %s\n"), ads_errstr(rc));
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-		return -1;
+	status = ads_find_printer_on_server(ads, &res, argv[0], servername);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("ads_find_printer_on_server: %s\n"),
+			  ads_errstr(status));
+		goto out;
 	}
 
 	if (ads_count_replies(ads, res) == 0) {
 		d_fprintf(stderr, _("Printer '%s' not found\n"), argv[1]);
-		ads_msgfree(ads, res);
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
 
-	prt_dn = ads_get_dn(ads, talloc_tos(), res);
+	prt_dn = ads_get_dn(ads, tmp_ctx, res);
+	if (prt_dn == NULL) {
+		d_fprintf(stderr, _("Out of memory\n"));
+		goto out;
+	}
+
+	status = ads_del_dn(ads, prt_dn);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("ads_del_dn: %s\n"), ads_errstr(status));
+		goto out;
+	}
+
+	ret = 0;
+out:
 	ads_msgfree(ads, res);
-	rc = ads_del_dn(ads, prt_dn);
-	TALLOC_FREE(prt_dn);
-
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("ads_del_dn: %s\n"), ads_errstr(rc));
-		ads_destroy(&ads);
-		return -1;
-	}
-
-	ads_destroy(&ads);
-	return 0;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 static int net_ads_printer(struct net_context *c, int argc, const char **argv)
@@ -2397,15 +2574,18 @@ static int net_ads_printer(struct net_context *c, int argc, const char **argv)
 
 static int net_ads_password(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
 	const char *auth_principal = cli_credentials_get_username(c->creds);
 	const char *auth_password = cli_credentials_get_password(c->creds);
 	const char *realm = NULL;
-	const char *new_password = NULL;
-	char *chr, *prompt;
-	const char *user;
+	char *new_password = NULL;
+	char *chr = NULL;
+	char *prompt = NULL;
+	const char *user = NULL;
 	char pwd[256] = {0};
-	ADS_STATUS ret;
+	ADS_STATUS status;
+	int ret = 0;
 
 	if (c->display_usage) {
 		d_printf("%s\n%s",
@@ -2413,27 +2593,32 @@ static int net_ads_password(struct net_context *c, int argc, const char **argv)
 			 _("net ads password <username>\n"
 			   "  Change password for user\n"
 			   "    username\tName of user to change password for\n"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
 	if (auth_principal == NULL || auth_password == NULL) {
 		d_fprintf(stderr, _("You must supply an administrator "
 				    "username/password\n"));
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
 	if (argc < 1) {
 		d_fprintf(stderr, _("ERROR: You must say which username to "
 				    "change password for\n"));
+		TALLOC_FREE(tmp_ctx);
 		return -1;
 	}
 
-	user = argv[0];
-	if (!strchr_m(user, '@')) {
-		if (asprintf(&chr, "%s@%s", argv[0], lp_realm()) == -1) {
-			return -1;
-		}
-		user = chr;
+	if (strchr_m(argv[0], '@')) {
+		user = talloc_strdup(tmp_ctx, argv[0]);
+	} else {
+		user = talloc_asprintf(tmp_ctx, "%s@%s", argv[0], lp_realm());
+	}
+	if (user == NULL) {
+		d_fprintf(stderr, _("Out of memory\n"));
+		goto out;
 	}
 
 	use_in_memory_ccache();
@@ -2446,58 +2631,77 @@ static int net_ads_password(struct net_context *c, int argc, const char **argv)
 
 	/* use the realm so we can eventually change passwords for users
 	in realms other than default */
-	ads = ads_init(realm, c->opt_workgroup, c->opt_host, ADS_SASL_PLAIN);
+	ads = ads_init(tmp_ctx,
+		       realm,
+		       c->opt_workgroup,
+		       c->opt_host,
+		       ADS_SASL_PLAIN);
 	if (ads == NULL) {
-		return -1;
+		goto out;
 	}
 
 	/* we don't actually need a full connect, but it's the easy way to
-		fill in the KDC's addresss */
+		fill in the KDC's address */
 	ads_connect(ads);
 
 	if (!ads->config.realm) {
 		d_fprintf(stderr, _("Didn't find the kerberos server!\n"));
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
 
-	if (argv[1]) {
-		new_password = (const char *)argv[1];
+	if (argv[1] != NULL) {
+		new_password = talloc_strdup(tmp_ctx, argv[1]);
 	} else {
 		int rc;
 
-		if (asprintf(&prompt, _("Enter new password for %s:"), user) == -1) {
-			return -1;
+		prompt = talloc_asprintf(tmp_ctx, _("Enter new password for %s:"), user);
+		if (prompt == NULL) {
+			d_fprintf(stderr, _("Out of memory\n"));
+			goto out;
 		}
+
 		rc = samba_getpass(prompt, pwd, sizeof(pwd), false, true);
 		if (rc < 0) {
-			return -1;
+			goto out;
 		}
-		new_password = pwd;
-		free(prompt);
+		new_password = talloc_strdup(tmp_ctx, pwd);
+		memset(pwd, '\0', sizeof(pwd));
 	}
 
-	ret = kerberos_set_password(ads->auth.kdc_server, auth_principal,
-				auth_password, user, new_password, ads->auth.time_offset);
-	memset(pwd, '\0', sizeof(pwd));
-	if (!ADS_ERR_OK(ret)) {
-		d_fprintf(stderr, _("Password change failed: %s\n"), ads_errstr(ret));
-		ads_destroy(&ads);
-		return -1;
+	if (new_password == NULL) {
+		d_fprintf(stderr, _("Out of memory\n"));
+		goto out;
+	}
+
+	status = kerberos_set_password(ads->auth.kdc_server,
+				       auth_principal,
+				       auth_password,
+				       user,
+				       new_password,
+				       ads->auth.time_offset);
+	memset(new_password, '\0', strlen(new_password));
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("Password change failed: %s\n"),
+			  ads_errstr(status));
+		goto out;
 	}
 
 	d_printf(_("Password change for %s completed.\n"), user);
-	ads_destroy(&ads);
 
-	return 0;
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 int net_ads_changetrustpw(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	char *host_principal;
-	fstring my_name;
-	ADS_STATUS ret;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	char *host_principal = NULL;
+	char *my_name = NULL;
+	ADS_STATUS status;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -2505,12 +2709,13 @@ int net_ads_changetrustpw(struct net_context *c, int argc, const char **argv)
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Change the machine account's trust password"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
 	if (!secrets_init()) {
 		DEBUG(1,("Failed to initialise secrets database\n"));
-		return -1;
+		goto out;
 	}
 
 	net_warn_member_options();
@@ -2519,29 +2724,29 @@ int net_ads_changetrustpw(struct net_context *c, int argc, const char **argv)
 
 	use_in_memory_ccache();
 
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		return -1;
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
-	fstrcpy(my_name, lp_netbios_name());
-	if (!strlower_m(my_name)) {
-		ads_destroy(&ads);
-		return -1;
+	my_name = talloc_asprintf_strlower_m(tmp_ctx, "%s", lp_netbios_name());
+	if (my_name == NULL) {
+		d_fprintf(stderr, _("Out of memory\n"));
+		goto out;
 	}
 
-	if (asprintf(&host_principal, "%s$@%s", my_name, ads->config.realm) == -1) {
-		ads_destroy(&ads);
-		return -1;
+	host_principal = talloc_asprintf(tmp_ctx, "%s$@%s", my_name, ads->config.realm);
+	if (host_principal == NULL) {
+		d_fprintf(stderr, _("Out of memory\n"));
+		goto out;
 	}
+
 	d_printf(_("Changing password for principal: %s\n"), host_principal);
 
-	ret = ads_change_trust_account_password(ads, host_principal);
-
-	if (!ADS_ERR_OK(ret)) {
-		d_fprintf(stderr, _("Password change failed: %s\n"), ads_errstr(ret));
-		ads_destroy(&ads);
-		SAFE_FREE(host_principal);
-		return -1;
+	status = ads_change_trust_account_password(ads, host_principal);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("Password change failed: %s\n"), ads_errstr(status));
+		goto out;
 	}
 
 	d_printf(_("Password change for principal %s succeeded.\n"), host_principal);
@@ -2553,10 +2758,11 @@ int net_ads_changetrustpw(struct net_context *c, int argc, const char **argv)
 		}
 	}
 
-	ads_destroy(&ads);
-	SAFE_FREE(host_principal);
+	ret = 0;
+out:
+	TALLOC_FREE(tmp_ctx);
 
-	return 0;
+	return ret;
 }
 
 /*
@@ -2581,30 +2787,36 @@ static int net_ads_search_usage(struct net_context *c, int argc, const char **ar
 */
 static int net_ads_search(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
-	const char *ldap_exp;
-	const char **attrs;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	const char *ldap_exp = NULL;
+	const char **attrs = NULL;
 	LDAPMessage *res = NULL;
+	int ret = -1;
 
 	if (argc < 1 || c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_search_usage(c, argc, argv);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
 	ldap_exp = argv[0];
 	attrs = (argv + 1);
 
-	rc = ads_do_search_retry(ads, ads->config.bind_path,
-			       LDAP_SCOPE_SUBTREE,
-			       ldap_exp, attrs, &res);
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("search failed: %s\n"), ads_errstr(rc));
-		ads_destroy(&ads);
-		return -1;
+	status = ads_do_search_retry(ads,
+				     ads->config.bind_path,
+				     LDAP_SCOPE_SUBTREE,
+				     ldap_exp,
+				     attrs,
+				     &res);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("search failed: %s\n"), ads_errstr(status));
+		goto out;
 	}
 
 	d_printf(_("Got %d replies\n\n"), ads_count_replies(ads, res));
@@ -2612,10 +2824,11 @@ static int net_ads_search(struct net_context *c, int argc, const char **argv)
 	/* dump the results */
 	ads_dump(ads, res);
 
+	ret = 0;
+out:
 	ads_msgfree(ads, res);
-	ads_destroy(&ads);
-
-	return 0;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 
@@ -2642,30 +2855,36 @@ static int net_ads_dn_usage(struct net_context *c, int argc, const char **argv)
 */
 static int net_ads_dn(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
-	const char *dn;
-	const char **attrs;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	const char *dn = NULL;
+	const char **attrs = NULL;
 	LDAPMessage *res = NULL;
+	int ret = -1;
 
 	if (argc < 1 || c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_dn_usage(c, argc, argv);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
 	dn = argv[0];
 	attrs = (argv + 1);
 
-	rc = ads_do_search_all(ads, dn,
-			       LDAP_SCOPE_BASE,
-			       "(objectclass=*)", attrs, &res);
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("search failed: %s\n"), ads_errstr(rc));
-		ads_destroy(&ads);
-		return -1;
+	status = ads_do_search_all(ads,
+				   dn,
+				   LDAP_SCOPE_BASE,
+				   "(objectclass=*)",
+				   attrs,
+				   &res);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("search failed: %s\n"), ads_errstr(status));
+		goto out;
 	}
 
 	d_printf("Got %d replies\n\n", ads_count_replies(ads, res));
@@ -2673,10 +2892,11 @@ static int net_ads_dn(struct net_context *c, int argc, const char **argv)
 	/* dump the results */
 	ads_dump(ads, res);
 
+	ret = 0;
+out:
 	ads_msgfree(ads, res);
-	ads_destroy(&ads);
-
-	return 0;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
 /*
@@ -2701,19 +2921,23 @@ static int net_ads_sid_usage(struct net_context *c, int argc, const char **argv)
 */
 static int net_ads_sid(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	ADS_STATUS rc;
-	const char *sid_string;
-	const char **attrs;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	const char *sid_string = NULL;
+	const char **attrs = NULL;
 	LDAPMessage *res = NULL;
-	struct dom_sid sid;
+	struct dom_sid sid = { 0 };
+	int ret = -1;
 
 	if (argc < 1 || c->display_usage) {
+		TALLOC_FREE(tmp_ctx);
 		return net_ads_sid_usage(c, argc, argv);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, false, &ads))) {
-		return -1;
+	status = ads_startup(c, false, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
 
 	sid_string = argv[0];
@@ -2721,15 +2945,13 @@ static int net_ads_sid(struct net_context *c, int argc, const char **argv)
 
 	if (!string_to_sid(&sid, sid_string)) {
 		d_fprintf(stderr, _("could not convert sid\n"));
-		ads_destroy(&ads);
-		return -1;
+		goto out;
 	}
 
-	rc = ads_search_retry_sid(ads, &res, &sid, attrs);
-	if (!ADS_ERR_OK(rc)) {
-		d_fprintf(stderr, _("search failed: %s\n"), ads_errstr(rc));
-		ads_destroy(&ads);
-		return -1;
+	status = ads_search_retry_sid(ads, &res, &sid, attrs);
+	if (!ADS_ERR_OK(status)) {
+		d_fprintf(stderr, _("search failed: %s\n"), ads_errstr(status));
+		goto out;
 	}
 
 	d_printf(_("Got %d replies\n\n"), ads_count_replies(ads, res));
@@ -2737,16 +2959,21 @@ static int net_ads_sid(struct net_context *c, int argc, const char **argv)
 	/* dump the results */
 	ads_dump(ads, res);
 
+	ret = 0;
+out:
 	ads_msgfree(ads, res);
-	ads_destroy(&ads);
-
-	return 0;
+	TALLOC_FREE(tmp_ctx);
+	return ret;
 }
 
-static int net_ads_keytab_flush(struct net_context *c, int argc, const char **argv)
+static int net_ads_keytab_flush(struct net_context *c,
+				int argc,
+				const char **argv)
 {
-	int ret;
-	ADS_STRUCT *ads;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -2754,18 +2981,22 @@ static int net_ads_keytab_flush(struct net_context *c, int argc, const char **ar
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Delete the whole keytab"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
 	if (!c->opt_user_specified && c->opt_password == NULL) {
 		net_use_krb_machine_account(c);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		return -1;
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
+
 	ret = ads_keytab_flush(ads);
-	ads_destroy(&ads);
+out:
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
@@ -2774,9 +3005,11 @@ static int net_ads_keytab_add(struct net_context *c,
 			      const char **argv,
 			      bool update_ads)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
 	int i;
-	int ret = 0;
-	ADS_STRUCT *ads;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf("%s\n%s",
@@ -2785,7 +3018,8 @@ static int net_ads_keytab_add(struct net_context *c,
 			   "  Add principals to local keytab\n"
 			   "    principal\tKerberos principal to add to "
 			   "keytab\n"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
 	net_warn_member_options();
@@ -2796,13 +3030,16 @@ static int net_ads_keytab_add(struct net_context *c,
 		net_use_krb_machine_account(c);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		return -1;
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
-	for (i = 0; i < argc; i++) {
+
+	for (ret = 0, i = 0; i < argc; i++) {
 		ret |= ads_keytab_add_entry(ads, argv[i], update_ads);
 	}
-	ads_destroy(&ads);
+out:
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
@@ -2820,10 +3057,54 @@ static int net_ads_keytab_add_update_ads(struct net_context *c,
 	return net_ads_keytab_add(c, argc, argv, true);
 }
 
+static int net_ads_keytab_delete(struct net_context *c,
+				 int argc,
+				 const char **argv)
+{
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	int i;
+	int ret = -1;
+
+	if (c->display_usage) {
+		d_printf("%s\n%s",
+			 _("Usage:"),
+			 _("net ads keytab delete <principal> [principal ...]\n"
+			   "  Remove entries for service principal, "
+			   "  from the keytab file only."
+			   "  Remove principals from local keytab\n"
+			   "    principal\tKerberos principal to remove from "
+			   "keytab\n"));
+		TALLOC_FREE(tmp_ctx);
+		return -1;
+	}
+
+	d_printf(_("Processing principals to delete...\n"));
+
+	if (!c->opt_user_specified && c->opt_password == NULL) {
+		net_use_krb_machine_account(c);
+	}
+
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
+	}
+
+	for (ret = 0, i = 0; i < argc; i++) {
+		ret |= ads_keytab_delete_entry(ads, argv[i]);
+	}
+out:
+	TALLOC_FREE(tmp_ctx);
+	return ret;
+}
+
 static int net_ads_keytab_create(struct net_context *c, int argc, const char **argv)
 {
-	ADS_STRUCT *ads;
-	int ret;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
+	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	int ret = -1;
 
 	if (c->display_usage) {
 		d_printf(  "%s\n"
@@ -2831,7 +3112,8 @@ static int net_ads_keytab_create(struct net_context *c, int argc, const char **a
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Create new default keytab"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
 	net_warn_member_options();
@@ -2840,11 +3122,14 @@ static int net_ads_keytab_create(struct net_context *c, int argc, const char **a
 		net_use_krb_machine_account(c);
 	}
 
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		return -1;
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
+
 	ret = ads_keytab_create_default(ads);
-	ads_destroy(&ads);
+out:
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
@@ -2858,7 +3143,7 @@ static int net_ads_keytab_list(struct net_context *c, int argc, const char **arg
 			 _("net ads keytab list [keytab]\n"
 			   "  List a local keytab\n"
 			   "    keytab\tKeytab to list\n"));
-		return 0;
+		return -1;
 	}
 
 	if (argc >= 1) {
@@ -2879,6 +3164,14 @@ int net_ads_keytab(struct net_context *c, int argc, const char **argv)
 			N_("Add a service principal"),
 			N_("net ads keytab add\n"
 			   "    Add a service principal, updates keytab file only.")
+		},
+		{
+			"delete",
+			net_ads_keytab_delete,
+			NET_TRANSPORT_ADS,
+			N_("Delete a service principal"),
+			N_("net ads keytab delete\n"
+			   "    Remove entries for service principal, from the keytab file only.")
 		},
 		{
 			"add_update_ads",
@@ -2933,7 +3226,7 @@ static int net_ads_kerberos_renew(struct net_context *c, int argc, const char **
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Renew TGT from existing credential cache"));
-		return 0;
+		return -1;
 	}
 
 	ret = smb_krb5_renew_ticket(NULL, NULL, NULL, NULL);
@@ -3139,7 +3432,6 @@ static int net_ads_kerberos_pac(struct net_context *c, int argc, const char **ar
 
 static int net_ads_kerberos_kinit(struct net_context *c, int argc, const char **argv)
 {
-	TALLOC_CTX *mem_ctx = NULL;
 	int ret = -1;
 	NTSTATUS status;
 
@@ -3149,12 +3441,7 @@ static int net_ads_kerberos_kinit(struct net_context *c, int argc, const char **
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Get Ticket Granting Ticket (TGT) for the user"));
-		return 0;
-	}
-
-	mem_ctx = talloc_init("net_ads_kerberos_kinit");
-	if (!mem_ctx) {
-		goto out;
+		return -1;
 	}
 
 	c->opt_password = net_prompt_pass(c, c->opt_user_name);
@@ -3176,7 +3463,6 @@ static int net_ads_kerberos_kinit(struct net_context *c, int argc, const char **
 		d_printf(_("failed to kinit password: %s\n"),
 			nt_errstr(status));
 	}
- out:
 	return ret;
 }
 
@@ -3214,96 +3500,104 @@ int net_ads_kerberos(struct net_context *c, int argc, const char **argv)
 	return net_run_function(c, argc, argv, "net ads kerberos", func);
 }
 
-static int net_ads_setspn_list(struct net_context *c, int argc, const char **argv)
+static int net_ads_setspn_list(struct net_context *c,
+			       int argc,
+			       const char **argv)
 {
-	int ret = 0;
-	bool ok = false;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	bool ok = false;
+	int ret = -1;
+
 	if (c->display_usage) {
 		d_printf("%s\n%s",
 			 _("Usage:"),
 			 _("net ads setspn list <machinename>\n"));
-		ret = 0;
-		goto done;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		ret = -1;
-		goto done;
+
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
+
 	if (argc) {
 		ok = ads_setspn_list(ads, argv[0]);
 	} else {
 		ok = ads_setspn_list(ads, lp_netbios_name());
 	}
-	if (!ok) {
-            ret = -1;
-	}
-done:
-	if (ads) {
-		ads_destroy(&ads);
-	}
+
+	ret = ok ? 0 : -1;
+out:
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
 static int net_ads_setspn_add(struct net_context *c, int argc, const char **argv)
 {
-	int ret = 0;
-	bool ok = false;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	bool ok = false;
+	int ret = -1;
+
 	if (c->display_usage || argc < 1) {
 		d_printf("%s\n%s",
 			 _("Usage:"),
 			 _("net ads setspn add <machinename> SPN\n"));
-		ret = 0;
-		goto done;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		ret = -1;
-		goto done;
+
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
+
 	if (argc > 1) {
 		ok = ads_setspn_add(ads, argv[0], argv[1]);
 	} else {
 		ok = ads_setspn_add(ads, lp_netbios_name(), argv[0]);
 	}
-	if (!ok) {
-            ret = -1;
-	}
-done:
-	if (ads) {
-		ads_destroy(&ads);
-	}
+
+	ret = ok ? 0 : -1;
+out:
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
 static int net_ads_setspn_delete(struct net_context *c, int argc, const char **argv)
 {
-	int ret = 0;
-	bool ok = false;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STRUCT *ads = NULL;
+	ADS_STATUS status;
+	bool ok = false;
+	int ret = -1;
+
 	if (c->display_usage || argc < 1) {
 		d_printf("%s\n%s",
 			 _("Usage:"),
 			 _("net ads setspn delete <machinename> SPN\n"));
-		ret = 0;
-		goto done;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
-	if (!ADS_ERR_OK(ads_startup(c, true, &ads))) {
-		ret = -1;
-		goto done;
+
+	status = ads_startup(c, true, tmp_ctx, &ads);
+	if (!ADS_ERR_OK(status)) {
+		goto out;
 	}
+
 	if (argc > 1) {
 		ok = ads_setspn_delete(ads, argv[0], argv[1]);
 	} else {
 		ok = ads_setspn_delete(ads, lp_netbios_name(), argv[0]);
 	}
-	if (!ok) {
-		ret = -1;
-	}
-done:
-	if (ads) {
-		ads_destroy(&ads);
-	}
+
+	ret = ok ? 0 : -1;
+out:
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
@@ -3426,11 +3720,12 @@ static void net_ads_enctype_dump_enctypes(const char *username,
 
 static int net_ads_enctypes_list(struct net_context *c, int argc, const char **argv)
 {
-	int ret = -1;
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STATUS status;
 	ADS_STRUCT *ads = NULL;
 	LDAPMessage *res = NULL;
 	const char *str = NULL;
+	int ret = -1;
 
 	if (c->display_usage || (argc < 1)) {
 		d_printf(  "%s\n"
@@ -3438,41 +3733,41 @@ static int net_ads_enctypes_list(struct net_context *c, int argc, const char **a
 			   "    %s\n",
 			 _("Usage:"),
 			 _("List supported enctypes"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
-	status = ads_startup(c, false, &ads);
+	status = ads_startup(c, false, tmp_ctx, &ads);
 	if (!ADS_ERR_OK(status)) {
-		printf("startup failed\n");
-		return ret;
+		goto out;
 	}
 
 	ret = net_ads_enctype_lookup_account(c, ads, argv[0], &res, &str);
 	if (ret) {
-		goto done;
+		goto out;
 	}
 
 	net_ads_enctype_dump_enctypes(argv[0], str);
 
 	ret = 0;
- done:
+ out:
 	ads_msgfree(ads, res);
-	ads_destroy(&ads);
-
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
 static int net_ads_enctypes_set(struct net_context *c, int argc, const char **argv)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	int ret = -1;
 	ADS_STATUS status;
-	ADS_STRUCT *ads;
+	ADS_STRUCT *ads = NULL;
 	LDAPMessage *res = NULL;
-	const char *etype_list_str;
-	const char *dn;
-	ADS_MODLIST mods;
+	const char *etype_list_str = NULL;
+	const char *dn = NULL;
+	ADS_MODLIST mods = NULL;
 	uint32_t etype_list;
-	const char *str;
+	const char *str = NULL;
 
 	if (c->display_usage || argc < 1) {
 		d_printf(  "%s\n"
@@ -3480,13 +3775,13 @@ static int net_ads_enctypes_set(struct net_context *c, int argc, const char **ar
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Set supported enctypes"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
-	status = ads_startup(c, false, &ads);
+	status = ads_startup(c, false, tmp_ctx, &ads);
 	if (!ADS_ERR_OK(status)) {
-		printf("startup failed\n");
-		return ret;
+		goto done;
 	}
 
 	ret = net_ads_enctype_lookup_account(c, ads, argv[0], &res, NULL);
@@ -3494,7 +3789,7 @@ static int net_ads_enctypes_set(struct net_context *c, int argc, const char **ar
 		goto done;
 	}
 
-	dn = ads_get_dn(ads, c, res);
+	dn = ads_get_dn(ads, tmp_ctx, res);
 	if (dn == NULL) {
 		goto done;
 	}
@@ -3508,17 +3803,17 @@ static int net_ads_enctypes_set(struct net_context *c, int argc, const char **ar
 		sscanf(argv[1], "%i", &etype_list);
 	}
 
-	etype_list_str = talloc_asprintf(c, "%d", etype_list);
+	etype_list_str = talloc_asprintf(tmp_ctx, "%d", etype_list);
 	if (!etype_list_str) {
 		goto done;
 	}
 
-	mods = ads_init_mods(c);
+	mods = ads_init_mods(tmp_ctx);
 	if (!mods) {
 		goto done;
 	}
 
-	status = ads_mod_str(c, &mods, "msDS-SupportedEncryptionTypes",
+	status = ads_mod_str(tmp_ctx, &mods, "msDS-SupportedEncryptionTypes",
 			     etype_list_str);
 	if (!ADS_ERR_OK(status)) {
 		goto done;
@@ -3532,6 +3827,7 @@ static int net_ads_enctypes_set(struct net_context *c, int argc, const char **ar
 	}
 
 	ads_msgfree(ads, res);
+	res = NULL;
 
 	ret = net_ads_enctype_lookup_account(c, ads, argv[0], &res, &str);
 	if (ret) {
@@ -3543,19 +3839,19 @@ static int net_ads_enctypes_set(struct net_context *c, int argc, const char **ar
 	ret = 0;
  done:
 	ads_msgfree(ads, res);
-	ads_destroy(&ads);
-
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 
 static int net_ads_enctypes_delete(struct net_context *c, int argc, const char **argv)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	int ret = -1;
 	ADS_STATUS status;
-	ADS_STRUCT *ads;
+	ADS_STRUCT *ads = NULL;
 	LDAPMessage *res = NULL;
-	const char *dn;
-	ADS_MODLIST mods;
+	const char *dn = NULL;
+	ADS_MODLIST mods = NULL;
 
 	if (c->display_usage || argc < 1) {
 		d_printf(  "%s\n"
@@ -3563,13 +3859,13 @@ static int net_ads_enctypes_delete(struct net_context *c, int argc, const char *
 			   "    %s\n",
 			 _("Usage:"),
 			 _("Delete supported enctypes"));
-		return 0;
+		TALLOC_FREE(tmp_ctx);
+		return -1;
 	}
 
-	status = ads_startup(c, false, &ads);
+	status = ads_startup(c, false, tmp_ctx, &ads);
 	if (!ADS_ERR_OK(status)) {
-		printf("startup failed\n");
-		return ret;
+		goto done;
 	}
 
 	ret = net_ads_enctype_lookup_account(c, ads, argv[0], &res, NULL);
@@ -3577,17 +3873,17 @@ static int net_ads_enctypes_delete(struct net_context *c, int argc, const char *
 		goto done;
 	}
 
-	dn = ads_get_dn(ads, c, res);
+	dn = ads_get_dn(ads, tmp_ctx, res);
 	if (dn == NULL) {
 		goto done;
 	}
 
-	mods = ads_init_mods(c);
+	mods = ads_init_mods(tmp_ctx);
 	if (!mods) {
 		goto done;
 	}
 
-	status = ads_mod_str(c, &mods, "msDS-SupportedEncryptionTypes", NULL);
+	status = ads_mod_str(tmp_ctx, &mods, "msDS-SupportedEncryptionTypes", NULL);
 	if (!ADS_ERR_OK(status)) {
 		goto done;
 	}
@@ -3603,7 +3899,7 @@ static int net_ads_enctypes_delete(struct net_context *c, int argc, const char *
 
  done:
 	ads_msgfree(ads, res);
-	ads_destroy(&ads);
+	TALLOC_FREE(tmp_ctx);
 	return ret;
 }
 

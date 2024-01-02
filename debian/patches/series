@@ -1,4 +1,5 @@
 libsmbclient-ensure-lfs-221618.patch
+hurd-compat.patch
 README_nosmbldap-tools.patch
 smbclient-pager.patch
 usershare.patch
@@ -9,8 +10,6 @@ fix-nfs-service-name-to-nfs-kernel-server.patch
 ctdb-config-enable-syslog-by-default.patch
 Force-LDB-as-standalone.patch
 use-bzero-instead-of-memset_s.diff
-weak-crypto-allowed-clarify.diff
-spelling.patch
 ctdb_etcd_lock-path.patch
 ctdb-create-piddir.patch
 silence-waf-uselib_local.diff
@@ -18,5 +17,9 @@ disable-setuid-confchecks.patch
 move-msg.sock-from-var-lib-samba-to-run-samba.patch
 testparm-do-not-fail-if-pid-dir-does-not-exist.patch
 add-missing-libs-deps.diff
-dont-ignore-errors-in-random-number-generation-CVE-2022-1615.patch
-add-sunway-support.patch
+heimdal-spelling.patch
+fruit-disable-useless-size_t-overflow-check.patch
+meaningful-error-if-no-samba-ad-provision.patch
+meaningful-error-if-no-python3-markdown.patch
+ctdb-use-run-instead-of-var-run.patch
+python-fix-invalid-escape-sequences.patch

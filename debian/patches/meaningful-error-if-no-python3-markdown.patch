@@ -1,0 +1,22 @@
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Fri, 2 Dec 2022 11:08:27 +0300
+Updated: Thu, 03 Aug 2023 17:10:59 +0300
+Subject: print meaningful error message if python3-markdown is not installed
+
+---
+ python/samba/netcmd/domain/schemaupgrade.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/python/samba/netcmd/domain/schemaupgrade.py b/python/samba/netcmd/domain/schemaupgrade.py
+index 1d67ab58c15..858802635a2 100644
+--- a/python/samba/netcmd/domain/schemaupgrade.py
++++ b/python/samba/netcmd/domain/schemaupgrade.py
+@@ -229,6 +229,6 @@ class cmd_domain_schema_upgrade(Command):
+             from samba.ms_schema_markdown import read_ms_markdown
+         except ImportError as e:
+-            self.outf.write("Exception in importing markdown: %s" % e)
+-            raise CommandError('Failed to import module markdown')
++            self.outf.write("Exception in importing markdown: %s\n" % e)
++            raise CommandError('Failed to import module markdown, please install python3-markdown package')
+         from samba.schema import Schema
+ 

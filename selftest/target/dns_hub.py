@@ -80,7 +80,6 @@ class DnsHandler(sserver.BaseRequestHandler):
         finally:
             if s is not None:
                 s.close()
-        return None
 
     def get_pdc_ipv4_addr(self, lookup_name):
         """Maps a DNS realm to the IPv4 address of the PDC for that testenv"""
@@ -183,6 +182,7 @@ class server_thread(threading.Thread):
         print("dns_hub[%s]: before shutdown()" % self.name)
         self.server.shutdown()
         print("dns_hub[%s]: after shutdown()" % self.name)
+        self.server.server_close()
 
 class UDPV4Server(sserver.UDPServer):
     address_family = socket.AF_INET

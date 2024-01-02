@@ -290,7 +290,7 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 	DEBUG(10,("smbd_smb2_query_directory_send: %s - %s\n",
 		  fsp_str_dbg(fsp), fsp_fnum_dbg(fsp)));
 
-	state->smbreq = smbd_smb2_fake_smb_request(smb2req);
+	state->smbreq = smbd_smb2_fake_smb_request(smb2req, fsp);
 	if (tevent_req_nomem(state->smbreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -366,13 +366,20 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 		state->info_level = SMB_FIND_ID_FULL_DIRECTORY_INFO;
 		break;
 
+	case SMB2_FIND_POSIX_INFORMATION:
+		if (!(fsp->posix_flags & FSP_POSIX_FLAGS_OPEN)) {
+			tevent_req_nterror(req, NT_STATUS_INVALID_LEVEL);
+			return tevent_req_post(req, ev);
+		}
+		state->info_level = SMB2_FILE_POSIX_INFORMATION;
+		break;
 	default:
 		tevent_req_nterror(req, NT_STATUS_INVALID_INFO_CLASS);
 		return tevent_req_post(req, ev);
 	}
 
 	if (in_flags & SMB2_CONTINUE_FLAG_REOPEN) {
-		int flags;
+		struct vfs_open_how how = { .flags = O_RDONLY, };
 
 		status = fd_close(fsp);
 		if (tevent_req_nterror(req, status)) {
@@ -384,11 +391,10 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 		 * descriptor. So we have to reopen it.
 		 */
 
-		flags = O_RDONLY;
 #ifdef O_DIRECTORY
-		flags |= O_DIRECTORY;
+		how.flags |= O_DIRECTORY;
 #endif
-		status = fd_openat(conn->cwd_fsp, fsp->fsp_name, fsp, flags, 0);
+		status = fd_openat(conn->cwd_fsp, fsp->fsp_name, fsp, &how);
 		if (tevent_req_nterror(req, status)) {
 			return tevent_req_post(req, ev);
 		}
@@ -410,8 +416,7 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 						conn,
 						state->in_file_name,
 						0);
-		if (state->in_file_name == NULL) {
-			tevent_req_oom(req);
+		if (tevent_req_nomem(state->in_file_name, req)) {
 			return tevent_req_post(req, ev);
 		}
 	}
@@ -421,8 +426,6 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 				     NULL, /* req */
 				     fsp,
 				     false, /* old_handle */
-				     false, /* expect_close */
-				     0, /* spid */
 				     state->in_file_name, /* wcard */
 				     state->dirtype,
 				     &fsp->dptr);
@@ -437,7 +440,7 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 	}
 
 	if (in_flags & SMB2_CONTINUE_FLAG_RESTART) {
-		dptr_SeekDir(fsp->dptr, 0);
+		dptr_RewindDir(fsp->dptr);
 	}
 
 	if (in_flags & SMB2_CONTINUE_FLAG_SINGLE) {
@@ -479,7 +482,7 @@ static struct tevent_req *smbd_smb2_query_directory_send(TALLOC_CTX *mem_ctx,
 	 * handling in future.
 	 */
 	if (state->info_level != SMB_FIND_FILE_NAMES_INFO) {
-		state->ask_sharemode = lp_smbd_search_ask_sharemode(SNUM(conn));
+		state->ask_sharemode = fsp_search_ask_sharemode(fsp);
 
 		state->async_dosmode = lp_smbd_async_dosmode(SNUM(conn));
 	}
@@ -543,7 +546,6 @@ static bool smb2_query_directory_next_entry(struct tevent_req *req)
 	struct smbd_smb2_query_directory_state *state = tevent_req_data(
 		req, struct smbd_smb2_query_directory_state);
 	struct smb_filename *smb_fname = NULL; /* relative to fsp !! */
-	bool got_exact_match = false;
 	int off = state->out_output_buffer.length;
 	int space_remaining = state->in_output_buffer_length - off;
 	struct file_id file_id;
@@ -571,7 +573,6 @@ static bool smb2_query_directory_next_entry(struct tevent_req *req)
 					   state->end_data,
 					   space_remaining,
 					   &smb_fname,
-					   &got_exact_match,
 					   &state->last_entry_off,
 					   NULL,
 					   &file_id);
@@ -585,15 +586,19 @@ static bool smb2_query_directory_next_entry(struct tevent_req *req)
 			 * entry.
 			 */
 			return false;
-		} else if (state->num > 0) {
+		}
+
+		if (state->num > 0) {
 			goto last_entry_done;
-		} else if (NT_STATUS_EQUAL(status, STATUS_MORE_ENTRIES)) {
+		}
+
+		if (NT_STATUS_EQUAL(status, STATUS_MORE_ENTRIES)) {
 			tevent_req_nterror(req, NT_STATUS_INFO_LENGTH_MISMATCH);
 			return true;
-		} else {
-			tevent_req_nterror(req, state->empty_status);
-			return true;
 		}
+
+		tevent_req_nterror(req, state->empty_status);
+		return true;
 	}
 
 	if (state->async_ask_sharemode &&
@@ -898,8 +903,7 @@ static void fetch_write_time_done(struct tevent_req *subreq)
 		tevent_req_done(req);
 		return;
 	}
-	if (!NT_STATUS_IS_OK(status)) {
-		tevent_req_nterror(req, status);
+	if (tevent_req_nterror(req, status)) {
 		return;
 	}
 
@@ -1000,11 +1004,8 @@ static void fetch_dos_mode_done(struct tevent_req *subreq)
 	uint32_t dfs_dosmode;
 	uint32_t dosmode;
 	struct timespec btime_ts = {0};
-	bool need_file_id = false;
-	uint64_t file_id;
 	off_t dosmode_off;
 	off_t btime_off;
-	off_t file_id_off;
 	NTSTATUS status;
 
 	status = dos_mode_at_recv(subreq, &dosmode);
@@ -1013,8 +1014,7 @@ static void fetch_dos_mode_done(struct tevent_req *subreq)
 		tevent_req_done(req);
 		return;
 	}
-	if (!NT_STATUS_IS_OK(status)) {
-		tevent_req_nterror(req, status);
+	if (tevent_req_nterror(req, status)) {
 		return;
 	}
 
@@ -1055,30 +1055,6 @@ static void fetch_dos_mode_done(struct tevent_req *subreq)
 	put_long_date_full_timespec(state->dir_fsp->conn->ts_res,
 			       (char *)state->entry_marshall_buf + btime_off,
 			       &btime_ts);
-
-	switch (state->info_level) {
-	case SMB_FIND_ID_BOTH_DIRECTORY_INFO:
-		file_id_off = 96;
-		need_file_id = true;
-		break;
-	case SMB_FIND_ID_FULL_DIRECTORY_INFO:
-		file_id_off = 72;
-		need_file_id = true;
-		break;
-	default:
-		break;
-	}
-
-	if (need_file_id) {
-		/*
-		 * File-ID might have been updated from calculated (based on
-		 * inode) to storage based, fetch via DOS attributes in
-		 * vfs_default.
-		 */
-		file_id = SMB_VFS_FS_FILE_ID(state->dir_fsp->conn,
-					     &state->smb_fname->st);
-		SBVAL(state->entry_marshall_buf, file_id_off, file_id);
-	}
 
 	tevent_req_done(req);
 	return;

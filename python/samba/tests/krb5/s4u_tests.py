@@ -23,19 +23,22 @@ sys.path.insert(0, "bin/python")
 os.environ["PYTHONUNBUFFERED"] = "1"
 
 import functools
+import time
 
 from samba import dsdb, ntstatus
-from samba.dcerpc import krb5pac, lsa
+from samba.dcerpc import krb5pac, lsa, security
 
 from samba.tests import env_get_var_value
 from samba.tests.krb5.kcrypto import Cksumtype, Enctype
 from samba.tests.krb5.kdc_base_test import KDCBaseTest
 from samba.tests.krb5.raw_testcase import (
+    RawKerberosTest,
     RodcPacEncryptionKey,
     ZeroedChecksumKey
 )
 from samba.tests.krb5.rfc4120_constants import (
     AES256_CTS_HMAC_SHA1_96,
+    AD_IF_RELEVANT,
     ARCFOUR_HMAC_MD5,
     KDC_ERR_BADMATCH,
     KDC_ERR_BADOPTION,
@@ -48,15 +51,21 @@ from samba.tests.krb5.rfc4120_constants import (
     KU_PA_ENC_TIMESTAMP,
     KU_AS_REP_ENC_PART,
     KU_TGS_REP_ENC_PART_SUB_KEY,
-    NT_PRINCIPAL
+    KU_TGS_REQ_AUTH_DAT_SESSION,
+    KU_TGS_REQ_AUTH_DAT_SUBKEY,
+    NT_PRINCIPAL,
 )
 import samba.tests.krb5.rfc4120_pyasn1 as krb5_asn1
+
+SidType = RawKerberosTest.SidType
 
 global_asn1_print = False
 global_hexdump = False
 
 
 class S4UKerberosTests(KDCBaseTest):
+
+    default_attrs = security.SE_GROUP_DEFAULT_FLAGS
 
     def setUp(self):
         super(S4UKerberosTests, self).setUp()
@@ -241,10 +250,6 @@ class S4UKerberosTests(KDCBaseTest):
         client_cname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
                                                  names=[client_name])
 
-        samdb = self.get_samdb()
-        client_dn = client_creds.get_dn()
-        sid = self.get_objectSid(samdb, client_dn)
-
         service_name = kdc_dict.pop('service_name', None)
         if service_name is None:
             service_name = service_creds.get_username()[:-1]
@@ -262,6 +267,7 @@ class S4UKerberosTests(KDCBaseTest):
             unexpected_flags = krb5_asn1.TicketFlags(unexpected_flags)
 
         expected_error_mode = kdc_dict.pop('expected_error_mode', 0)
+        expect_status = kdc_dict.pop('expect_status', None)
         expected_status = kdc_dict.pop('expected_status', None)
         if expected_error_mode:
             check_error_fn = self.generic_check_kdc_error
@@ -270,6 +276,7 @@ class S4UKerberosTests(KDCBaseTest):
             check_error_fn = None
             check_rep_fn = self.generic_check_kdc_rep
 
+            self.assertIsNone(expect_status)
             self.assertIsNone(expected_status)
 
         kdc_options = kdc_dict.pop('kdc_options', '0')
@@ -284,6 +291,8 @@ class S4UKerberosTests(KDCBaseTest):
                                          ARCFOUR_HMAC_MD5))
 
         expect_edata = kdc_dict.pop('expect_edata', None)
+        expected_groups = kdc_dict.pop('expected_groups', None)
+        unexpected_groups = kdc_dict.pop('unexpected_groups', None)
 
         def generate_s4u2self_padata(_kdc_exchange_dict,
                                      _callback_dict,
@@ -302,7 +311,9 @@ class S4UKerberosTests(KDCBaseTest):
             expected_srealm=realm,
             expected_sname=service_sname,
             expected_account_name=client_name,
-            expected_sid=sid,
+            expected_groups=expected_groups,
+            unexpected_groups=unexpected_groups,
+            expected_sid=client_creds.get_sid(),
             expected_flags=expected_flags,
             unexpected_flags=unexpected_flags,
             ticket_decryption_key=service_decryption_key,
@@ -312,11 +323,11 @@ class S4UKerberosTests(KDCBaseTest):
             check_rep_fn=check_rep_fn,
             check_kdc_private_fn=self.generic_check_kdc_private,
             expected_error_mode=expected_error_mode,
+            expect_status=expect_status,
             expected_status=expected_status,
             tgt=service_tgt,
             authenticator_subkey=authenticator_subkey,
             kdc_options=str(kdc_options),
-            expect_claims=False,
             expect_edata=expect_edata)
 
         self._generic_kdc_exchange(kdc_exchange_dict,
@@ -530,15 +541,36 @@ class S4UKerberosTests(KDCBaseTest):
                 'expected_flags': 'forwardable'
             })
 
+    # Do an S4U2Self an check that the service asserted identity is part of
+    # the sids.
+    def test_s4u2self_asserted_identity(self):
+        self._run_s4u2self_test(
+            {
+                'client_opts': {
+                    'not_delegated': False
+                },
+                'expected_groups': {
+                    (security.SID_SERVICE_ASSERTED_IDENTITY,
+                     SidType.EXTRA_SID,
+                     self.default_attrs),
+                    ...
+                },
+                'unexpected_groups': {
+                    security.SID_AUTHENTICATION_AUTHORITY_ASSERTED_IDENTITY,
+                },
+            })
+
     def _run_delegation_test(self, kdc_dict):
+        s4u2self = kdc_dict.pop('s4u2self', False)
+
+        authtime_delay = kdc_dict.pop('authtime_delay', 0)
+
         client_opts = kdc_dict.pop('client_opts', None)
         client_creds = self.get_cached_creds(
             account_type=self.AccountType.USER,
             opts=client_opts)
 
-        samdb = self.get_samdb()
-        client_dn = client_creds.get_dn()
-        sid = self.get_objectSid(samdb, client_dn)
+        sid = client_creds.get_sid()
 
         service1_opts = kdc_dict.pop('service1_opts', {})
         service2_opts = kdc_dict.pop('service2_opts', {})
@@ -571,23 +603,108 @@ class S4UKerberosTests(KDCBaseTest):
                 account_type=self.AccountType.COMPUTER,
                 opts=service1_opts)
 
+        service1_tgt = self.get_tgt(service1_creds)
+        self.assertElementPresent(service1_tgt.ticket_private, 'authtime')
+        service1_tgt_authtime = self.getElementValue(service1_tgt.ticket_private, 'authtime')
+
+        client_username = client_creds.get_username()
+        client_realm = client_creds.get_realm()
+        client_cname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
+                                                 names=[client_username])
+
+        service1_name = service1_creds.get_username()[:-1]
+        service1_realm = service1_creds.get_realm()
+        service1_service = 'host'
+        service1_sname = self.PrincipalName_create(
+            name_type=NT_PRINCIPAL, names=[service1_service,
+                                           service1_name])
+        service1_decryption_key = self.TicketDecryptionKey_from_creds(
+            service1_creds)
+
+        expect_pac = kdc_dict.pop('expect_pac', True)
+
+        expected_groups = kdc_dict.pop('expected_groups', None)
+        unexpected_groups = kdc_dict.pop('unexpected_groups', None)
+
         client_tkt_options = kdc_dict.pop('client_tkt_options', 'forwardable')
         expected_flags = krb5_asn1.TicketFlags(client_tkt_options)
 
-        client_tgt = self.get_tgt(client_creds,
-                                  kdc_options=client_tkt_options,
-                                  expected_flags=expected_flags)
-        client_service_tkt = self.get_service_ticket(
-            client_tgt,
-            service1_creds,
-            kdc_options=client_tkt_options,
-            expected_flags=expected_flags)
+        etypes = kdc_dict.pop('etypes', (AES256_CTS_HMAC_SHA1_96,
+                                         ARCFOUR_HMAC_MD5))
 
-        service1_tgt = self.get_tgt(service1_creds)
+        if s4u2self:
+            self.assertEqual(authtime_delay, 0)
+
+            def generate_s4u2self_padata(_kdc_exchange_dict,
+                                         _callback_dict,
+                                         req_body):
+                pa_s4u = self.PA_S4U2Self_create(
+                    name=client_cname,
+                    realm=client_realm,
+                    tgt_session_key=service1_tgt.session_key,
+                    ctype=None)
+
+                return [pa_s4u], req_body
+
+            s4u2self_expected_flags = krb5_asn1.TicketFlags('forwardable')
+            s4u2self_unexpected_flags = krb5_asn1.TicketFlags('0')
+
+            s4u2self_kdc_options = krb5_asn1.KDCOptions('forwardable')
+
+            s4u2self_authenticator_subkey = self.RandomKey(Enctype.AES256)
+            s4u2self_kdc_exchange_dict = self.tgs_exchange_dict(
+                expected_crealm=client_realm,
+                expected_cname=client_cname,
+                expected_srealm=service1_realm,
+                expected_sname=service1_sname,
+                expected_account_name=client_username,
+                expected_groups=expected_groups,
+                unexpected_groups=unexpected_groups,
+                expected_sid=sid,
+                expected_flags=s4u2self_expected_flags,
+                unexpected_flags=s4u2self_unexpected_flags,
+                ticket_decryption_key=service1_decryption_key,
+                generate_padata_fn=generate_s4u2self_padata,
+                check_rep_fn=self.generic_check_kdc_rep,
+                check_kdc_private_fn=self.generic_check_kdc_private,
+                tgt=service1_tgt,
+                authenticator_subkey=s4u2self_authenticator_subkey,
+                kdc_options=str(s4u2self_kdc_options),
+                expect_edata=False)
+
+            self._generic_kdc_exchange(s4u2self_kdc_exchange_dict,
+                                       cname=None,
+                                       realm=service1_realm,
+                                       sname=service1_sname,
+                                       etypes=etypes)
+
+            client_service_tkt = s4u2self_kdc_exchange_dict['rep_ticket_creds']
+        else:
+            if authtime_delay != 0:
+                time.sleep(authtime_delay)
+                fresh = True
+            else:
+                fresh = False
+
+            client_tgt = self.get_tgt(client_creds,
+                                      kdc_options=client_tkt_options,
+                                      expected_flags=expected_flags,
+                                      fresh=fresh)
+            client_service_tkt = self.get_service_ticket(
+                client_tgt,
+                service1_creds,
+                kdc_options=client_tkt_options,
+                expected_flags=expected_flags,
+                fresh=fresh)
 
         modify_client_tkt_fn = kdc_dict.pop('modify_client_tkt_fn', None)
         if modify_client_tkt_fn is not None:
             client_service_tkt = modify_client_tkt_fn(client_service_tkt)
+
+        self.assertElementPresent(client_service_tkt.ticket_private, 'authtime')
+        expected_authtime = self.getElementValue(client_service_tkt.ticket_private, 'authtime')
+        if authtime_delay > 1:
+            self.assertNotEqual(expected_authtime, service1_tgt_authtime)
 
         additional_tickets = [client_service_tkt.ticket]
 
@@ -598,14 +715,6 @@ class S4UKerberosTests(KDCBaseTest):
         kdc_options = kdc_dict.pop('kdc_options', None)
         if kdc_options is None:
             kdc_options = str(krb5_asn1.KDCOptions('cname-in-addl-tkt'))
-
-        client_username = client_creds.get_username()
-        client_realm = client_creds.get_realm()
-        client_cname = self.PrincipalName_create(name_type=NT_PRINCIPAL,
-                                                 names=[client_username])
-
-        service1_name = service1_creds.get_username()[:-1]
-        service1_realm = service1_creds.get_realm()
 
         service2_name = service2_creds.get_username()[:-1]
         service2_realm = service2_creds.get_realm()
@@ -618,6 +727,7 @@ class S4UKerberosTests(KDCBaseTest):
         service2_etypes = service2_creds.tgs_supported_enctypes
 
         expected_error_mode = kdc_dict.pop('expected_error_mode')
+        expect_status = kdc_dict.pop('expect_status', None)
         expected_status = kdc_dict.pop('expected_status', None)
         if expected_error_mode:
             check_error_fn = self.generic_check_kdc_error
@@ -626,6 +736,7 @@ class S4UKerberosTests(KDCBaseTest):
             check_error_fn = None
             check_rep_fn = self.generic_check_kdc_rep
 
+            self.assertIsNone(expect_status)
             self.assertIsNone(expected_status)
 
         expect_edata = kdc_dict.pop('expect_edata', None)
@@ -634,10 +745,11 @@ class S4UKerberosTests(KDCBaseTest):
 
         pac_options = kdc_dict.pop('pac_options', None)
 
-        authenticator_subkey = self.RandomKey(Enctype.AES256)
-
-        etypes = kdc_dict.pop('etypes', (AES256_CTS_HMAC_SHA1_96,
-                                         ARCFOUR_HMAC_MD5))
+        use_authenticator_subkey = kdc_dict.pop('use_authenticator_subkey', True)
+        if use_authenticator_subkey:
+            authenticator_subkey = self.RandomKey(Enctype.AES256)
+        else:
+            authenticator_subkey = None
 
         expected_proxy_target = service2_creds.get_spn()
 
@@ -647,14 +759,14 @@ class S4UKerberosTests(KDCBaseTest):
         transited_service = f'host/{service1_name}@{service1_realm}'
         expected_transited_services.append(transited_service)
 
-        expect_pac = kdc_dict.pop('expect_pac', True)
-
         kdc_exchange_dict = self.tgs_exchange_dict(
             expected_crealm=client_realm,
             expected_cname=client_cname,
             expected_srealm=service2_realm,
             expected_sname=service2_sname,
             expected_account_name=client_username,
+            expected_groups=expected_groups,
+            unexpected_groups=unexpected_groups,
             expected_sid=sid,
             expected_supported_etypes=service2_etypes,
             ticket_decryption_key=service2_decryption_key,
@@ -662,6 +774,7 @@ class S4UKerberosTests(KDCBaseTest):
             check_rep_fn=check_rep_fn,
             check_kdc_private_fn=self.generic_check_kdc_private,
             expected_error_mode=expected_error_mode,
+            expect_status=expect_status,
             expected_status=expected_status,
             callback_dict={},
             tgt=service1_tgt,
@@ -673,21 +786,64 @@ class S4UKerberosTests(KDCBaseTest):
             expected_transited_services=expected_transited_services,
             expect_pac=expect_pac)
 
+        EncAuthorizationData = kdc_dict.pop('enc-authorization-data', None)
+
+        if EncAuthorizationData is not None:
+            if authenticator_subkey is not None:
+                EncAuthorizationData_key = authenticator_subkey
+                EncAuthorizationData_usage = KU_TGS_REQ_AUTH_DAT_SUBKEY
+            else:
+                EncAuthorizationData_key = client_service_tkt.session_key
+                EncAuthorizationData_usage = KU_TGS_REQ_AUTH_DAT_SESSION
+        else:
+            EncAuthorizationData_key = None
+            EncAuthorizationData_usage = None
+
         self._generic_kdc_exchange(kdc_exchange_dict,
                                    cname=None,
                                    realm=service2_realm,
                                    sname=service2_sname,
                                    etypes=etypes,
-                                   additional_tickets=additional_tickets)
+                                   additional_tickets=additional_tickets,
+                                   EncAuthorizationData=EncAuthorizationData,
+                                   EncAuthorizationData_key=EncAuthorizationData_key,
+                                   EncAuthorizationData_usage=EncAuthorizationData_usage)
 
         if not expected_error_mode:
             # Check whether the ticket contains a PAC.
             ticket = kdc_exchange_dict['rep_ticket_creds']
+            self.assertElementEqual(ticket.ticket_private, 'authtime', expected_authtime)
             pac = self.get_ticket_pac(ticket, expect_pac=expect_pac)
+            ticket_auth_data = ticket.ticket_private.get('authorization-data')
+            expected_num_ticket_auth_data = 0
             if expect_pac:
                 self.assertIsNotNone(pac)
+                expected_num_ticket_auth_data += 1
             else:
                 self.assertIsNone(pac)
+
+            if EncAuthorizationData is not None:
+                expected_num_ticket_auth_data += len(EncAuthorizationData)
+
+            if expected_num_ticket_auth_data == 0:
+                self.assertIsNone(ticket_auth_data)
+            else:
+                self.assertIsNotNone(ticket_auth_data)
+                self.assertEqual(len(ticket_auth_data),
+                        expected_num_ticket_auth_data)
+
+                if EncAuthorizationData is not None:
+                    enc_ad_plain = self.der_encode(
+                        EncAuthorizationData,
+                        asn1Spec=krb5_asn1.AuthorizationData())
+                    req_EncAuthorizationData = self.der_decode(
+                        enc_ad_plain,
+                        asn1Spec=krb5_asn1.AuthorizationData())
+
+                    rep_EncAuthorizationData = ticket_auth_data.copy()
+                    if expect_pac:
+                        rep_EncAuthorizationData.pop(0)
+                    self.assertEqual(rep_EncAuthorizationData, req_EncAuthorizationData)
 
         # Ensure we used all the parameters given to us.
         self.assertEqual({}, kdc_dict)
@@ -705,6 +861,93 @@ class S4UKerberosTests(KDCBaseTest):
             {
                 'expected_error_mode': 0,
                 'allow_delegation': True
+            })
+
+    def test_constrained_delegation_authtime(self):
+        # Test constrained delegation.
+        self._run_delegation_test(
+            {
+                'expected_error_mode': 0,
+                'allow_delegation': True,
+                'authtime_delay': 2,
+            })
+
+    def test_constrained_delegation_with_enc_auth_data_subkey(self):
+        # Test constrained delegation.
+        EncAuthorizationData = []
+        relevant_elems = []
+        auth_data777 = self.AuthorizationData_create(777, b'AuthorizationData777')
+        relevant_elems.append(auth_data777)
+        auth_data999 = self.AuthorizationData_create(999, b'AuthorizationData999')
+        relevant_elems.append(auth_data999)
+        ad_relevant = self.der_encode(relevant_elems, asn1Spec=krb5_asn1.AD_IF_RELEVANT())
+        ad_data = self.AuthorizationData_create(AD_IF_RELEVANT, ad_relevant)
+        EncAuthorizationData.append(ad_data)
+        self._run_delegation_test(
+            {
+                'expected_error_mode': 0,
+                'allow_delegation': True,
+                'enc-authorization-data': EncAuthorizationData,
+            })
+
+    def test_constrained_delegation_with_enc_auth_data_no_subkey(self):
+        # Test constrained delegation.
+        EncAuthorizationData = []
+        relevant_elems = []
+        auth_data777 = self.AuthorizationData_create(777, b'AuthorizationData777')
+        relevant_elems.append(auth_data777)
+        auth_data999 = self.AuthorizationData_create(999, b'AuthorizationData999')
+        relevant_elems.append(auth_data999)
+        ad_relevant = self.der_encode(relevant_elems, asn1Spec=krb5_asn1.AD_IF_RELEVANT())
+        ad_data = self.AuthorizationData_create(AD_IF_RELEVANT, ad_relevant)
+        EncAuthorizationData.append(ad_data)
+        self._run_delegation_test(
+            {
+                'expected_error_mode': 0,
+                'allow_delegation': True,
+                'enc-authorization-data': EncAuthorizationData,
+                'use_authenticator_subkey': False,
+            })
+
+    def test_constrained_delegation_authentication_asserted_identity(self):
+        # Test constrained delegation and check asserted identity is the
+        # authentication authority. Note that we should always find this
+        # SID for all the requests. Just S4U2Self will have a different SID.
+        self._run_delegation_test(
+            {
+                'expected_error_mode': 0,
+                'allow_delegation': True,
+                'expected_groups': {
+                    (security.SID_AUTHENTICATION_AUTHORITY_ASSERTED_IDENTITY,
+                     SidType.EXTRA_SID,
+                     self.default_attrs),
+                    ...
+                },
+                'unexpected_groups': {
+                    security.SID_SERVICE_ASSERTED_IDENTITY,
+                },
+            })
+
+    def test_constrained_delegation_service_asserted_identity(self):
+        # Test constrained delegation and check asserted identity is the
+        # service sid is there. This is a S4U2Proxy + S4U2Self test.
+        self._run_delegation_test(
+            {
+                'expected_error_mode': 0,
+                'allow_delegation': True,
+                's4u2self': True,
+                'service1_opts': {
+                    'trusted_to_auth_for_delegation': True,
+                },
+                'expected_groups': {
+                    (security.SID_SERVICE_ASSERTED_IDENTITY,
+                     SidType.EXTRA_SID,
+                     self.default_attrs),
+                    ...
+                },
+                'unexpected_groups': {
+                    security.SID_AUTHENTICATION_AUTHORITY_ASSERTED_IDENTITY,
+                },
             })
 
     def test_constrained_delegation_no_auth_data_required(self):
@@ -740,6 +983,8 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': KDC_ERR_BADOPTION,
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NOT_SUPPORTED,
                 'allow_delegation': False
             })
@@ -773,7 +1018,8 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': (KDC_ERR_MODIFIED,
-                                        KDC_ERR_BADOPTION),
+                                        KDC_ERR_BADOPTION,
+                                        KDC_ERR_TGT_REVOKED),
                 'allow_delegation': True,
                 'modify_client_tkt_fn': self.remove_ticket_pac,
                 'expect_edata': False,
@@ -802,6 +1048,8 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': KDC_ERR_BADOPTION,
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_ACCOUNT_RESTRICTION,
                 'allow_delegation': True,
                 'modify_client_tkt_fn': functools.partial(
@@ -816,6 +1064,17 @@ class S4UKerberosTests(KDCBaseTest):
                 'expected_error_mode': 0,
                 'pac_options': '0001',  # supports RBCD
                 'allow_delegation': True
+            })
+
+    def test_rbcd(self):
+        # Test resource-based constrained delegation.
+        self.skip_unless_fl2008()
+
+        self._run_delegation_test(
+            {
+                'expected_error_mode': 0,
+                'allow_rbcd': True,
+                'pac_options': '0001',  # supports RBCD
             })
 
     def test_rbcd_no_auth_data_required(self):
@@ -856,6 +1115,8 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': KDC_ERR_BADOPTION,
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NOT_FOUND,
                 'allow_rbcd': False,
                 'pac_options': '0001'  # supports RBCD
@@ -868,7 +1129,10 @@ class S4UKerberosTests(KDCBaseTest):
         # contain a PAC, and an empty msDS-AllowedToDelegateTo attribute.
         self._run_delegation_test(
             {
-                'expected_error_mode': KDC_ERR_MODIFIED,
+                'expected_error_mode': (KDC_ERR_MODIFIED,
+                                        KDC_ERR_TGT_REVOKED),
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NOT_SUPPORTED,
                 'allow_rbcd': True,
                 'pac_options': '0001',  # supports RBCD
@@ -882,7 +1146,10 @@ class S4UKerberosTests(KDCBaseTest):
         # contain a PAC, and a non-empty msDS-AllowedToDelegateTo attribute.
         self._run_delegation_test(
             {
-                'expected_error_mode': KDC_ERR_MODIFIED,
+                'expected_error_mode': (KDC_ERR_MODIFIED,
+                                        KDC_ERR_TGT_REVOKED),
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NO_MATCH,
                 'allow_rbcd': True,
                 'pac_options': '0001',  # supports RBCD
@@ -913,7 +1180,10 @@ class S4UKerberosTests(KDCBaseTest):
         # contain a PAC, and an empty msDS-AllowedToDelegateTo attribute.
         self._run_delegation_test(
             {
-                'expected_error_mode': KDC_ERR_MODIFIED,
+                'expected_error_mode': (KDC_ERR_MODIFIED,
+                                        KDC_ERR_TGT_REVOKED),
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NOT_SUPPORTED,
                 'allow_rbcd': True,
                 'pac_options': '0001',  # supports RBCD
@@ -930,7 +1200,10 @@ class S4UKerberosTests(KDCBaseTest):
         # contain a PAC, and a non-empty msDS-AllowedToDelegateTo attribute.
         self._run_delegation_test(
             {
-                'expected_error_mode': KDC_ERR_MODIFIED,
+                'expected_error_mode': (KDC_ERR_MODIFIED,
+                                        KDC_ERR_TGT_REVOKED),
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NO_MATCH,
                 'allow_rbcd': True,
                 'pac_options': '0001',  # supports RBCD
@@ -968,6 +1241,8 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': KDC_ERR_BADOPTION,
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_ACCOUNT_RESTRICTION,
                 'allow_rbcd': True,
                 'pac_options': '0001',  # supports RBCD
@@ -983,6 +1258,8 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': KDC_ERR_BADOPTION,
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NOT_SUPPORTED,
                 'allow_rbcd': True,
                 'pac_options': '1'  # does not support RBCD
@@ -997,6 +1274,8 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': KDC_ERR_BADOPTION,
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NO_MATCH,
                 'allow_rbcd': True,
                 'pac_options': '1',  # does not support RBCD
@@ -1027,6 +1306,8 @@ class S4UKerberosTests(KDCBaseTest):
             {
                 'expected_error_mode': (KDC_ERR_MODIFIED,
                                         KDC_ERR_BAD_INTEGRITY),
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NOT_SUPPORTED,
                 'allow_rbcd': True,
                 'pac_options': '0001',  # supports RBCD
@@ -1063,6 +1344,9 @@ class S4UKerberosTests(KDCBaseTest):
                 self._run_delegation_test(
                     {
                         'expected_error_mode': KDC_ERR_GENERIC,
+                        # We aren’t particular about whether or not we get an
+                        # NTSTATUS.
+                        'expect_status': None,
                         'expected_status':
                             ntstatus.NT_STATUS_INSUFFICIENT_RESOURCES,
                         'allow_delegation': True,
@@ -1077,13 +1361,17 @@ class S4UKerberosTests(KDCBaseTest):
         for checksum in self.pac_checksum_types:
             with self.subTest(checksum=checksum):
                 if checksum == krb5pac.PAC_TYPE_TICKET_CHECKSUM:
-                    expected_error_mode = KDC_ERR_MODIFIED
+                    expected_error_mode = (KDC_ERR_MODIFIED,
+                                           KDC_ERR_BADOPTION)
                 else:
                     expected_error_mode = KDC_ERR_GENERIC
 
                 self._run_delegation_test(
                     {
                         'expected_error_mode': expected_error_mode,
+                        # We aren’t particular about whether or not we get an
+                        # NTSTATUS.
+                        'expect_status': None,
                         'expected_status':
                             ntstatus.NT_STATUS_NOT_SUPPORTED,
                         'allow_rbcd': True,
@@ -1102,6 +1390,9 @@ class S4UKerberosTests(KDCBaseTest):
                 self._run_delegation_test(
                     {
                         'expected_error_mode': KDC_ERR_GENERIC,
+                        # We aren’t particular about whether or not we get an
+                        # NTSTATUS.
+                        'expect_status': None,
                         'expected_status':
                             ntstatus.NT_STATUS_INSUFFICIENT_RESOURCES,
                         'allow_rbcd': True,
@@ -1131,14 +1422,19 @@ class S4UKerberosTests(KDCBaseTest):
                 if checksum == krb5pac.PAC_TYPE_SRV_CHECKSUM:
                     expected_error_mode = (KDC_ERR_MODIFIED,
                                            KDC_ERR_BAD_INTEGRITY)
+                    # We aren’t particular about whether or not we get an
+                    # NTSTATUS.
+                    expect_status = None
                     expected_status = ntstatus.NT_STATUS_WRONG_PASSWORD
                 else:
                     expected_error_mode = 0
+                    expect_status = None
                     expected_status = None
 
                 self._run_delegation_test(
                     {
                         'expected_error_mode': expected_error_mode,
+                        'expect_status': expect_status,
                         'expected_status': expected_status,
                         'allow_delegation': True,
                         'modify_service_tgt_fn': functools.partial(
@@ -1153,7 +1449,11 @@ class S4UKerberosTests(KDCBaseTest):
             with self.subTest(checksum=checksum):
                 self._run_delegation_test(
                     {
-                        'expected_error_mode': KDC_ERR_MODIFIED,
+                        'expected_error_mode': (KDC_ERR_MODIFIED,
+                                                KDC_ERR_BAD_INTEGRITY),
+                        # We aren’t particular about whether or not we get an
+                        # NTSTATUS.
+                        'expect_status': None,
                         'expected_status':
                             ntstatus.NT_STATUS_NOT_SUPPORTED,
                         'allow_rbcd': True,
@@ -1169,15 +1469,21 @@ class S4UKerberosTests(KDCBaseTest):
         for checksum in self.pac_checksum_types:
             with self.subTest(checksum=checksum):
                 if checksum == krb5pac.PAC_TYPE_SRV_CHECKSUM:
-                    expected_error_mode = KDC_ERR_MODIFIED
+                    expected_error_mode = (KDC_ERR_MODIFIED,
+                                           KDC_ERR_BAD_INTEGRITY)
+                    # We aren’t particular about whether or not we get an
+                    # NTSTATUS.
+                    expect_status = None
                     expected_status = ntstatus.NT_STATUS_WRONG_PASSWORD
                 else:
                     expected_error_mode = 0
+                    expect_status = None
                     expected_status = None
 
                 self._run_delegation_test(
                     {
                         'expected_error_mode': expected_error_mode,
+                        'expect_status': expect_status,
                         'expected_status': expected_status,
                         'allow_rbcd': True,
                         'pac_options': '0001',  # supports RBCD
@@ -1216,6 +1522,9 @@ class S4UKerberosTests(KDCBaseTest):
             for ctype in self.unkeyed_ctypes:
                 with self.subTest(checksum=checksum, ctype=ctype):
                     if checksum == krb5pac.PAC_TYPE_SRV_CHECKSUM:
+                        # We aren’t particular about whether or not we get an
+                        # NTSTATUS.
+                        expect_status = None
                         if ctype == Cksumtype.SHA1:
                             expected_error_mode = (KDC_ERR_SUMTYPE_NOSUPP,
                                                    KDC_ERR_INAPP_CKSUM)
@@ -1227,11 +1536,13 @@ class S4UKerberosTests(KDCBaseTest):
                                 ntstatus.NT_STATUS_INSUFFICIENT_RESOURCES)
                     else:
                         expected_error_mode = 0
+                        expect_status = None
                         expected_status = None
 
                     self._run_delegation_test(
                         {
                             'expected_error_mode': expected_error_mode,
+                            'expect_status': expect_status,
                             'expected_status': expected_status,
                             'allow_delegation': True,
                             'modify_service_tgt_fn': functools.partial(
@@ -1248,13 +1559,18 @@ class S4UKerberosTests(KDCBaseTest):
                 with self.subTest(checksum=checksum, ctype=ctype):
                     if (checksum == krb5pac.PAC_TYPE_SRV_CHECKSUM
                             and ctype == Cksumtype.SHA1):
-                        expected_error_mode = KDC_ERR_SUMTYPE_NOSUPP
+                        expected_error_mode = (KDC_ERR_SUMTYPE_NOSUPP,
+                                               KDC_ERR_INAPP_CKSUM)
                     else:
-                        expected_error_mode = KDC_ERR_GENERIC
+                        expected_error_mode = (KDC_ERR_GENERIC,
+                                               KDC_ERR_INAPP_CKSUM)
 
                     self._run_delegation_test(
                         {
                             'expected_error_mode': expected_error_mode,
+                            # We aren’t particular about whether or not we get
+                            # an NTSTATUS.
+                            'expect_status': None,
                             'expected_status':
                                 ntstatus.NT_STATUS_NOT_SUPPORTED,
                             'allow_rbcd': True,
@@ -1272,20 +1588,27 @@ class S4UKerberosTests(KDCBaseTest):
             for ctype in self.unkeyed_ctypes:
                 with self.subTest(checksum=checksum, ctype=ctype):
                     if checksum == krb5pac.PAC_TYPE_SRV_CHECKSUM:
+                        # We aren’t particular about whether or not we get an
+                        # NTSTATUS.
+                        expect_status = None
                         if ctype == Cksumtype.SHA1:
-                            expected_error_mode = KDC_ERR_SUMTYPE_NOSUPP
+                            expected_error_mode = (KDC_ERR_SUMTYPE_NOSUPP,
+                                                   KDC_ERR_INAPP_CKSUM)
                             expected_status = ntstatus.NT_STATUS_LOGON_FAILURE
                         else:
-                            expected_error_mode = KDC_ERR_GENERIC
+                            expected_error_mode = (KDC_ERR_GENERIC,
+                                                   KDC_ERR_INAPP_CKSUM)
                             expected_status = (
                                 ntstatus.NT_STATUS_INSUFFICIENT_RESOURCES)
                     else:
                         expected_error_mode = 0
+                        expect_status = None
                         expected_status = None
 
                     self._run_delegation_test(
                         {
                             'expected_error_mode': expected_error_mode,
+                            'expect_status': expect_status,
                             'expected_status': expected_status,
                             'allow_rbcd': True,
                             'pac_options': '0001',  # supports RBCD
@@ -1325,10 +1648,55 @@ class S4UKerberosTests(KDCBaseTest):
         self._run_delegation_test(
             {
                 'expected_error_mode': expected_error_mode,
+                # We aren’t particular about whether or not we get an NTSTATUS.
+                'expect_status': None,
                 'expected_status': ntstatus.NT_STATUS_NOT_SUPPORTED,
                 'allow_rbcd': True,
                 'pac_options': '0001',  # supports RBCD
                 'modify_client_tkt_fn': self.rc4_pac_checksums,
+            })
+
+    def test_constrained_delegation_rodc_issued(self):
+        self._run_delegation_test(
+            {
+                # Test that RODC-issued constrained delegation tickets are
+                # accepted.
+                'expected_error_mode': 0,
+                'allow_delegation': True,
+                # Both tickets must be signed by the same RODC.
+                'modify_client_tkt_fn': self.signed_by_rodc,
+                'modify_service_tgt_fn': self.issued_by_rodc,
+                'client_opts': {
+                    'allowed_replication_mock': True,
+                    'revealed_to_mock_rodc': True,
+                },
+                'service1_opts': {
+                    'allowed_replication_mock': True,
+                    'revealed_to_mock_rodc': True,
+                },
+            })
+
+    def test_rbcd_rodc_issued(self):
+        self.skip_unless_fl2008()
+
+        self._run_delegation_test(
+            {
+                # Test that RODC-issued constrained delegation tickets are
+                # accepted.
+                'expected_error_mode': 0,
+                'allow_rbcd': True,
+                'pac_options': '0001',  # supports RBCD
+                # Both tickets must be signed by the same RODC.
+                'modify_client_tkt_fn': self.signed_by_rodc,
+                'modify_service_tgt_fn': self.issued_by_rodc,
+                'client_opts': {
+                    'allowed_replication_mock': True,
+                    'revealed_to_mock_rodc': True,
+                },
+                'service1_opts': {
+                    'allowed_replication_mock': True,
+                    'revealed_to_mock_rodc': True,
+                },
             })
 
     def remove_pac_checksum(self, ticket, checksum):

@@ -43,7 +43,7 @@
  * malicious packet.
  *
  * In an ideal world this would be controlled by range() restrictions
- * on array sizes and careful IDL construction to avoid arbitary
+ * on array sizes and careful IDL construction to avoid arbitrary
  * linked lists, but this is a backstop for now.
  */
 #define NDR_TOKEN_MAX_LIST_SIZE 65535
@@ -169,7 +169,7 @@ _PUBLIC_ enum ndr_err_code ndr_pull_pop(struct ndr_pull *ndr)
 
 	/*
 	 * we need to keep up to 7 bytes
-	 * in order to get the aligment right.
+	 * in order to get the alignment right.
 	 */
 	skip = ndr->offset & 0xFFFFFFF8;
 
@@ -286,6 +286,9 @@ _PUBLIC_ enum ndr_err_code ndr_push_expand(struct ndr_push *ndr, uint32_t extra_
 	}
 
 	ndr->alloc_size += NDR_BASE_MARSHALL_SIZE;
+	if (size == UINT32_MAX) {
+		return ndr_push_error(ndr, NDR_ERR_BUFSIZE, "Overflow in push_expand");
+	}
 	if (size+1 > ndr->alloc_size) {
 		ndr->alloc_size = size+1;
 	}
@@ -428,14 +431,19 @@ _PUBLIC_ void ndr_print_debugc(int dbgc_class, ndr_print_fn_t fn, const char *na
 /*
   a useful helper function for printing idl structures via DEBUG()
 */
-_PUBLIC_ void ndr_print_debug(ndr_print_fn_t fn, const char *name, void *ptr)
+_PUBLIC_ bool ndr_print_debug(int level,
+			      ndr_print_fn_t fn,
+			      const char *name,
+			      void *ptr,
+			      const char *location,
+			      const char *function)
 {
 	struct ndr_print *ndr;
 
-	DEBUG(1,(" "));
+	DEBUGLF(level, (" "), location, function);
 
 	ndr = talloc_zero(NULL, struct ndr_print);
-	if (!ndr) return;
+	if (!ndr) return false;
 	ndr->print = ndr_print_debug_helper;
 	ndr->depth = 1;
 	ndr->flags = 0;
@@ -447,6 +455,7 @@ _PUBLIC_ void ndr_print_debug(ndr_print_fn_t fn, const char *name, void *ptr)
 
 	fn(ndr, name, ptr);
 	talloc_free(ndr);
+	return true;
 }
 
 /*

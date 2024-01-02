@@ -334,7 +334,7 @@ static bool aixjfs2_process_smbacl(vfs_handle_struct *handle,
 
 		memset(jfs2_ace, 0, entryLen);
 		jfs2_ace->entryLen = entryLen; /* won't store textual "who" */
-		jfs2_ace->aceType = aceprop->aceType; /* only ACCES|DENY supported by jfs2 */
+		jfs2_ace->aceType = aceprop->aceType; /* only ACCESS|DENY supported by jfs2 */
 		jfs2_ace->aceFlags = aceprop->aceFlags;
 		jfs2_ace->aceMask = aceprop->aceMask;
 		jfs2_ace->flags = (aceprop->flags&SMB_ACE4_ID_SPECIAL) ? ACE4_ID_SPECIAL : 0;
@@ -460,6 +460,10 @@ int aixjfs2_sys_acl_delete_def_fd(vfs_handle_struct *handle,
 }
 
 static struct vfs_fn_pointers vfs_aixacl2_fns = {
+	.stat_fn = nfs4_acl_stat,
+	.fstat_fn = nfs4_acl_fstat,
+	.lstat_fn = nfs4_acl_lstat,
+	.fstatat_fn = nfs4_acl_fstatat,
 	.fget_nt_acl_fn = aixjfs2_fget_nt_acl,
 	.fset_nt_acl_fn = aixjfs2_fset_nt_acl,
 	.sys_acl_get_fd_fn = aixjfs2_sys_acl_get_fd,

@@ -51,11 +51,8 @@ import samba.ndr
 import samba.dcerpc.dcerpc
 import samba.dcerpc.epmapper
 
-try:
-    from unittest import SkipTest
-except ImportError:
-    class SkipTest(Exception):
-        """Test skipped."""
+from unittest import SkipTest
+
 
 BINDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                       "../../../../bin"))
@@ -260,8 +257,10 @@ class LdbTestCase(TestCase):
         self.filename = self.tempfile.name
         self.ldb = samba.Ldb(self.filename)
 
-    def set_modules(self, modules=[]):
+    def set_modules(self, modules=None):
         """Change the modules for this Ldb."""
+        if modules is None:
+            modules = []
         m = ldb.Message()
         m.dn = ldb.Dn(self.ldb, "@MODULES")
         m["@LIST"] = ",".join(modules)
@@ -343,7 +342,7 @@ def env_loadparm():
 def env_get_var_value(var_name, allow_missing=False):
     """Returns value for variable in os.environ
 
-    Function throws AssertionError if variable is defined.
+    Function throws AssertionError if variable is undefined.
     Unit-test based python tests require certain input params
     to be set in environment, otherwise they can't be run
     """
@@ -359,18 +358,6 @@ cmdline_credentials = None
 
 class RpcInterfaceTestCase(TestCase):
     """DCE/RPC Test case."""
-
-
-class ValidNetbiosNameTests(TestCase):
-
-    def test_valid(self):
-        self.assertTrue(samba.valid_netbios_name("FOO"))
-
-    def test_too_long(self):
-        self.assertFalse(samba.valid_netbios_name("FOO" * 10))
-
-    def test_invalid_characters(self):
-        self.assertFalse(samba.valid_netbios_name("*BLA"))
 
 
 class BlackboxProcessError(Exception):
@@ -406,7 +393,8 @@ class BlackboxProcessError(Exception):
 class BlackboxTestCase(TestCaseInTempDir):
     """Base test case for blackbox tests."""
 
-    def _make_cmdline(self, line):
+    @staticmethod
+    def _make_cmdline(line):
         """Expand the called script into a fully resolved path in the bin
         directory."""
         if isinstance(line, list):
@@ -471,8 +459,9 @@ class BlackboxTestCase(TestCaseInTempDir):
     # where ret is the return code
     #       stdout is a string containing the commands stdout
     #       stderr is a string containing the commands stderr
-    def run_command(self, line):
-        line = self._make_cmdline(line)
+    @classmethod
+    def run_command(cls, line):
+        line = cls._make_cmdline(line)
         use_shell = not isinstance(line, list)
         p = subprocess.Popen(line,
                              stdout=subprocess.PIPE,

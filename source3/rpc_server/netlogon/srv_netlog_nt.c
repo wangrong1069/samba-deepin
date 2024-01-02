@@ -53,8 +53,6 @@
 #include "source3/lib/substitute.h"
 #include "librpc/rpc/server/netlogon/schannel_util.h"
 
-extern userdom_struct current_user_info;
-
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_RPC_SRV
 
@@ -921,7 +919,7 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 	}
 
 	/*
-	 * Support authenticaten of trusted domains.
+	 * Support authentication of trusted domains.
 	 *
 	 * These flags are the minimum required set which works with win2k3
 	 * and win2k8.
@@ -934,7 +932,7 @@ NTSTATUS _netr_ServerAuthenticate3(struct pipes_struct *p,
 	}
 
 	/*
-	 * If weak cryto is disabled, do not announce that we support RC4.
+	 * If weak crypto is disabled, do not announce that we support RC4.
 	 */
 	if (lp_weak_crypto() == SAMBA_WEAK_CRYPTO_DISALLOWED) {
 		srv_flgs &= ~NETLOGON_NEG_ARCFOUR;
@@ -1437,7 +1435,7 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 	confounder_len = 512 - new_password.length;
 	enc_blob = data_blob_const(r->in.new_password->data, confounder_len);
 	dec_blob = data_blob_const(password_buf.data, confounder_len);
-	if (confounder_len > 0 && data_blob_cmp(&dec_blob, &enc_blob) == 0) {
+	if (confounder_len > 0 && data_blob_equal_const_time(&dec_blob, &enc_blob)) {
 		DBG_WARNING("Confounder buffer not encrypted Length[%zu]\n",
 			    confounder_len);
 		TALLOC_FREE(creds);
@@ -1452,7 +1450,7 @@ NTSTATUS _netr_ServerPasswordSet2(struct pipes_struct *p,
 				   new_password.length);
 	dec_blob = data_blob_const(password_buf.data + confounder_len,
 				   new_password.length);
-	if (data_blob_cmp(&dec_blob, &enc_blob) == 0) {
+	if (data_blob_equal_const_time(&dec_blob, &enc_blob)) {
 		DBG_WARNING("Password buffer not encrypted Length[%zu]\n",
 			    new_password.length);
 		TALLOC_FREE(creds);

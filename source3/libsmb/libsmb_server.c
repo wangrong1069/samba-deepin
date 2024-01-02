@@ -38,7 +38,7 @@
  * Check a server for being alive and well.
  * returns 0 if the server is in shape. Returns 1 on error
  *
- * Also useable outside libsmbclient to enable external cache
+ * Also usable outside libsmbclient to enable external cache
  * to do some checks too.
  */
 int
@@ -61,14 +61,33 @@ SMBC_check_server(SMBCCTX * context,
 					1,
 					data_blob_const(data, sizeof(data)));
 		if (!NT_STATUS_IS_OK(status)) {
+			bool ok = false;
+			/*
+			 * Some SMB2 servers (not Samba or Windows)
+			 * check the session status on SMB2_ECHO and return
+			 * NT_STATUS_USER_SESSION_DELETED
+			 * if the session was not set. That's OK, they still
+			 * replied.
+			 * BUG: https://bugzilla.samba.org/show_bug.cgi?id=13218
+			 */
+			if (smbXcli_conn_protocol(server->cli->conn) >=
+					PROTOCOL_SMB2_02) {
+				if (NT_STATUS_EQUAL(status,
+					    NT_STATUS_USER_SESSION_DELETED)) {
+					ok = true;
+				}
+			}
 			/*
 			 * Some NetApp servers return
 			 * NT_STATUS_INVALID_PARAMETER.That's OK, they still
 			 * replied.
 			 * BUG: https://bugzilla.samba.org/show_bug.cgi?id=13007
 			 */
-			if (!NT_STATUS_EQUAL(status,
+			if (NT_STATUS_EQUAL(status,
 					NT_STATUS_INVALID_PARAMETER)) {
+				ok = true;
+			}
+			if (!ok) {
 				return 1;
 			}
 		}
@@ -81,7 +100,7 @@ SMBC_check_server(SMBCCTX * context,
  * Remove a server from the cached server list it's unused.
  * On success, 0 is returned. 1 is returned if the server could not be removed.
  *
- * Also useable outside libsmbclient
+ * Also usable outside libsmbclient
  */
 int
 SMBC_remove_unused_server(SMBCCTX * context,
@@ -289,20 +308,23 @@ static struct cli_credentials *SMBC_auth_credentials(TALLOC_CTX *mem_ctx,
 		/* Use the config option */
 		break;
 	case SMBC_ENCRYPTLEVEL_NONE:
-		cli_credentials_set_smb_encryption(creds,
-						   SMB_ENCRYPTION_OFF,
-						   CRED_SPECIFIED);
+		(void)cli_credentials_set_smb_encryption(
+				creds,
+				SMB_ENCRYPTION_OFF,
+				CRED_SPECIFIED);
 		break;
 	case SMBC_ENCRYPTLEVEL_REQUEST:
-		cli_credentials_set_smb_encryption(creds,
-						   SMB_ENCRYPTION_DESIRED,
-						   CRED_SPECIFIED);
+		(void)cli_credentials_set_smb_encryption(
+				creds,
+				SMB_ENCRYPTION_DESIRED,
+				CRED_SPECIFIED);
 		break;
 	case SMBC_ENCRYPTLEVEL_REQUIRE:
 	default:
-		cli_credentials_set_smb_encryption(creds,
-						   SMB_ENCRYPTION_REQUIRED,
-						   CRED_SPECIFIED);
+		(void)cli_credentials_set_smb_encryption(
+				creds,
+				SMB_ENCRYPTION_REQUIRED,
+				CRED_SPECIFIED);
 		break;
 	}
 

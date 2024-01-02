@@ -34,8 +34,10 @@
 #include "libcli/auth/ntlm_check.h"
 #include "libcli/smb/smb_constants.h"
 #include "libds/common/roles.h"
+#include "libds/common/flags.h"
 #include "source4/lib/tls/tls.h"
 #include "auth/credentials/credentials.h"
+#include "source3/librpc/gen_ndr/ads.h"
 
 #ifndef N_
 #define N_(x) x
@@ -403,10 +405,37 @@ static const struct enum_list enum_ntlm_auth[] = {
 	{-1, NULL}
 };
 
+static const struct enum_list enum_nt_hash_store[] = {
+	{NT_HASH_STORE_AUTO, "auto"},
+	{NT_HASH_STORE_NEVER, "never"},
+	{NT_HASH_STORE_ALWAYS, "always"},
+};
+
+
 static const struct enum_list enum_spotlight_backend[] = {
 	{SPOTLIGHT_BACKEND_NOINDEX, "noindex"},
 	{SPOTLIGHT_BACKEND_TRACKER, "tracker"},
 	{SPOTLIGHT_BACKEND_ES, "elasticsearch"},
+	{-1, NULL}
+};
+
+static const struct enum_list enum_debug_syslog_format[] = {
+	{DEBUG_SYSLOG_FORMAT_NO, "No"},
+	{DEBUG_SYSLOG_FORMAT_NO, "False"},
+	{DEBUG_SYSLOG_FORMAT_NO, "0"},
+	{DEBUG_SYSLOG_FORMAT_IN_LOGS, "in_logs"},
+	{DEBUG_SYSLOG_FORMAT_IN_LOGS, "Yes"},
+	{DEBUG_SYSLOG_FORMAT_IN_LOGS, "True"},
+	{DEBUG_SYSLOG_FORMAT_IN_LOGS, "1"},
+	{DEBUG_SYSLOG_FORMAT_ALWAYS, "always"},
+	{-1, NULL}
+};
+
+static const struct enum_list enum_ad_functional_level[] = {
+	{DS_DOMAIN_FUNCTION_2008_R2, "2008_R2"},
+	{DS_DOMAIN_FUNCTION_2012, "2012"},
+	{DS_DOMAIN_FUNCTION_2012_R2, "2012_R2"},
+	{DS_DOMAIN_FUNCTION_2016, "2016"},
 	{-1, NULL}
 };
 

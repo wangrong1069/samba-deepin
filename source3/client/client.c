@@ -565,9 +565,9 @@ static NTSTATUS display_finfo(struct cli_state *cli_state, struct file_info *fin
 		uint16_t fnum;
 		struct cli_credentials *creds = samba_cmdline_get_creds();
 
-		/* skip if this is . or .. */
-		if ( strequal(finfo->name,"..") || strequal(finfo->name,".") )
+		if (ISDOT(finfo->name) || ISDOTDOT(finfo->name)) {
 			return NT_STATUS_OK;
+		}
 		/* create absolute filename for cli_ntcreate() FIXME */
 		afname = talloc_asprintf(ctx,
 					"%s%s%s",
@@ -626,6 +626,7 @@ static NTSTATUS display_finfo(struct cli_state *cli_state, struct file_info *fin
 				display_sec_desc(sd);
 			}
 			TALLOC_FREE(sd);
+			cli_close(targetcli, fnum);
 		}
 		TALLOC_FREE(afname);
 	}
@@ -1214,8 +1215,9 @@ static NTSTATUS do_mget(struct cli_state *cli_state, struct file_info *finfo,
 		return NT_STATUS_OK;
 	}
 
-	if (strequal(finfo->name,".") || strequal(finfo->name,".."))
+	if (ISDOT(finfo->name) || ISDOTDOT(finfo->name)) {
 		return NT_STATUS_OK;
+	}
 
 	if ((finfo->attr & FILE_ATTRIBUTE_DIRECTORY) && !recurse) {
 		return NT_STATUS_OK;
@@ -2077,10 +2079,9 @@ static int file_find(TALLOC_CTX *ctx,
 		return -1;
 
         while ((dname = readdirname(dir))) {
-		if (!strcmp("..", dname))
+		if (ISDOT(dname) || ISDOTDOT(dname)) {
 			continue;
-		if (!strcmp(".", dname))
-			continue;
+		}
 
 		path = talloc_asprintf(ctx, "%s/%s", directory, dname);
 		if (path == NULL) {
@@ -3455,6 +3456,8 @@ static int cmd_readlink(void)
 	char *buf = NULL;
 	char *targetname = NULL;
 	char *linkname = NULL;
+	char *printname = NULL;
+	uint32_t flags;
 	struct cli_state *targetcli;
 	struct cli_credentials *creds = samba_cmdline_get_creds();
         NTSTATUS status;
@@ -3483,18 +3486,8 @@ static int cmd_readlink(void)
 		return 1;
 	}
 
-	if (!SERVER_HAS_UNIX_CIFS(targetcli)) {
-		d_printf("Server doesn't support UNIX CIFS calls.\n");
-		return 1;
-	}
-
-	if (CLI_DIRSEP_CHAR != '/') {
-		d_printf("Command \"posix\" must be issued before "
-			 "the \"readlink\" command can be used.\n");
-		return 1;
-	}
-
-	status = cli_posix_readlink(targetcli, name, talloc_tos(), &linkname);
+	status = cli_readlink(
+		cli, name, talloc_tos(), &linkname, &printname, &flags);
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("%s readlink on file %s\n",
 			 nt_errstr(status), name);
@@ -6129,12 +6122,14 @@ static int process_stdin(void)
 		int i;
 
 		/* display a prompt */
-		if (asprintf(&the_prompt, "smb: %s> ", client_get_cur_dir()) < 0) {
+		the_prompt = talloc_asprintf(frame,
+					     "smb: %s> ",
+					     client_get_cur_dir());
+		if (the_prompt == NULL) {
 			TALLOC_FREE(frame);
 			break;
 		}
 		line = smb_readline(the_prompt, readline_callback, completion_fn);
-		SAFE_FREE(the_prompt);
 		if (!line) {
 			TALLOC_FREE(frame);
 			break;

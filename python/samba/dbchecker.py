@@ -20,7 +20,7 @@
 import ldb
 import samba
 import time
-from base64 import b64decode
+from base64 import b64decode, b64encode
 from samba import dsdb
 from samba import common
 from samba.dcerpc import misc
@@ -29,11 +29,15 @@ from samba.ndr import ndr_unpack, ndr_pack
 from samba.dcerpc import drsblobs
 from samba.samdb import dsdb_Dn
 from samba.dcerpc import security
-from samba.descriptor import get_wellknown_sds, get_diff_sds
+from samba.descriptor import (
+        get_wellknown_sds,
+        get_deletedobjects_descriptor,
+        get_diff_sds
+)
 from samba.auth import system_session, admin_session
 from samba.netcmd import CommandError
 from samba.netcmd.fsmo import get_fsmo_roleowner
-
+from samba.colour import c_RED, c_DARK_YELLOW, c_DARK_CYAN, c_DARK_GREEN
 
 def dump_attr_values(vals):
     """Stringify a value list, using utf-8 if possible (which some tests
@@ -56,7 +60,8 @@ class dbcheck(object):
                  yes=False, quiet=False, in_transaction=False,
                  quick_membership_checks=False,
                  reset_well_known_acls=False,
-                 check_expired_tombstones=False):
+                 check_expired_tombstones=False,
+                 colour=False):
         self.samdb = samdb
         self.dict_oid_name = None
         self.samdb_schema = (samdb_schema or samdb)
@@ -64,6 +69,7 @@ class dbcheck(object):
         self.fix = fix
         self.yes = yes
         self.quiet = quiet
+        self.colour = colour
         self.remove_all_unknown_attributes = False
         self.remove_all_empty_attributes = False
         self.fix_all_normalisation = False
@@ -135,7 +141,6 @@ class dbcheck(object):
             (enum, estr) = e5.args
             if enum != ldb.ERR_NO_SUCH_OBJECT:
                 raise
-            pass
 
         self.system_session_info = system_session()
         self.admin_session_info = admin_session(None, samdb.get_domain_sid())
@@ -237,7 +242,6 @@ class dbcheck(object):
             (enum, estr) = e6.args
             if enum != ldb.ERR_NO_SUCH_OBJECT:
                 raise
-            pass
 
     def check_database(self, DN=None, scope=ldb.SCOPE_SUBTREE, controls=None,
                        attrs=None):
@@ -245,6 +249,7 @@ class dbcheck(object):
         res = self.samdb.search(base=DN, scope=scope, attrs=['dn'], controls=controls)
         self.report('Checking %u objects' % len(res))
         error_count = 0
+        self.unfixable_errors = 0
 
         error_count += self.check_deleted_objects_containers()
 
@@ -264,10 +269,17 @@ class dbcheck(object):
                         "would do that immediately." % (
                         self.expired_tombstones))
 
-        if error_count != 0 and not self.fix:
-            self.report("Please use --fix to fix these errors")
+        self.report('Checked %u objects (%u errors)' %
+                    (len(res), error_count + self.unfixable_errors))
 
-        self.report('Checked %u objects (%u errors)' % (len(res), error_count))
+        if self.unfixable_errors != 0:
+            self.report(f"WARNING: {self.unfixable_errors} "
+                        "of these errors cannot be automatically fixed.")
+
+        if error_count != 0 and not self.fix:
+            self.report("Please use 'samba-tool dbcheck --fix' to fix "
+                        f"{error_count} errors")
+
         return error_count
 
     def check_deleted_objects_containers(self):
@@ -343,6 +355,12 @@ class dbcheck(object):
                 listwko.append('%s:%s' % (wko_prefix, dn))
                 guid_suffix = ""
 
+
+            domain_sid = security.dom_sid(self.samdb.get_domain_sid())
+            sec_desc = get_deletedobjects_descriptor(domain_sid,
+                                                     name_map=self.name_map)
+            sec_desc_b64 = b64encode(sec_desc).decode('utf8')
+
             # Insert a brand new Deleted Objects container
             self.samdb.add_ldif("""dn: %s
 objectClass: top
@@ -351,7 +369,8 @@ description: Container for deleted objects
 isDeleted: TRUE
 isCriticalSystemObject: TRUE
 showInAdvancedViewOnly: TRUE
-systemFlags: -1946157056%s""" % (dn, guid_suffix),
+nTSecurityDescriptor:: %s
+systemFlags: -1946157056%s""" % (dn, sec_desc_b64, guid_suffix),
                                 controls=["relax:0", "provision:0"])
 
             delta = ldb.Message()
@@ -372,8 +391,23 @@ systemFlags: -1946157056%s""" % (dn, guid_suffix),
 
     def report(self, msg):
         '''print a message unless quiet is set'''
-        if not self.quiet:
-            print(msg)
+        if self.quiet:
+            return
+        if self.colour:
+            if msg.startswith('ERROR'):
+                msg = c_RED('ERROR') + msg[5:]
+            elif msg.startswith('WARNING'):
+                msg = c_DARK_YELLOW('WARNING') + msg[7:]
+            elif msg.startswith('INFO'):
+                msg = c_DARK_CYAN('INFO') + msg[4:]
+            elif msg.startswith('NOTICE'):
+                msg = c_DARK_CYAN('NOTICE') + msg[6:]
+            elif msg.startswith('NOTE'):
+                msg = c_DARK_CYAN('NOTE') + msg[4:]
+            elif msg.startswith('SKIPPING'):
+                msg = c_DARK_GREEN('SKIPPING') + msg[8:]
+
+        print(msg)
 
     def confirm(self, msg, allow_all=False, forced=False):
         '''confirm a change'''
@@ -1283,7 +1317,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 self.report("ERROR: Duplicate forward link values for attribute '%s' in '%s'" % (attrname, obj.dn))
             for m in missing_forward_links:
                 self.report("Missing   link '%s'" % (m))
-                if not self.confirm_all("Schedule readding missing forward link for attribute %s" % attrname,
+                if not self.confirm_all("Schedule re-adding missing forward link for attribute %s" % attrname,
                                         'fix_all_missing_forward_links'):
                     self.err_orphaned_backlink(m.dn, reverse_link_name,
                                                obj.dn.extended_str(), obj.dn,
@@ -2377,7 +2411,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
 
             if attrname.lower() == "name":
                 if len(obj[attrname]) != 1:
-                    error_count += 1
+                    self.unfixable_errors += 1
                     self.report("ERROR: Not fixing num_values(%d) for '%s' on '%s'" %
                                 (len(obj[attrname]), attrname, str(obj.dn)))
                 else:
@@ -2386,7 +2420,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             if attrname.lower() == str(obj.dn.get_rdn_name()).lower():
                 object_rdn_attr = attrname
                 if len(obj[attrname]) != 1:
-                    error_count += 1
+                    self.unfixable_errors += 1
                     self.report("ERROR: Not fixing num_values(%d) for '%s' on '%s'" %
                                 (len(obj[attrname]), attrname, str(obj.dn)))
                 else:
@@ -2417,7 +2451,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     # Here we check that the first attid is 0
                     # (objectClass).
                     if list_attid_from_md[0] != 0:
-                        error_count += 1
+                        self.unfixable_errors += 1
                         self.report("ERROR: Not fixing incorrect initial attributeID in '%s' on '%s', it should be objectClass" %
                                     (attrname, str(dn)))
 
@@ -2435,7 +2469,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     error_count += 1
                     continue
 
-                if self.reset_well_known_acls:
+                if dn == deleted_objects_dn or self.reset_well_known_acls:
                     try:
                         well_known_sd = self.get_wellknown_sd(dn)
                     except KeyError:
@@ -2444,7 +2478,13 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                     current_sd = ndr_unpack(security.descriptor,
                                             obj[attrname][0])
 
-                    diff = get_diff_sds(well_known_sd, current_sd, security.dom_sid(self.samdb.get_domain_sid()))
+                    ignoreAdditionalACEs = False
+                    if not self.reset_well_known_acls:
+                        ignoreAdditionalACEs = True
+
+                    diff = get_diff_sds(well_known_sd, current_sd,
+                                        security.dom_sid(self.samdb.get_domain_sid()),
+                                        ignoreAdditionalACEs=ignoreAdditionalACEs)
                     if diff != "":
                         self.err_wrong_default_sd(dn, well_known_sd, diff)
                         error_count += 1
@@ -2454,7 +2494,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
             if attrname.lower() == 'objectclass':
                 normalised = self.samdb.dsdb_normalise_attributes(self.samdb_schema, attrname, obj[attrname])
                 # Do not consider the attribute incorrect if:
-                #  - The sorted (alphabetically) list is the same, inclding case
+                #  - The sorted (alphabetically) list is the same, including case
                 #  - The first and last elements are the same
                 #
                 # This avoids triggering an error due to
@@ -2519,7 +2559,7 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
 
             if attrname.lower() == 'attributeid' or attrname.lower() == 'governsid':
                 if obj[attrname][0] in self.attribute_or_class_ids:
-                    error_count += 1
+                    self.unfixable_errors += 1
                     self.report('Error: %s %s on %s already exists as an attributeId or governsId'
                                 % (attrname, obj.dn, obj[attrname][0]))
                 else:
@@ -2583,10 +2623,10 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
 
         if ("*" in lc_attrs or "name" in lc_attrs):
             if name_val is None:
-                error_count += 1
+                self.unfixable_errors += 1
                 self.report("ERROR: Not fixing missing 'name' on '%s'" % (str(obj.dn)))
             if object_rdn_attr is None:
-                error_count += 1
+                self.unfixable_errors += 1
                 self.report("ERROR: Not fixing missing '%s' on '%s'" % (obj.dn.get_rdn_name(), str(obj.dn)))
 
         if name_val is not None:
@@ -2598,19 +2638,28 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 controls += ["local_oid:%s:1" % dsdb.DSDB_CONTROL_DBCHECK_FIX_LINK_DN_NAME]
             if parent_dn is None:
                 parent_dn = obj.dn.parent()
-            expected_dn = ldb.Dn(self.samdb, "RDN=RDN,%s" % (parent_dn))
-            expected_dn.set_component(0, obj.dn.get_rdn_name(), name_val)
 
-            if obj.dn == deleted_objects_dn:
-                expected_dn = obj.dn
+            try:
+                expected_dn = ldb.Dn(self.samdb, "RDN=RDN,%s" % (parent_dn))
+            except ValueError as e:
+                self.unfixable_errors += 1
+                self.report(f"ERROR: could not handle parent DN '{parent_dn}': "
+                            "skipping RDN checks")
+            else:
+                expected_dn.set_component(0, obj.dn.get_rdn_name(), name_val)
 
-            if expected_dn != obj.dn:
-                error_count += 1
-                self.err_wrong_dn(obj, expected_dn, object_rdn_attr,
-                        object_rdn_val, name_val, controls)
-            elif obj.dn.get_rdn_value() != object_rdn_val:
-                error_count += 1
-                self.report("ERROR: Not fixing %s=%r on '%s'" % (object_rdn_attr, object_rdn_val, str(obj.dn)))
+                if obj.dn == deleted_objects_dn:
+                    expected_dn = obj.dn
+
+                if expected_dn != obj.dn:
+                    error_count += 1
+                    self.err_wrong_dn(obj, expected_dn, object_rdn_attr,
+                            object_rdn_val, name_val, controls)
+                elif obj.dn.get_rdn_value() != object_rdn_val:
+                    self.unfixable_errors += 1
+                    self.report("ERROR: Not fixing %s=%r on '%s'" % (object_rdn_attr,
+                                                                     object_rdn_val,
+                                                                     obj.dn))
 
         show_dn = True
         if repl_meta_data_val:
@@ -2765,18 +2814,18 @@ newSuperior: %s""" % (str(from_dn), str(to_rdn), str(to_base)))
                 if pool != 0 and low >= high:
                     self.report("Invalid RID pool %d-%d, %d >= %d!" %
                                 (low, high, low, high))
-                    error_count += 1
+                    self.unfixable_errors += 1
 
             if "rIDAllocationPool" not in res[0]:
                 self.report("No rIDAllocationPool found in %s" % dn)
-                error_count += 1
+                self.unfixable_errors += 1
 
             try:
                 next_free_rid, high = self.samdb.free_rid_bounds()
             except ldb.LdbError as err:
                 enum, estr = err.args
                 self.report("Couldn't get available RIDs: %s" % estr)
-                error_count += 1
+                self.unfixable_errors += 1
             else:
                 # Check the remainder of this pool for conflicts.  If
                 # ridalloc_allocate_rid() moves to a new pool, this

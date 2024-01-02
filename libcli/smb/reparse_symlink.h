@@ -25,6 +25,7 @@
 
 #include "replace.h"
 #include <talloc.h>
+#include "lib/util/iov_buf.h"
 
 struct symlink_reparse_struct {
 	uint16_t unparsed_path_length; /* reserved for the reparse point */
@@ -33,9 +34,22 @@ struct symlink_reparse_struct {
 	uint32_t flags;
 };
 
+ssize_t reparse_buffer_marshall(
+	uint32_t reparse_tag,
+	uint16_t reserved,
+	const struct iovec *iov,
+	int iovlen,
+	uint8_t *buf,
+	size_t buflen);
+
 bool symlink_reparse_buffer_marshall(
-	const char *substitute, const char *printname, uint32_t flags,
-	TALLOC_CTX *mem_ctx, uint8_t **pdst, size_t *pdstlen);
+	const char *substitute,
+	const char *printname,
+	uint16_t unparsed_path_length,
+	uint32_t flags,
+	TALLOC_CTX *mem_ctx,
+	uint8_t **pdst,
+	size_t *pdstlen);
 struct symlink_reparse_struct *symlink_reparse_buffer_parse(
 	TALLOC_CTX *mem_ctx, const uint8_t *src, size_t srclen);
 

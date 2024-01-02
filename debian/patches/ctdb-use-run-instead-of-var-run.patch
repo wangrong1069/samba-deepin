@@ -1,0 +1,26 @@
+From a4f5852f55439bcc1aaaa6762d230a28599298d2 Mon Sep 17 00:00:00 2001
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Fri, 2 Dec 2022 11:45:01 +0300
+Subject: ctdb: use /run/ctdb instead of /var/run/ctdb
+
+Whole upstream path assignment needs a review.
+---
+ ctdb/wscript | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ctdb/wscript b/ctdb/wscript
+index c082c3b7a7d..523984487a3 100644
+--- a/ctdb/wscript
++++ b/ctdb/wscript
+@@ -288,7 +288,7 @@ def configure(conf):
+     conf.env.CTDB_DATADIR = os.path.join(conf.env.EXEC_PREFIX, 'share/ctdb')
+     conf.env.CTDB_ETCDIR = os.path.join(conf.env.SYSCONFDIR, 'ctdb')
+     conf.env.CTDB_VARDIR = os.path.join(conf.env.LOCALSTATEDIR, 'lib/ctdb')
+-    conf.env.CTDB_RUNDIR = os.path.join(conf.env.LOCALSTATEDIR, 'run/ctdb')
++    conf.env.CTDB_RUNDIR = '/run/ctdb'
+     conf.env.CTDB_HELPER_BINDIR = os.path.join(conf.env.LIBEXECDIR, 'ctdb')
+ 
+     if Options.options.ctdb_logdir:
+-- 
+2.30.2
+

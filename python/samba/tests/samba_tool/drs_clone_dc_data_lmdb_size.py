@@ -49,7 +49,7 @@ class DrsCloneDcDataLmdbSizeTestCase(SambaToolCmdTest):
     # Get the lmdb map size for the specified command
     #
     # While there is a python lmdb package available we use the lmdb command
-    # line utilities to avoid introducing a dependancy.
+    # line utilities to avoid introducing a dependency.
     #
     def get_lmdb_environment_size(self, path):
         (result, out, err) = self.run_command("mdb_stat -ne %s" % path)
@@ -95,21 +95,21 @@ class DrsCloneDcDataLmdbSizeTestCase(SambaToolCmdTest):
         (result, out, err) = self.run_command(
             'samba-tool drs clone-dc-database --backend-store-size "2"')
         self.assertGreater(result, 0)
-        self.assertRegexpMatches(err,
-                                 r"--backend-store-size invalid suffix ''")
+        self.assertRegex(err,
+                         r"--backend-store-size invalid suffix ''")
 
     def test_invalid_unit_suffix(self):
         (result, out, err) = self.run_command(
             'samba-tool drs clone-dc-database --backend-store-size "2 cd"')
         self.assertGreater(result, 0)
-        self.assertRegexpMatches(err,
-                                 r"--backend-store-size invalid suffix 'cd'")
+        self.assertRegex(err,
+                         r"--backend-store-size invalid suffix 'cd'")
 
     def test_non_numeric(self):
         (result, out, err) = self.run_command(
             'samba-tool drs clone-dc-database --backend-store-size "two Gb"')
         self.assertGreater(result, 0)
-        self.assertRegexpMatches(
+        self.assertRegex(
             err,
             r"backend-store-size option requires a numeric value, with an"
             " optional unit suffix")

@@ -22,13 +22,10 @@
    License along with this library; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include "replace.h"
 #include <tevent.h>
 
-#if PY_MAJOR_VERSION >= 3
-#define PyLong_FromLong PyLong_FromLong
-#endif
 
 /* discard signature of 'func' in favour of 'target_sig' */
 #define PY_DISCARD_FUNC_SIG(target_sig, func) (target_sig)(void(*)(void))func
@@ -72,134 +69,6 @@ static PyTypeObject TeventQueue_Type;
 static PyTypeObject TeventSignal_Type;
 static PyTypeObject TeventTimer_Type;
 static PyTypeObject TeventFd_Type;
-
-static int py_context_init(struct tevent_context *ev)
-{
-	/* FIXME */
-	return 0;
-}
-
-static struct tevent_fd *py_add_fd(struct tevent_context *ev,
-				    TALLOC_CTX *mem_ctx,
-				    int fd, uint16_t flags,
-				    tevent_fd_handler_t handler,
-				    void *private_data,
-				    const char *handler_name,
-				    const char *location)
-{
-	/* FIXME */
-	return NULL;
-}
-
-static void py_set_fd_close_fn(struct tevent_fd *fde,
-				tevent_fd_close_fn_t close_fn)
-{
-	/* FIXME */
-}
-
-static uint16_t py_get_fd_flags(struct tevent_fd *fde)
-{
-	/* FIXME */
-	return 0;
-}
-
-static void py_set_fd_flags(struct tevent_fd *fde, uint16_t flags)
-{
-	/* FIXME */
-}
-
-/* timed_event functions */
-static struct tevent_timer *py_add_timer(struct tevent_context *ev,
-					  TALLOC_CTX *mem_ctx,
-					  struct timeval next_event,
-					  tevent_timer_handler_t handler,
-					  void *private_data,
-					  const char *handler_name,
-					  const char *location)
-{
-	/* FIXME */
-	return NULL;
-}
-
-/* immediate event functions */
-static void py_schedule_immediate(struct tevent_immediate *im,
-				   struct tevent_context *ev,
-				   tevent_immediate_handler_t handler,
-				   void *private_data,
-				   const char *handler_name,
-				   const char *location)
-{
-	/* FIXME */
-}
-
-/* signal functions */
-static struct tevent_signal *py_add_signal(struct tevent_context *ev,
-					    TALLOC_CTX *mem_ctx,
-					    int signum, int sa_flags,
-					    tevent_signal_handler_t handler,
-					    void *private_data,
-					    const char *handler_name,
-					    const char *location)
-{
-	/* FIXME */
-	return NULL;
-}
-
-/* loop functions */
-static int py_loop_once(struct tevent_context *ev, const char *location)
-{
-	/* FIXME */
-	return 0;
-}
-
-static int py_loop_wait(struct tevent_context *ev, const char *location)
-{
-	/* FIXME */
-	return 0;
-}
-
-const static struct tevent_ops py_tevent_ops = {
-	.context_init = py_context_init,
-	.add_fd = py_add_fd,
-	.set_fd_close_fn = py_set_fd_close_fn,
-	.get_fd_flags = py_get_fd_flags,
-	.set_fd_flags = py_set_fd_flags,
-	.add_timer = py_add_timer,
-	.schedule_immediate = py_schedule_immediate,
-	.add_signal = py_add_signal,
-	.loop_wait = py_loop_wait,
-	.loop_once = py_loop_once,
-};
-
-static PyObject *py_register_backend(PyObject *self, PyObject *args)
-{
-	PyObject *name, *py_backend;
-
-	if (!PyArg_ParseTuple(args, "O", &py_backend))
-		return NULL;
-
-	name = PyObject_GetAttrString(py_backend, "name");
-	if (name == NULL) {
-		PyErr_SetNone(PyExc_AttributeError);
-		return NULL;
-	}
-
-	if (!PyUnicode_Check(name)) {
-		PyErr_SetNone(PyExc_TypeError);
-		Py_DECREF(name);
-		return NULL;
-	}
-
-	if (!tevent_register_backend(PyUnicode_AsUTF8(name), &py_tevent_ops)) { /* FIXME: What to do with backend */
-		PyErr_SetNone(PyExc_RuntimeError);
-		Py_DECREF(name);
-		return NULL;
-	}
-
-	Py_DECREF(name);
-
-	Py_RETURN_NONE;
-}
 
 static PyObject *py_tevent_context_reinitialise(TeventContext_Object *self,
 		PyObject *Py_UNUSED(ignored))
@@ -372,7 +241,7 @@ static void py_tevent_timer_dealloc(TeventTimer_Object *self)
 	if (self->timer) {
 		talloc_free(self->timer);
 	}
-	Py_DECREF(self->callback);
+	Py_CLEAR(self->callback);
 	PyObject_Del(self);
 }
 
@@ -413,7 +282,7 @@ struct TeventTimer_Object_ref {
 static int TeventTimer_Object_ref_destructor(struct TeventTimer_Object_ref *ref)
 {
 	ref->obj->timer = NULL;
-	Py_DECREF(ref->obj);
+	Py_CLEAR(ref->obj);
 	return 0;
 }
 
@@ -855,8 +724,6 @@ err:
 }
 
 static PyMethodDef tevent_methods[] = {
-	{ "register_backend", (PyCFunction)py_register_backend, METH_VARARGS,
-		"register_backend(backend)" },
 	{ "set_default_backend", (PyCFunction)py_set_default_backend, 
 		METH_VARARGS, "set_default_backend(backend)" },
 	{ "backend_list", (PyCFunction)py_backend_list, 
@@ -866,7 +733,6 @@ static PyMethodDef tevent_methods[] = {
 
 #define MODULE_DOC PyDoc_STR("Python wrapping of talloc-maintained objects.")
 
-#if PY_MAJOR_VERSION >= 3
 static struct PyModuleDef moduledef = {
 	PyModuleDef_HEAD_INIT,
 	.m_name = "_tevent",
@@ -874,7 +740,6 @@ static struct PyModuleDef moduledef = {
 	.m_size = -1,
 	.m_methods = tevent_methods,
 };
-#endif
 
 PyObject * module_init(void);
 PyObject * module_init(void)
@@ -899,11 +764,7 @@ PyObject * module_init(void)
 	if (PyType_Ready(&TeventFd_Type) < 0)
 		return NULL;
 
-#if PY_MAJOR_VERSION >= 3
 	m = PyModule_Create(&moduledef);
-#else
-	m = Py_InitModule3("_tevent", tevent_methods, MODULE_DOC);
-#endif
 	if (m == NULL)
 		return NULL;
 
@@ -930,16 +791,8 @@ PyObject * module_init(void)
 	return m;
 }
 
-#if PY_MAJOR_VERSION >= 3
 PyMODINIT_FUNC PyInit__tevent(void);
 PyMODINIT_FUNC PyInit__tevent(void)
 {
 	return module_init();
 }
-#else
-void init_tevent(void);
-void init_tevent(void)
-{
-	module_init();
-}
-#endif

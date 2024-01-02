@@ -300,7 +300,7 @@ class PasswordSettingsTestCase(PasswordTestCase):
         self.set_attribute(group2, "member", group1)
         self.assert_PSO_applied(user, group2_pso)
 
-        # add another level to the group heirachy & check this PSO takes effect
+        # add another level to the group hierarchy & check this PSO takes effect
         self.set_attribute(group3, "member", group2)
         self.assert_PSO_applied(user, group3_pso)
 
@@ -727,7 +727,7 @@ class PasswordSettingsTestCase(PasswordTestCase):
     # the msDS-ResultantPSO attribute on a user that doesn't exist yet (it
     # won't have any group membership or PSOs applied directly against it yet).
     # In theory it's possible to still get an applicable PSO via the user's
-    # primaryGroupID (i.e. 'Domain Users' by default). However, testing aginst
+    # primaryGroupID (i.e. 'Domain Users' by default). However, testing against
     # Windows shows that the PSO doesn't take effect during the user add
     # operation. (However, the Windows GUI tools presumably adds the user in 2
     # steps, because it does enforce the PSO for users added via the GUI).
@@ -869,11 +869,8 @@ unicodePwd:: %s
         # we can set the exact same password again because there's no history
         self.assert_password_valid(user, "NewPwd12#")
 
-        # There is a difference in behaviour here between Windows and Samba.
         # When going from zero to non-zero password-history, Windows treats
         # the current user's password as invalid (even though the password has
-        # not been altered since the setting changed). Whereas Samba accepts
-        # the current password (because it's not in the history until the
-        # *next* time the user's password changes.
+        # not been altered since the setting changed).
         self.set_domain_pwdHistoryLength("1")
         self.assert_password_invalid(user, "NewPwd12#")

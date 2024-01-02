@@ -1781,6 +1781,17 @@ static NTSTATUS dcesrv_samr_EnumDomainUsers(struct dcesrv_call_state *dce_call,
 			DBG_WARNING("No users in domain %s",
 				    ldb_dn_get_linearized(d_state->domain_dn));
 			talloc_free(ac);
+
+			/*
+			 * test_EnumDomainUsers_all() expects that r.out.sam
+			 * should be non-NULL, even if we have no entries.
+			 */
+			sam = talloc_zero(mem_ctx, struct samr_SamArray);
+			if (sam == NULL) {
+				return NT_STATUS_NO_MEMORY;
+			}
+			*r->out.sam = sam;
+
 			return NT_STATUS_OK;
 		}
 
@@ -2356,7 +2367,7 @@ static NTSTATUS dcesrv_samr_QueryGroupInfo(struct dcesrv_call_state *dce_call, T
 	switch (r->in.level) {
 	case GROUPINFOALL:
 		QUERY_STRING(msg, all.name,        "sAMAccountName");
-		info->all.attributes = SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED; /* Do like w2k3 */
+		info->all.attributes = SE_GROUP_DEFAULT_FLAGS; /* Do like w2k3 */
 		QUERY_UINT  (msg, all.num_members,      "numMembers")
 		QUERY_STRING(msg, all.description, "description");
 		break;
@@ -2364,14 +2375,14 @@ static NTSTATUS dcesrv_samr_QueryGroupInfo(struct dcesrv_call_state *dce_call, T
 		QUERY_STRING(msg, name,            "sAMAccountName");
 		break;
 	case GROUPINFOATTRIBUTES:
-		info->attributes.attributes = SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED; /* Do like w2k3 */
+		info->attributes.attributes = SE_GROUP_DEFAULT_FLAGS; /* Do like w2k3 */
 		break;
 	case GROUPINFODESCRIPTION:
 		QUERY_STRING(msg, description, "description");
 		break;
 	case GROUPINFOALL2:
 		QUERY_STRING(msg, all2.name,        "sAMAccountName");
-		info->all.attributes = SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED; /* Do like w2k3 */
+		info->all.attributes = SE_GROUP_DEFAULT_FLAGS; /* Do like w2k3 */
 		QUERY_UINT  (msg, all2.num_members,      "numMembers")
 		QUERY_STRING(msg, all2.description, "description");
 		break;
@@ -2608,6 +2619,7 @@ static NTSTATUS dcesrv_samr_DeleteGroupMember(struct dcesrv_call_state *dce_call
 	case LDB_SUCCESS:
 		return NT_STATUS_OK;
 	case LDB_ERR_UNWILLING_TO_PERFORM:
+	case LDB_ERR_NO_SUCH_ATTRIBUTE:
 		return NT_STATUS_MEMBER_NOT_IN_GROUP;
 	case LDB_ERR_INSUFFICIENT_ACCESS_RIGHTS:
 		return NT_STATUS_ACCESS_DENIED;
@@ -2676,9 +2688,7 @@ static NTSTATUS dcesrv_samr_QueryGroupMember(struct dcesrv_call_state *dce_call,
 			return status;
 		}
 
-		array->attributes[array->count] = SE_GROUP_MANDATORY |
-						  SE_GROUP_ENABLED_BY_DEFAULT |
-						  SE_GROUP_ENABLED;
+		array->attributes[array->count] = SE_GROUP_DEFAULT_FLAGS;
 		array->count++;
 	}
 
@@ -3631,6 +3641,7 @@ static NTSTATUS dcesrv_samr_SetUserInfo(struct dcesrv_call_state *dce_call, TALL
 	int ret;
 	NTSTATUS status = NT_STATUS_OK;
 	struct ldb_context *sam_ctx;
+	DATA_BLOB session_key = data_blob_null;
 
 	DCESRV_PULL_HANDLE(h, r->in.user_handle, SAMR_HANDLE_USER);
 
@@ -4076,6 +4087,212 @@ static NTSTATUS dcesrv_samr_SetUserInfo(struct dcesrv_call_state *dce_call, TALL
 		}
 		break;
 
+	case 31:
+		status = dcesrv_transport_session_key(dce_call, &session_key);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_NOTICE("samr: failed to get session key: %s\n",
+				   nt_errstr(status));
+			goto done;
+		}
+
+		status = samr_set_password_aes(dce_call,
+					       mem_ctx,
+					       &session_key,
+					       sam_ctx,
+					       a_state->account_dn,
+					       a_state->domain_state->domain_dn,
+					       &r->in.info->info31.password,
+					       DSDB_PASSWORD_RESET);
+		if (!NT_STATUS_IS_OK(status)) {
+			goto done;
+		}
+
+		if (r->in.info->info31.password_expired > 0) {
+			const char *t = "0";
+			struct ldb_message_element *set_el = NULL;
+
+			if (r->in.info->info31.password_expired ==
+			    PASS_DONT_CHANGE_AT_NEXT_LOGON) {
+				t = "-1";
+			}
+
+			ret = ldb_msg_add_string(msg, "pwdLastSet", t);
+			if (ret != LDB_SUCCESS) {
+				status = NT_STATUS_NO_MEMORY;
+				goto done;
+			}
+			set_el = ldb_msg_find_element(msg, "pwdLastSet");
+			set_el->flags = LDB_FLAG_MOD_REPLACE;
+		}
+
+		break;
+	case 32:
+		status = dcesrv_transport_session_key(dce_call, &session_key);
+		if (!NT_STATUS_IS_OK(status)) {
+			DBG_NOTICE("samr: failed to get session key: %s\n",
+				   nt_errstr(status));
+			goto done;
+		}
+
+		if (r->in.info->info32.info.fields_present == 0) {
+			status = NT_STATUS_INVALID_PARAMETER;
+			goto done;
+		}
+
+#define IFSET(bit) if (bit & r->in.info->info32.info.fields_present)
+		IFSET(SAMR_FIELD_LAST_LOGON)
+		{
+			SET_UINT64(msg, info32.info.last_logon, "lastLogon");
+		}
+		IFSET(SAMR_FIELD_LAST_LOGOFF)
+		{
+			SET_UINT64(msg, info32.info.last_logoff, "lastLogoff");
+		}
+		IFSET(SAMR_FIELD_ACCT_EXPIRY)
+		{
+			SET_UINT64(msg,
+				   info32.info.acct_expiry,
+				   "accountExpires");
+		}
+		IFSET(SAMR_FIELD_ACCOUNT_NAME)
+		{
+			SET_STRING(msg,
+				   info32.info.account_name,
+				   "samAccountName");
+		}
+		IFSET(SAMR_FIELD_FULL_NAME)
+		{
+			SET_STRING(msg, info32.info.full_name, "displayName");
+		}
+		IFSET(SAMR_FIELD_HOME_DIRECTORY)
+		{
+			SET_STRING(msg,
+				   info32.info.home_directory,
+				   "homeDirectory");
+		}
+		IFSET(SAMR_FIELD_HOME_DRIVE)
+		{
+			SET_STRING(msg, info32.info.home_drive, "homeDrive");
+		}
+		IFSET(SAMR_FIELD_LOGON_SCRIPT)
+		{
+			SET_STRING(msg, info32.info.logon_script, "scriptPath");
+		}
+		IFSET(SAMR_FIELD_PROFILE_PATH)
+		{
+			SET_STRING(msg,
+				   info32.info.profile_path,
+				   "profilePath");
+		}
+		IFSET(SAMR_FIELD_DESCRIPTION)
+		{
+			SET_STRING(msg, info32.info.description, "description");
+		}
+		IFSET(SAMR_FIELD_WORKSTATIONS)
+		{
+			SET_STRING(msg,
+				   info32.info.workstations,
+				   "userWorkstations");
+		}
+		IFSET(SAMR_FIELD_COMMENT)
+		{
+			SET_STRING(msg, info32.info.comment, "comment");
+		}
+		IFSET(SAMR_FIELD_PARAMETERS)
+		{
+			SET_PARAMETERS(msg,
+				       info32.info.parameters,
+				       "userParameters");
+		}
+		IFSET(SAMR_FIELD_PRIMARY_GID)
+		{
+			SET_UINT(msg,
+				 info32.info.primary_gid,
+				 "primaryGroupID");
+		}
+		IFSET(SAMR_FIELD_ACCT_FLAGS)
+		{
+			SET_AFLAGS(msg,
+				   info32.info.acct_flags,
+				   "userAccountControl");
+		}
+		IFSET(SAMR_FIELD_LOGON_HOURS)
+		{
+			SET_LHOURS(msg, info32.info.logon_hours, "logonHours");
+		}
+		IFSET(SAMR_FIELD_BAD_PWD_COUNT)
+		{
+			SET_UINT(msg,
+				 info32.info.bad_password_count,
+				 "badPwdCount");
+		}
+		IFSET(SAMR_FIELD_NUM_LOGONS)
+		{
+			SET_UINT(msg, info32.info.logon_count, "logonCount");
+		}
+		IFSET(SAMR_FIELD_COUNTRY_CODE)
+		{
+			SET_UINT(msg, info32.info.country_code, "countryCode");
+		}
+		IFSET(SAMR_FIELD_CODE_PAGE)
+		{
+			SET_UINT(msg, info32.info.code_page, "codePage");
+		}
+
+		/* password change fields */
+		IFSET(SAMR_FIELD_LAST_PWD_CHANGE)
+		{
+			status = NT_STATUS_ACCESS_DENIED;
+			goto done;
+		}
+
+		IFSET(SAMR_FIELD_NT_PASSWORD_PRESENT)
+		{
+			status = samr_set_password_aes(
+				dce_call,
+				mem_ctx,
+				&session_key,
+				a_state->sam_ctx,
+				a_state->account_dn,
+				a_state->domain_state->domain_dn,
+				&r->in.info->info32.password,
+				DSDB_PASSWORD_RESET);
+		}
+		else IFSET(SAMR_FIELD_LM_PASSWORD_PRESENT)
+		{
+			status = samr_set_password_aes(
+				dce_call,
+				mem_ctx,
+				&session_key,
+				a_state->sam_ctx,
+				a_state->account_dn,
+				a_state->domain_state->domain_dn,
+				&r->in.info->info32.password,
+				DSDB_PASSWORD_RESET);
+		}
+		if (!NT_STATUS_IS_OK(status)) {
+			goto done;
+		}
+
+		IFSET(SAMR_FIELD_EXPIRED_FLAG)
+		{
+			const char *t = "0";
+			struct ldb_message_element *set_el;
+			if (r->in.info->info32.info.password_expired ==
+			    PASS_DONT_CHANGE_AT_NEXT_LOGON) {
+				t = "-1";
+			}
+			if (ldb_msg_add_string(msg, "pwdLastSet", t) !=
+			    LDB_SUCCESS) {
+				status = NT_STATUS_NO_MEMORY;
+				goto done;
+			}
+			set_el = ldb_msg_find_element(msg, "pwdLastSet");
+			set_el->flags = LDB_FLAG_MOD_REPLACE;
+		}
+#undef IFSET
+
+		break;
 	default:
 		/* many info classes are not valid for SetUserInfo */
 		status = NT_STATUS_INVALID_INFO_CLASS;
@@ -4230,8 +4447,7 @@ static NTSTATUS dcesrv_samr_GetGroupsForUser(struct dcesrv_call_state *dce_call,
 	/* Adds the primary group */
 
 	array->rids[0].rid = primary_group_id;
-	array->rids[0].attributes = SE_GROUP_MANDATORY
-		| SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED;
+	array->rids[0].attributes = SE_GROUP_DEFAULT_FLAGS;
 	array->count += 1;
 
 	/* Adds the additional groups */
@@ -4247,8 +4463,7 @@ static NTSTATUS dcesrv_samr_GetGroupsForUser(struct dcesrv_call_state *dce_call,
 
 		array->rids[i + 1].rid =
 			group_sid->sub_auths[group_sid->num_auths-1];
-		array->rids[i + 1].attributes = SE_GROUP_MANDATORY
-			| SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED;
+		array->rids[i + 1].attributes = SE_GROUP_DEFAULT_FLAGS;
 		array->count += 1;
 	}
 
@@ -4533,9 +4748,7 @@ static NTSTATUS dcesrv_samr_QueryDisplayInfo(struct dcesrv_call_state *dce_call,
 			/*
 			 * We get a "7" here for groups
 			 */
-			entriesFullGroup[count].acct_flags =
-			    SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT |
-			    SE_GROUP_ENABLED;
+			entriesFullGroup[count].acct_flags = SE_GROUP_DEFAULT_FLAGS;
 			entriesFullGroup[count].account_name.string =
 			    ldb_msg_find_attr_as_string(
 				rec->msgs[0], "sAMAccountName", "");
@@ -4997,7 +5210,7 @@ static NTSTATUS dcesrv_samr_Connect5(struct dcesrv_call_state *dce_call, TALLOC_
 	status = dcesrv_samr_Connect(dce_call, mem_ctx, &c);
 
 	r->out.info_out->info1.client_version = SAMR_CONNECT_AFTER_W2K;
-	r->out.info_out->info1.unknown2 = 0;
+	r->out.info_out->info1.supported_features = 0;
 	*r->out.level_out = r->in.level_in;
 
 	return status;
@@ -5119,6 +5332,40 @@ static NTSTATUS dcesrv_samr_ValidatePassword(struct dcesrv_call_state *dce_call,
 	return NT_STATUS_OK;
 }
 
+static void dcesrv_samr_Opnum68NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					     TALLOC_CTX *mem_ctx,
+					     struct samr_Opnum68NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+static void dcesrv_samr_Opnum69NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					     TALLOC_CTX *mem_ctx,
+					     struct samr_Opnum69NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+static void dcesrv_samr_Opnum70NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					     TALLOC_CTX *mem_ctx,
+					     struct samr_Opnum70NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+static void dcesrv_samr_Opnum71NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					     TALLOC_CTX *mem_ctx,
+					     struct samr_Opnum71NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
+
+static void dcesrv_samr_Opnum72NotUsedOnWire(struct dcesrv_call_state *dce_call,
+					     TALLOC_CTX *mem_ctx,
+					     struct samr_Opnum72NotUsedOnWire *r)
+{
+	DCESRV_FAULT_VOID(DCERPC_FAULT_OP_RNG_ERROR);
+}
 
 /* include the generated boilerplate */
 #include "librpc/gen_ndr/ndr_samr_s.c"

@@ -341,13 +341,8 @@ static void standard_accept_connection(
 	proc_ctx->forked_on_accept = true;
 
 	pid = getpid();
-	setproctitle("task[%s] standard worker", proc_ctx->name);
 
-	/*
-	 * We must fit within 15 chars of text or we will truncate, so
-	 * we put the constant part last
-	 */
-	prctl_set_comment("%s[work]", proc_ctx->name);
+	process_set_title("%s[work]", "task[%s] standard worker", proc_ctx->name);
 
 	/* This is now the child code. We need a completely new event_context to work with */
 
@@ -509,12 +504,7 @@ static void standard_new_task(struct tevent_context *ev,
 		smb_panic("Failed to add SIGTERM handler after fork");
 	}
 
-	setproctitle("task[%s]", service_name);
-	/*
-	 * We must fit within 15 chars of text or we will truncate, so
-	 * we put the constant part last
-	 */
-	prctl_set_comment("%s[task]", service_name);
+	process_set_title("%s[task]", "task[%s]", service_name);
 
 	force_check_log_size();
 
@@ -543,6 +533,9 @@ static void standard_new_task(struct tevent_context *ev,
 		service_details->post_fork(task, &pd);
 	}
 
+	if (task != NULL && service_details->before_loop != NULL) {
+		service_details->before_loop(task);
+	}
 
 	/* we can't return to the top level here, as that event context is gone,
 	   so we now process events in the new event context until there are no

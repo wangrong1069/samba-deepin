@@ -253,9 +253,9 @@ class ComputerCmdTestCase(SambaToolCmdTest):
             self.assertIn('Moved computer "%s"' % computer["name"], out)
 
             found = self._find_computer(computer["name"])
-            self.assertNotEquals(found.get("dn"), olddn,
-                                 ("Moved computer '%s' still exists with the "
-                                  "same dn" % computer["name"]))
+            self.assertNotEqual(found.get("dn"), olddn,
+                                ("Moved computer '%s' still exists with the "
+                                 "same dn" % computer["name"]))
             computername = computer["name"].rstrip('$')
             newexpecteddn = ldb.Dn(self.samdb,
                                    "CN=%s,OU=%s,%s" %
@@ -277,9 +277,11 @@ class ComputerCmdTestCase(SambaToolCmdTest):
         self.assertCmdSuccess(result, out, err,
                               "Failed to delete ou '%s'" % parentou["name"])
 
-    def _randomComputer(self, base={}):
+    def _randomComputer(self, base=None):
         """create a computer with random attribute values, you can specify base
         attributes"""
+        if base is None:
+            base = {}
 
         computer = {
             "name": self.randomName(),
@@ -288,9 +290,11 @@ class ComputerCmdTestCase(SambaToolCmdTest):
         computer.update(base)
         return computer
 
-    def _randomOU(self, base={}):
+    def _randomOU(self, base=None):
         """create an ou with random attribute values, you can specify base
         attributes"""
+        if base is None:
+            base = {}
 
         ou = {
             "name": self.randomName(),

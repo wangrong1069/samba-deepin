@@ -221,7 +221,6 @@ static int ceph_snap_enum_snapdir(struct vfs_handle_struct *handle,
 	struct files_struct *dirfsp = NULL;
 	const char *dname = NULL;
 	char *talloced = NULL;
-	long offset = 0;
 	NTSTATUS status;
 	int ret;
 	uint32_t slots;
@@ -236,9 +235,14 @@ static int ceph_snap_enum_snapdir(struct vfs_handle_struct *handle,
 	 * via readdir.
 	 */
 
-	dir_hnd = OpenDir(frame, handle->conn, snaps_dname, NULL, 0);
-	if (dir_hnd == NULL) {
-		ret = -errno;
+	status = OpenDir(frame,
+			 handle->conn,
+			 snaps_dname,
+			 NULL,
+			 0,
+			 &dir_hnd);
+	if (!NT_STATUS_IS_OK(status)) {
+		ret = -map_errno_from_nt_status(status);
 		goto err_out;
 	}
 
@@ -260,9 +264,7 @@ static int ceph_snap_enum_snapdir(struct vfs_handle_struct *handle,
 	sc_data->num_volumes = 0;
 	sc_data->labels = NULL;
 
-        while ((dname = ReadDirName(dir_hnd, &offset, NULL, &talloced))
-	       != NULL)
-	{
+	while ((dname = ReadDirName(dir_hnd, &talloced)) != NULL) {
 		if (ISDOT(dname) || ISDOTDOT(dname)) {
 			TALLOC_FREE(talloced);
 			continue;
@@ -513,7 +515,6 @@ static int ceph_snap_gmt_convert_dir(struct vfs_handle_struct *handle,
 	struct files_struct *dirfsp = NULL;
 	const char *dname = NULL;
 	char *talloced = NULL;
-	long offset = 0;
 	struct smb_filename *snaps_dname = NULL;
 	const char *snapdir = lp_parm_const_string(SNUM(handle->conn),
 						   "ceph", "snapdir",
@@ -559,9 +560,14 @@ static int ceph_snap_gmt_convert_dir(struct vfs_handle_struct *handle,
 	DBG_DEBUG("enumerating shadow copy dir at %s\n",
 		  snaps_dname->base_name);
 
-	dir_hnd = OpenDir(tmp_ctx, handle->conn, snaps_dname, NULL, 0);
-	if (dir_hnd == NULL) {
-		ret = -errno;
+	status = OpenDir(tmp_ctx,
+			 handle->conn,
+			 snaps_dname,
+			 NULL,
+			 0,
+			 &dir_hnd);
+	if (!NT_STATUS_IS_OK(status)) {
+		ret = -map_errno_from_nt_status(status);
 		goto err_out;
 	}
 
@@ -579,9 +585,7 @@ static int ceph_snap_gmt_convert_dir(struct vfs_handle_struct *handle,
 		goto err_out;
 	}
 
-        while ((dname = ReadDirName(dir_hnd, &offset, NULL, &talloced))
-	       != NULL)
-	{
+	while ((dname = ReadDirName(dir_hnd, &talloced)) != NULL) {
 		struct smb_filename *smb_fname = NULL;
 		struct smb_filename *atname = NULL;
 		time_t snap_secs = 0;
@@ -929,8 +933,7 @@ static int ceph_snap_gmt_openat(vfs_handle_struct *handle,
 				const struct files_struct *dirfsp,
 				const struct smb_filename *smb_fname_in,
 				files_struct *fsp,
-				int flags,
-				mode_t mode)
+				const struct vfs_open_how *how)
 {
 	time_t timestamp = 0;
 	struct smb_filename *smb_fname = NULL;
@@ -953,8 +956,7 @@ static int ceph_snap_gmt_openat(vfs_handle_struct *handle,
 					   dirfsp,
 					   smb_fname_in,
 					   fsp,
-					   flags,
-					   mode);
+					   how);
 	}
 
 	ret = ceph_snap_gmt_convert(handle,
@@ -976,8 +978,7 @@ static int ceph_snap_gmt_openat(vfs_handle_struct *handle,
 				  dirfsp,
 				  smb_fname,
 				  fsp,
-				  flags,
-				  mode);
+				  how);
 	if (ret == -1) {
 		saved_errno = errno;
 	}
@@ -1303,42 +1304,56 @@ static int ceph_snap_gmt_fsetxattr(struct vfs_handle_struct *handle,
 				aname, value, size, flags);
 }
 
-static int ceph_snap_gmt_get_real_filename(struct vfs_handle_struct *handle,
-					 const struct smb_filename *path,
-					 const char *name,
-					 TALLOC_CTX *mem_ctx,
-					 char **found_name)
+static NTSTATUS ceph_snap_gmt_get_real_filename_at(
+	struct vfs_handle_struct *handle,
+	struct files_struct *dirfsp,
+	const char *name,
+	TALLOC_CTX *mem_ctx,
+	char **found_name)
 {
 	time_t timestamp = 0;
 	char stripped[PATH_MAX + 1];
 	char conv[PATH_MAX + 1];
-	struct smb_filename conv_fname;
+	struct smb_filename *conv_fname = NULL;
 	int ret;
+	NTSTATUS status;
 
-	ret = ceph_snap_gmt_strip_snapshot(handle, path,
-					&timestamp, stripped, sizeof(stripped));
+	ret = ceph_snap_gmt_strip_snapshot(
+		handle,
+		dirfsp->fsp_name,
+		&timestamp,
+		stripped,
+		sizeof(stripped));
 	if (ret < 0) {
-		errno = -ret;
-		return -1;
+		return map_nt_error_from_unix(-ret);
 	}
 	if (timestamp == 0) {
-		return SMB_VFS_NEXT_GET_REAL_FILENAME(handle, path, name,
-						      mem_ctx, found_name);
+		return SMB_VFS_NEXT_GET_REAL_FILENAME_AT(
+			handle, dirfsp, name, mem_ctx, found_name);
 	}
 	ret = ceph_snap_gmt_convert_dir(handle, stripped,
 					timestamp, conv, sizeof(conv));
 	if (ret < 0) {
-		errno = -ret;
-		return -1;
+		return map_nt_error_from_unix(-ret);
 	}
 
-	conv_fname = (struct smb_filename) {
-		.base_name = conv,
-	};
+	status = synthetic_pathref(
+		talloc_tos(),
+		dirfsp->conn->cwd_fsp,
+		conv,
+		NULL,
+		NULL,
+		0,
+		0,
+		&conv_fname);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
 
-	ret = SMB_VFS_NEXT_GET_REAL_FILENAME(handle, &conv_fname, name,
-					     mem_ctx, found_name);
-	return ret;
+	status = SMB_VFS_NEXT_GET_REAL_FILENAME_AT(
+		handle, conv_fname->fsp, name, mem_ctx, found_name);
+	TALLOC_FREE(conv_fname);
+	return status;
 }
 
 static uint64_t ceph_snap_gmt_disk_free(vfs_handle_struct *handle,
@@ -1451,7 +1466,7 @@ static struct vfs_fn_pointers ceph_snap_fns = {
 	.getxattrat_recv_fn = vfs_not_implemented_getxattrat_recv,
 	.fsetxattr_fn = ceph_snap_gmt_fsetxattr,
 	.fchflags_fn = ceph_snap_gmt_fchflags,
-	.get_real_filename_fn = ceph_snap_gmt_get_real_filename,
+	.get_real_filename_at_fn = ceph_snap_gmt_get_real_filename_at,
 };
 
 static_decl_vfs;

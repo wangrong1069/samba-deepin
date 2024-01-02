@@ -26,7 +26,6 @@ import samba.tests.auth_log_base
 from samba.tests import delete_force
 from samba.net import Net
 import samba
-from subprocess import call
 from ldb import LdbError
 from samba.tests.password_test import PasswordCommon
 from samba.dcerpc.windows_event_ids import (
@@ -52,11 +51,6 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                          credentials=self.get_credentials(),
                          lp=self.get_loadparm())
 
-        print("ldb %s" % type(self.ldb))
-        # Gets back the basedn
-        base_dn = self.ldb.domain_dn()
-        print("base_dn %s" % base_dn)
-
         # permit password changes during this test
         PasswordCommon.allow_password_changes(self, self.ldb)
 
@@ -72,7 +66,10 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
         })
 
         # discard any auth log messages for the password setup
-        self.discardMessages()
+        type(self).discardMessages()
+
+    def _authDescription(self):
+        return "samr_ChangePasswordUser4"
 
     def tearDown(self):
         super(AuthLogPassChangeTests, self).tearDown()
@@ -84,7 +81,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3") and
+                        self._authDescription()) and
                     (msg["Authentication"]["eventId"] ==
                         EVT_ID_SUCCESSFUL_LOGON) and
                     (msg["Authentication"]["logonType"] ==
@@ -110,7 +107,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3") and
+                        self._authDescription()) and
                     (msg["Authentication"]["eventId"] ==
                         EVT_ID_UNSUCCESSFUL_LOGON) and
                     (msg["Authentication"]["logonType"] ==
@@ -142,7 +139,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3") and
+                        self._authDescription()) and
                     (msg["Authentication"]["eventId"] ==
                         EVT_ID_UNSUCCESSFUL_LOGON) and
                     (msg["Authentication"]["logonType"] ==
@@ -175,7 +172,7 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                     (msg["Authentication"]["serviceDescription"] ==
                         "SAMR Password Change") and
                     (msg["Authentication"]["authDescription"] ==
-                        "samr_ChangePasswordUser3") and
+                        self._authDescription()) and
                     (msg["Authentication"]["eventId"] ==
                         EVT_ID_UNSUCCESSFUL_LOGON) and
                     (msg["Authentication"]["logonType"] ==
@@ -197,35 +194,6 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
         self.assertEqual(True, exception_thrown,
                           "Expected exception not thrown")
 
-        self.assertTrue(self.waitForMessages(isLastExpectedMessage),
-                        "Did not receive the expected message")
-
-    # net rap password changes are broken, but they trigger enough of the
-    # server side behaviour to exercise the code paths of interest.
-    # if we used the real password it would be too long and does not hash
-    # correctly, so we just check it triggers the wrong password path.
-    def test_rap_change_password(self):
-        def isLastExpectedMessage(msg):
-            return ((msg["type"] == "Authentication") and
-                    (msg["Authentication"]["serviceDescription"] ==
-                        "SAMR Password Change") and
-                    (msg["Authentication"]["status"] ==
-                        "NT_STATUS_WRONG_PASSWORD") and
-                    (msg["Authentication"]["authDescription"] ==
-                        "OemChangePasswordUser2") and
-                    (msg["Authentication"]["eventId"] ==
-                        EVT_ID_UNSUCCESSFUL_LOGON) and
-                    (msg["Authentication"]["logonType"] ==
-                        EVT_LOGON_NETWORK))
-
-        username = os.environ["USERNAME"]
-        server = os.environ["SERVER"]
-        password = os.environ["PASSWORD"]
-        server_param = "--server=%s" % server
-        creds = "-U%s%%%s" % (username, password)
-        call(["bin/net", "rap", server_param,
-              "password", USER_NAME, "notMyPassword", "notGoingToBeMyPassword",
-              server, creds, "--option=client ipc max protocol=nt1"])
         self.assertTrue(self.waitForMessages(isLastExpectedMessage),
                         "Did not receive the expected message")
 
@@ -255,14 +223,18 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
                         "Did not receive the expected message")
 
     #
-    # Currently this does not get logged, so we expect to only see the log
-    # entries for the underlying ldap bind.
+    # Currently this does not get logged, so we expect to see no messages.
     #
     def test_ldap_change_password_bad_user(self):
         def isLastExpectedMessage(msg):
-            return (msg["type"] == "Authorization" and
-                    msg["Authorization"]["serviceDescription"] == "LDAP" and
-                    msg["Authorization"]["authType"] == "krb5")
+            msg_type = msg["type"]
+
+            # Accept any message we receive, except for those produced while
+            # the Administrator authenticates in setUp().
+            return (msg_type != "Authentication" or (
+                "Administrator" not in msg[msg_type]["clientAccount"])) and (
+                    msg_type != "Authorization" or (
+                        "Administrator" not in msg[msg_type]["account"]))
 
         new_password = samba.generate_random_password(32, 32)
         try:
@@ -278,8 +250,8 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
             (num, msg) = e.args
             pass
 
-        self.assertTrue(self.waitForMessages(isLastExpectedMessage),
-                        "Did not receive the expected message")
+        self.assertFalse(self.waitForMessages(isLastExpectedMessage),
+                         "Received unexpected messages")
 
     def test_ldap_change_password_bad_original_password(self):
         def isLastExpectedMessage(msg):

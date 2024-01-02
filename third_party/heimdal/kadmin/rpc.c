@@ -529,6 +529,7 @@ ret_principal_ent(krb5_context contextp,
 	CHECK(krb5_ret_uint32(sp, &flag));
 	ent->key_data[i].key_data_type[1] = flag;
     }
+    CHECK(i == num);
 
     return 0;
 }
@@ -972,7 +973,7 @@ process_stream(krb5_context contextp,
 	    INSIST(gctx.ctx == NULL);
 
 	    gctx.inprogress = 1;
-	    fallthrough;
+	    HEIM_FALLTHROUGH;
 	case RPG_CONTINUE_INIT: {
 	    gss_name_t src_name = GSS_C_NO_NAME;
 	    krb5_data in;

@@ -1134,6 +1134,12 @@ static NTSTATUS pdb_samba_dsdb_delete_dom_group(struct pdb_methods *m,
 		talloc_free(tmp_ctx);
 		ldb_transaction_cancel(state->ldb);
 		return NT_STATUS_NO_SUCH_GROUP;
+	} else if (rc != LDB_SUCCESS) {
+		talloc_free(tmp_ctx);
+		DEBUG(10, ("dsdb_search_one failed %s\n",
+			   ldb_errstring(state->ldb)));
+		ldb_transaction_cancel(state->ldb);
+		return NT_STATUS_LDAP(rc);
 	}
 	rc = ldb_delete(state->ldb, dn);
 	if (rc == LDB_ERR_NO_SUCH_OBJECT) {
@@ -1599,6 +1605,12 @@ static NTSTATUS pdb_samba_dsdb_delete_alias(struct pdb_methods *m,
 		talloc_free(tmp_ctx);
 		ldb_transaction_cancel(state->ldb);
 		return NT_STATUS_NO_SUCH_ALIAS;
+	} else if (rc != LDB_SUCCESS) {
+		talloc_free(tmp_ctx);
+		DEBUG(10, ("dsdb_search_one failed %s\n",
+			   ldb_errstring(state->ldb)));
+		ldb_transaction_cancel(state->ldb);
+		return NT_STATUS_LDAP(rc);
 	}
 	rc = ldb_delete(state->ldb, dn);
 	if (rc == LDB_ERR_NO_SUCH_OBJECT) {
@@ -1691,8 +1703,8 @@ static NTSTATUS pdb_samba_dsdb_enum_alias_memberships(struct pdb_methods *m,
 	uint32_t *alias_rids = NULL;
 	size_t num_alias_rids = 0;
 	int i;
-	struct dom_sid *groupSIDs = NULL;
-	unsigned int num_groupSIDs = 0;
+	struct auth_SidAttr *groupSIDs = NULL;
+	uint32_t num_groupSIDs = 0;
 	char *filter;
 	NTSTATUS status;
 	const char *sid_dn;
@@ -1705,7 +1717,7 @@ static NTSTATUS pdb_samba_dsdb_enum_alias_memberships(struct pdb_methods *m,
 	 * either the SAM or BUILTIN
 	 */
 
-	filter = talloc_asprintf(tmp_ctx, "(&(objectClass=group)(groupType:1.2.840.113556.1.4.803:=%u))",
+	filter = talloc_asprintf(tmp_ctx, "(&(objectClass=group)(groupType:"LDB_OID_COMPARATOR_AND":=%u))",
 				 GROUP_TYPE_BUILTIN_LOCAL_GROUP);
 	if (filter == NULL) {
 		return NT_STATUS_NO_MEMORY;
@@ -1740,7 +1752,7 @@ static NTSTATUS pdb_samba_dsdb_enum_alias_memberships(struct pdb_methods *m,
 	}
 
 	for (i=0; i<num_groupSIDs; i++) {
-		if (sid_peek_check_rid(domain_sid, &groupSIDs[i],
+		if (sid_peek_check_rid(domain_sid, &groupSIDs[i].sid,
 				       &alias_rids[num_alias_rids])) {
 			num_alias_rids++;;
 		}
@@ -3305,9 +3317,13 @@ static NTSTATUS pdb_samba_dsdb_set_trusted_domain(struct pdb_methods *methods,
 		goto out;
 	}
 
-	msg->dn = ldb_dn_copy(tmp_ctx, base_dn);
+	msg->dn = samdb_system_container_dn(state->ldb, tmp_ctx);
+	if (msg->dn == NULL) {
+		status = NT_STATUS_NO_MEMORY;
+		goto out;
+	}
 
-	ok = ldb_dn_add_child_fmt(msg->dn, "cn=%s,cn=System", td->domain_name);
+	ok = ldb_dn_add_child_fmt(msg->dn, "cn=%s", td->domain_name);
 	if (!ok) {
 		status = NT_STATUS_NO_MEMORY;
 		goto out;
@@ -3532,13 +3548,13 @@ static NTSTATUS pdb_samba_dsdb_del_trusted_domain(struct pdb_methods *methods,
 		return NT_STATUS_OK;
 	}
 
-	tdo_dn = ldb_dn_copy(tmp_ctx, ldb_get_default_basedn(state->ldb));
+	tdo_dn = samdb_system_container_dn(state->ldb, tmp_ctx);
 	if (tdo_dn == NULL) {
 		status = NT_STATUS_NO_MEMORY;
 		goto out;
 	}
 
-	ok = ldb_dn_add_child_fmt(tdo_dn, "cn=%s,cn=System", domain);
+	ok = ldb_dn_add_child_fmt(tdo_dn, "cn=%s", domain);
 	if (!ok) {
 		TALLOC_FREE(tmp_ctx);
 		status = NT_STATUS_NO_MEMORY;

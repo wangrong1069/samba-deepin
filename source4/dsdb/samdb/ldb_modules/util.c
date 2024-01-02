@@ -255,14 +255,16 @@ int dsdb_module_search(struct ldb_module *module,
 }
 
 /*
-  find a DN given a GUID. This searches across all partitions
+  find an object given a GUID. This searches across all partitions
  */
-int dsdb_module_dn_by_guid(struct ldb_module *module, TALLOC_CTX *mem_ctx,
-			   const struct GUID *guid, struct ldb_dn **dn,
-			   struct ldb_request *parent)
+int dsdb_module_obj_by_guid(struct ldb_module *module,
+			    TALLOC_CTX *mem_ctx,
+			    struct ldb_message **_msg,
+			    const struct GUID *guid,
+			    const char * const *attrs,
+			    struct ldb_request *parent)
 {
 	struct ldb_result *res;
-	const char *attrs[] = { NULL };
 	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
 	int ret;
 
@@ -289,7 +291,36 @@ int dsdb_module_dn_by_guid(struct ldb_module *module, TALLOC_CTX *mem_ctx,
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
-	*dn = talloc_steal(mem_ctx, res->msgs[0]->dn);
+	*_msg = talloc_steal(mem_ctx, res->msgs[0]);
+
+	talloc_free(tmp_ctx);
+	return LDB_SUCCESS;
+}
+
+/*
+  find a DN given a GUID. This searches across all partitions
+ */
+int dsdb_module_dn_by_guid(struct ldb_module *module, TALLOC_CTX *mem_ctx,
+			   const struct GUID *guid, struct ldb_dn **dn,
+			   struct ldb_request *parent)
+{
+	struct ldb_message *msg = NULL;
+	static const char * const attrs[] = { NULL };
+	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
+	int ret;
+
+	ret = dsdb_module_obj_by_guid(module,
+				      tmp_ctx,
+				      &msg,
+				      guid,
+				      attrs,
+				      parent);
+	if (ret != LDB_SUCCESS) {
+		talloc_free(tmp_ctx);
+		return ret;
+	}
+
+	*dn = talloc_steal(mem_ctx, msg->dn);
 
 	talloc_free(tmp_ctx);
 	return LDB_SUCCESS;
@@ -301,7 +332,7 @@ int dsdb_module_dn_by_guid(struct ldb_module *module, TALLOC_CTX *mem_ctx,
 int dsdb_module_guid_by_dn(struct ldb_module *module, struct ldb_dn *dn, struct GUID *guid,
 			   struct ldb_request *parent)
 {
-	const char *attrs[] = { NULL };
+	static const char * const attrs[] = { NULL };
 	struct ldb_result *res;
 	TALLOC_CTX *tmp_ctx = talloc_new(module);
 	int ret;
@@ -690,7 +721,7 @@ int dsdb_check_samba_compatible_feature(struct ldb_module *module,
 {
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
 	struct ldb_result *res;
-	static const char *samba_dsdb_attrs[] = {
+	static const char * const samba_dsdb_attrs[] = {
 		SAMBA_COMPATIBLE_FEATURES_ATTR,
 		NULL
 	};
@@ -746,7 +777,7 @@ int dsdb_check_optional_feature(struct ldb_module *module, struct GUID op_featur
 	struct ldb_result *res;
 	struct ldb_dn *search_dn;
 	struct GUID search_guid;
-	const char *attrs[] = {"msDS-EnabledFeature", NULL};
+	static const char * const attrs[] = {"msDS-EnabledFeature", NULL};
 	int ret;
 	unsigned int i;
 	struct ldb_message_element *el;
@@ -771,7 +802,7 @@ int dsdb_check_optional_feature(struct ldb_module *module, struct GUID op_featur
 		return LDB_ERR_NO_SUCH_OBJECT;
 	}
 	if (res->msgs[0]->num_elements > 0) {
-		const char *attrs2[] = {"msDS-OptionalFeatureGUID", NULL};
+		static const char * const attrs2[] = {"msDS-OptionalFeatureGUID", NULL};
 
 		el = ldb_msg_find_element(res->msgs[0],"msDS-EnabledFeature");
 
@@ -1349,7 +1380,7 @@ const struct ldb_val *dsdb_module_find_dsheuristics(struct ldb_module *module,
 	int ret;
 	struct ldb_dn *new_dn;
 	struct ldb_context *ldb = ldb_module_get_ctx(module);
-	static const char *attrs[] = { "dSHeuristics", NULL };
+	static const char * const attrs[] = { "dSHeuristics", NULL };
 	struct ldb_result *res;
 
 	new_dn = ldb_dn_copy(mem_ctx, ldb_get_config_basedn(ldb));
@@ -1427,6 +1458,46 @@ bool dsdb_do_list_object(struct ldb_module *module,
 		result = true;
 	} else {
 		result = false;
+	}
+
+	talloc_free(tmp_ctx);
+	return result;
+}
+
+bool dsdb_attribute_authz_on_ldap_add(struct ldb_module *module,
+				      TALLOC_CTX *mem_ctx,
+				      struct ldb_request *parent)
+{
+	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
+	bool result = false;
+	const struct ldb_val *hr_val = dsdb_module_find_dsheuristics(module,
+								     tmp_ctx,
+								     parent);
+	if (hr_val != NULL && hr_val->length >= DS_HR_ATTR_AUTHZ_ON_LDAP_ADD) {
+		uint8_t val = hr_val->data[DS_HR_ATTR_AUTHZ_ON_LDAP_ADD - 1];
+		if (val != '0' && val != '2') {
+			result = true;
+		}
+	}
+
+	talloc_free(tmp_ctx);
+	return result;
+}
+
+bool dsdb_block_owner_implicit_rights(struct ldb_module *module,
+				      TALLOC_CTX *mem_ctx,
+				      struct ldb_request *parent)
+{
+	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
+	bool result = false;
+	const struct ldb_val *hr_val = dsdb_module_find_dsheuristics(module,
+								     tmp_ctx,
+								     parent);
+	if (hr_val != NULL && hr_val->length >= DS_HR_BLOCK_OWNER_IMPLICIT_RIGHTS) {
+		uint8_t val = hr_val->data[DS_HR_BLOCK_OWNER_IMPLICIT_RIGHTS - 1];
+		if (val != '0' && val != '2') {
+			result = true;
+		}
 	}
 
 	talloc_free(tmp_ctx);
@@ -1568,6 +1639,113 @@ int dsdb_get_expected_new_values(TALLOC_CTX *mem_ctx,
 	return LDB_SUCCESS;
 }
 
+
+/*
+ * Get the value of a single-valued attribute from an ADDed message. 'val' will only live as
+ * long as 'msg' and 'original_val' do, and must not be freed.
+ */
+int dsdb_msg_add_get_single_value(const struct ldb_message *msg,
+                                  const char *attr_name,
+                                  const struct ldb_val **val)
+{
+	const struct ldb_message_element *el = NULL;
+
+	/*
+	 * The ldb_msg_normalize() call in ldb_request() ensures that
+	 * there is at most one message element for each
+	 * attribute. Thus, we don't need a loop to deal with an
+	 * LDB_ADD.
+	 */
+	el = ldb_msg_find_element(msg, attr_name);
+	if (el == NULL) {
+		*val = NULL;
+		return LDB_SUCCESS;
+	}
+	if (el->num_values != 1) {
+		return LDB_ERR_CONSTRAINT_VIOLATION;
+	}
+
+	*val = &el->values[0];
+	return LDB_SUCCESS;
+}
+
+/*
+ * Get the value of a single-valued attribute after processing a
+ * message. 'operation' is either LDB_ADD or LDB_MODIFY. 'val' will only live as
+ * long as 'msg' and 'original_val' do, and must not be freed.
+ */
+int dsdb_msg_get_single_value(const struct ldb_message *msg,
+			      const char *attr_name,
+			      const struct ldb_val *original_val,
+			      const struct ldb_val **val,
+			      enum ldb_request_type operation)
+{
+	unsigned idx;
+
+	*val = NULL;
+
+	if (operation == LDB_ADD) {
+		if (original_val != NULL) {
+			/* This is an error on the caller's part. */
+			return LDB_ERR_CONSTRAINT_VIOLATION;
+		}
+		return dsdb_msg_add_get_single_value(msg, attr_name, val);
+	}
+
+	SMB_ASSERT(operation == LDB_MODIFY);
+
+	*val = original_val;
+
+	for (idx = 0; idx < msg->num_elements; ++idx) {
+		const struct ldb_message_element *el = &msg->elements[idx];
+
+		if (ldb_attr_cmp(el->name, attr_name) != 0) {
+			continue;
+		}
+
+		switch (el->flags & LDB_FLAG_MOD_MASK) {
+		case LDB_FLAG_MOD_ADD:
+			if (el->num_values != 1) {
+				return LDB_ERR_CONSTRAINT_VIOLATION;
+			}
+			if (*val != NULL) {
+				return LDB_ERR_CONSTRAINT_VIOLATION;
+			}
+
+			*val = &el->values[0];
+
+			break;
+
+		case LDB_FLAG_MOD_REPLACE:
+			if (el->num_values > 1) {
+				return LDB_ERR_CONSTRAINT_VIOLATION;
+			}
+
+			*val = el->num_values ? &el->values[0] : NULL;
+
+			break;
+
+		case LDB_FLAG_MOD_DELETE:
+			if (el->num_values > 1) {
+				return LDB_ERR_CONSTRAINT_VIOLATION;
+			}
+
+			/*
+			 * If a value was specified for the delete, we don't
+			 * bother checking it matches the value we currently
+			 * have. Any mismatch will be caught later (e.g. in
+			 * ldb_kv_modify_internal).
+			 */
+
+			*val = NULL;
+
+			break;
+		}
+	}
+
+	return LDB_SUCCESS;
+}
+
 /*
  * This function determines the (last) structural or 88 object class of a passed
  * "objectClass" attribute - per MS-ADTS 3.1.1.1.4 this is the last value.
@@ -1609,6 +1787,44 @@ const struct dsdb_class *dsdb_get_structural_oc_from_msg(const struct dsdb_schem
 	}
 
 	return dsdb_get_last_structural_class(schema, oc_el);
+}
+
+/*
+  Get the parent class of an objectclass, or NULL if none exists.
+ */
+const struct dsdb_class *dsdb_get_parent_class(const struct dsdb_schema *schema,
+					       const struct dsdb_class *objectclass)
+{
+	if (ldb_attr_cmp(objectclass->lDAPDisplayName, "top") == 0) {
+		return NULL;
+	}
+
+	if (objectclass->subClassOf == NULL) {
+		return NULL;
+	}
+
+	return dsdb_class_by_lDAPDisplayName(schema, objectclass->subClassOf);
+}
+
+/*
+  Return true if 'struct_objectclass' is a subclass of 'other_objectclass'. The
+  two objectclasses must originate from the same schema, to allow for
+  pointer-based identity comparison.
+ */
+bool dsdb_is_subclass_of(const struct dsdb_schema *schema,
+			 const struct dsdb_class *struct_objectclass,
+			 const struct dsdb_class *other_objectclass)
+{
+	while (struct_objectclass != NULL) {
+		/* Pointer comparison can be used due to the same schema str. */
+		if (struct_objectclass == other_objectclass) {
+			return true;
+		}
+
+		struct_objectclass = dsdb_get_parent_class(schema, struct_objectclass);
+	}
+
+	return false;
 }
 
 /* Fix the DN so that the relative attribute names are in upper case so that the DN:

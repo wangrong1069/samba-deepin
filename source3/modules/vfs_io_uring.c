@@ -20,6 +20,24 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "replace.h"
+
+/*
+ * liburing.h only needs a forward declaration
+ * of struct open_how.
+ *
+ * If struct open_how is defined in liburing/compat.h
+ * itself, hide it away in order to avoid conflicts
+ * with including linux/openat2.h or defining 'struct open_how'
+ * in libreplace.
+ */
+struct open_how;
+#ifdef HAVE_STRUCT_OPEN_HOW_LIBURING_COMPAT_H
+#define open_how __ignore_liburing_compat_h_open_how
+#include <liburing/compat.h>
+#undef open_how
+#endif /* HAVE_STRUCT_OPEN_HOW_LIBURING_COMPAT_H */
+
 #include "includes.h"
 #include "system/filesys.h"
 #include "smbd/smbd.h"
@@ -48,13 +66,13 @@ struct vfs_io_uring_request {
 	struct vfs_io_uring_request **list_head;
 	struct vfs_io_uring_config *config;
 	struct tevent_req *req;
-	struct io_uring_sqe sqe;
-	struct io_uring_cqe cqe;
 	void (*completion_fn)(struct vfs_io_uring_request *cur,
 			      const char *location);
 	struct timespec start_time;
 	struct timespec end_time;
 	SMBPROFILE_BYTES_ASYNC_STATE(profile_bytes);
+	struct io_uring_sqe sqe;
+	struct io_uring_cqe cqe;
 };
 
 static void vfs_io_uring_finish_req(struct vfs_io_uring_request *cur,
@@ -399,11 +417,11 @@ static void vfs_io_uring_fd_handler(struct tevent_context *ev,
 }
 
 struct vfs_io_uring_pread_state {
-	struct vfs_io_uring_request ur;
 	struct files_struct *fsp;
 	off_t offset;
 	struct iovec iov;
 	size_t nread;
+	struct vfs_io_uring_request ur;
 };
 
 static void vfs_io_uring_pread_submit(struct vfs_io_uring_pread_state *state);
@@ -547,11 +565,11 @@ static ssize_t vfs_io_uring_pread_recv(struct tevent_req *req,
 }
 
 struct vfs_io_uring_pwrite_state {
-	struct vfs_io_uring_request ur;
 	struct files_struct *fsp;
 	off_t offset;
 	struct iovec iov;
 	size_t nwritten;
+	struct vfs_io_uring_request ur;
 };
 
 static void vfs_io_uring_pwrite_submit(struct vfs_io_uring_pwrite_state *state);

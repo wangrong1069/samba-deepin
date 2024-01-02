@@ -237,7 +237,7 @@ static struct tevent_req *smbd_smb2_lock_send(TALLOC_CTX *mem_ctx,
 
 	tevent_req_set_cleanup_fn(req, smbd_smb2_lock_cleanup);
 
-	state->smb1req = smbd_smb2_fake_smb_request(smb2req);
+	state->smb1req = smbd_smb2_fake_smb_request(smb2req, fsp);
 	if (tevent_req_nomem(state->smb1req, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -381,6 +381,7 @@ static struct tevent_req *smbd_smb2_lock_send(TALLOC_CTX *mem_ctx,
 
 	for (i=0; i<in_lock_count; i++) {
 		bool invalid = false;
+		bool posix_handle =(fsp->posix_flags & FSP_POSIX_FLAGS_OPEN);
 
 		switch (in_locks[i].flags) {
 		case SMB2_LOCK_FLAG_SHARED:
@@ -426,7 +427,25 @@ static struct tevent_req *smbd_smb2_lock_send(TALLOC_CTX *mem_ctx,
 		locks[i].offset = in_locks[i].offset;
 		locks[i].count  = in_locks[i].length;
 
+		if (posix_handle) {
+			locks[i].lock_flav = POSIX_LOCK;
+		} else {
+			locks[i].lock_flav = WINDOWS_LOCK;
+		}
+
 		if (in_locks[i].flags & SMB2_LOCK_FLAG_EXCLUSIVE) {
+			if (posix_handle && fsp->fsp_flags.can_write == false) {
+				/*
+				 * Can't get a write lock on a posix
+				 * read-only handle.
+				 */
+				DBG_INFO("POSIX write lock requested "
+					"on read-only handle for file %s\n",
+					fsp_str_dbg(fsp));
+				tevent_req_nterror(req,
+					NT_STATUS_INVALID_HANDLE);
+				return tevent_req_post(req, ev);
+			}
 			locks[i].brltype = WRITE_LOCK;
 		} else if (in_locks[i].flags & SMB2_LOCK_FLAG_SHARED) {
 			locks[i].brltype = READ_LOCK;
@@ -585,7 +604,7 @@ static void smbd_smb2_lock_try(struct tevent_req *req)
 		 * We got NT_STATUS_RETRY,
 		 * we reset polling_msecs so that
 		 * that the retries based on LOCK_NOT_GRANTED
-		 * will later start with small intervalls again.
+		 * will later start with small intervals again.
 		 */
 		state->polling_msecs = 0;
 
@@ -646,7 +665,7 @@ static void smbd_smb2_lock_try(struct tevent_req *req)
 	/*
 	 * We got LOCK_NOT_GRANTED, make sure
 	 * a following STATUS_RETRY will start
-	 * with short intervalls again.
+	 * with short intervals again.
 	 */
 	state->retry_msecs = 0;
 

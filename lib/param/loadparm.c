@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Parameter loading functions
    Copyright (C) Karl Auer 1993-1998
@@ -69,6 +69,7 @@
 #include "libcli/smb/smb_constants.h"
 #include "tdb.h"
 #include "librpc/gen_ndr/nbt.h"
+#include "librpc/gen_ndr/dns.h"
 #include "librpc/gen_ndr/security.h"
 #include "libds/common/roles.h"
 #include "lib/util/samba_util.h"
@@ -172,7 +173,7 @@ static const char *lpcfg_string(const char *s)
  * for code compatibility between existing Samba4 and Samba3 code.
  */
 
-/* this global context supports the lp_*() function varients */
+/* this global context supports the lp_*() function variants */
 static struct loadparm_context *global_loadparm_context;
 
 #define FN_GLOBAL_SUBSTITUTED_STRING(fn_name,var_name) \
@@ -1016,7 +1017,7 @@ void add_to_file_list(TALLOC_CTX *mem_ctx, struct file_lists **list,
 	}
 
 	if (!f) {
-		f = talloc(mem_ctx, struct file_lists);
+		f = talloc_zero(mem_ctx, struct file_lists);
 		if (!f)
 			goto fail;
 		f->next = *list;
@@ -1031,12 +1032,10 @@ void add_to_file_list(TALLOC_CTX *mem_ctx, struct file_lists **list,
 			goto fail;
 		}
 		*list = f;
-		f->modtime = file_modtime(subfname);
-	} else {
-		time_t t = file_modtime(subfname);
-		if (t)
-			f->modtime = t;
 	}
+
+	/* If file_modtime() fails it leaves f->modtime as zero. */
+	(void)file_modtime(subfname, &f->modtime);
 	return;
 
 fail:
@@ -2112,7 +2111,7 @@ bool lpcfg_set_option(struct loadparm_context *lp_ctx, const char *option)
 
 void lpcfg_print_parameter(struct parm_struct *p, void *ptr, FILE * f)
 {
-	/* For the seperation of lists values that we print below */
+	/* For the separation of lists values that we print below */
 	const char *list_sep = ", ";
 	int i;
 	switch (p->type)
@@ -2145,7 +2144,7 @@ void lpcfg_print_parameter(struct parm_struct *p, void *ptr, FILE * f)
 			break;
 
 		case P_OCTAL: {
-			int val = *(int *)ptr; 
+			int val = *(int *)ptr;
 			if (val == -1) {
 				fprintf(f, "-1");
 			} else {
@@ -2672,6 +2671,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lp_ctx->sDefault->aio_write_size = 1;
 	lp_ctx->sDefault->smbd_search_ask_sharemode = true;
 	lp_ctx->sDefault->smbd_getinfo_ask_sharemode = true;
+	lp_ctx->sDefault->volume_serial_number = -1;
 
 	DEBUG(3, ("Initialising global parameters\n"));
 
@@ -2730,7 +2730,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "ntvfs handler", "unixuid default");
 	lpcfg_do_global_parameter(lp_ctx, "max connections", "0");
 
-	lpcfg_do_global_parameter(lp_ctx, "dcerpc endpoint servers", "epmapper wkssvc rpcecho samr netlogon lsarpc drsuapi dssetup unixinfo browser eventlog6 backupkey dnsserver");
+	lpcfg_do_global_parameter(lp_ctx, "dcerpc endpoint servers", "epmapper wkssvc samr netlogon lsarpc drsuapi dssetup unixinfo browser eventlog6 backupkey dnsserver");
 	lpcfg_do_global_parameter(lp_ctx, "server services", "s3fs rpc nbt wrepl ldap cldap kdc drepl winbindd ntp_signd kcc dnsupdate dns");
 	lpcfg_do_global_parameter(lp_ctx, "kccsrv:samba_kcc", "true");
 	/* the winbind method for domain controllers is for both RODC
@@ -2793,6 +2793,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "ClientNTLMv2Auth", "True");
 	lpcfg_do_global_parameter(lp_ctx, "LanmanAuth", "False");
 	lpcfg_do_global_parameter(lp_ctx, "NTLMAuth", "ntlmv2-only");
+	lpcfg_do_global_parameter(lp_ctx, "NT hash store", "always");
 	lpcfg_do_global_parameter(lp_ctx, "RawNTLMv2Auth", "False");
 	lpcfg_do_global_parameter(lp_ctx, "client use spnego principal", "False");
 
@@ -2839,6 +2840,7 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 	lpcfg_do_global_parameter(lp_ctx, "cldap port", "389");
 	lpcfg_do_global_parameter(lp_ctx, "krb5 port", "88");
 	lpcfg_do_global_parameter(lp_ctx, "kpasswd port", "464");
+	lpcfg_do_global_parameter_var(lp_ctx, "dns port", "%d", DNS_SERVICE_PORT);
 
 	lpcfg_do_global_parameter(lp_ctx, "kdc enable fast", "True");
 
@@ -3046,8 +3048,6 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 
 	lpcfg_do_global_parameter(lp_ctx, "lock spin time", "200");
 
-	lpcfg_do_global_parameter(lp_ctx, "directory name cache size", "100");
-
 	lpcfg_do_global_parameter(lp_ctx, "nmbd bind explicit broadcast", "yes");
 
 	lpcfg_do_global_parameter(lp_ctx, "init logon delay", "100");
@@ -3152,6 +3152,10 @@ struct loadparm_context *loadparm_init(TALLOC_CTX *mem_ctx)
 				  "rpc start on demand helpers",
 				  "yes");
 
+	lpcfg_do_global_parameter(lp_ctx,
+				  "ad dc functional level",
+				  "2008_R2");
+
 	for (i = 0; parm_table[i].label; i++) {
 		if (!(lp_ctx->flags[i] & FLAG_CMDLINE)) {
 			lp_ctx->flags[i] |= FLAG_DEFAULT;
@@ -3195,7 +3199,7 @@ struct loadparm_context *loadparm_init_global(bool load_default)
 /**
  * Initialise the global parameter structure.
  */
-struct loadparm_context *loadparm_init_s3(TALLOC_CTX *mem_ctx, 
+struct loadparm_context *loadparm_init_s3(TALLOC_CTX *mem_ctx,
 					  const struct loadparm_s3_helpers *s3_fns)
 {
 	struct loadparm_context *loadparm_context = talloc_zero(mem_ctx, struct loadparm_context);
@@ -3223,7 +3227,7 @@ const char *lp_default_path(void)
 }
 
 /**
- * Update the internal state of a loadparm context after settings 
+ * Update the internal state of a loadparm context after settings
  * have changed.
  */
 static bool lpcfg_update(struct loadparm_context *lp_ctx)
@@ -3269,7 +3273,7 @@ static bool lpcfg_update(struct loadparm_context *lp_ctx)
 			   lp_ctx->globals->syslog,
 			   lp_ctx->globals->syslog_only);
 
-	/* FIXME: This is a bit of a hack, but we can't use a global, since 
+	/* FIXME: This is a bit of a hack, but we can't use a global, since
 	 * not everything that uses lp also uses the socket library */
 	if (lpcfg_parm_bool(lp_ctx, NULL, "socket", "testnonblock", false)) {
 		setenv("SOCKET_TESTNONBLOCK", "1", 1);
@@ -3301,7 +3305,7 @@ bool lpcfg_load_default(struct loadparm_context *lp_ctx)
     path = lp_default_path();
 
     if (!file_exist(path)) {
-	    /* We allow the default smb.conf file to not exist, 
+	    /* We allow the default smb.conf file to not exist,
 	     * basically the equivalent of an empty file. */
 	    return lpcfg_update(lp_ctx);
     }
@@ -3359,7 +3363,7 @@ static bool lpcfg_load_internal(struct loadparm_context *lp_ctx,
 		setenv("SMB_CONF_PATH", filename, 1);
 
 		/* set the context used by the lp_*() function
-		   varients */
+		   variants */
 		global_loadparm_context = lp_ctx;
 		lp_ctx->loaded = true;
 	}

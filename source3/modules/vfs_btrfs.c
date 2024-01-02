@@ -17,6 +17,8 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "includes.h"
+#include "system/filesys.h"
 #include <linux/ioctl.h>
 #include <linux/fs.h>
 #include <sys/ioctl.h>
@@ -24,8 +26,6 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <libgen.h>
-#include "system/filesys.h"
-#include "includes.h"
 #include "smbd/smbd.h"
 #include "smbd/globals.h"
 #include "librpc/gen_ndr/smbXsrv.h"
@@ -500,7 +500,7 @@ static NTSTATUS btrfs_fget_compression(struct vfs_handle_struct *handle,
 
 	fd = open(p, O_RDONLY);
 	if (fd == -1) {
-		DBG_ERR("/proc open of %s failed: %s\n", p, strerror(errno));
+		DBG_DEBUG("/proc open of %s failed: %s\n", p, strerror(errno));
 		return map_nt_error_from_unix(errno);
 	}
 

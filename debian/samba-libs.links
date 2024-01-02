@@ -13,3 +13,6 @@
 # This is a gross hack, but it let us to survive.
 # Remove past bookworm.
 usr/lib/${DEB_HOST_MULTIARCH}/libndr.so.3 usr/lib/${DEB_HOST_MULTIARCH}/libndr.so.1
+
+# 4.17 changed soname of libndr without a reason, provide compat symlink
+usr/lib/${DEB_HOST_MULTIARCH}/libndr.so.3 usr/lib/${DEB_HOST_MULTIARCH}/libndr.so.2

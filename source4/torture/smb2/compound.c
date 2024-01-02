@@ -20,6 +20,7 @@
 */
 
 #include "includes.h"
+#include "tevent.h"
 #include "libcli/smb2/smb2.h"
 #include "libcli/smb2/smb2_calls.h"
 #include "torture/torture.h"
@@ -43,6 +44,13 @@
 		    __location__, #v, (int)v, (int)correct); \
 		ret = false; \
 	}} while (0)
+
+#define WAIT_FOR_ASYNC_RESPONSE(req) \
+	while (!req->cancel.can_cancel && req->state <= SMB2_REQUEST_RECV) { \
+		if (tevent_loop_once(tctx->ev) != 0) { \
+			break; \
+		} \
+	}
 
 static struct {
 	struct smb2_handle handle;
@@ -1076,6 +1084,7 @@ static bool test_compound_padding(struct torture_context *tctx,
 	struct smb2_handle h;
 	struct smb2_create cr;
 	struct smb2_read r;
+	struct smb2_read r2;
 	const char *fname = "compound_read.dat";
 	const char *sname = "compound_read.dat:foo";
 	struct smb2_request *req[3];
@@ -1123,7 +1132,7 @@ static bool test_compound_padding(struct torture_context *tctx,
 	smb2_util_close(tree, h);
 
 	/* Check compound read from basefile */
-	smb2_transport_compound_start(tree->session->transport, 2);
+	smb2_transport_compound_start(tree->session->transport, 3);
 
 	ZERO_STRUCT(cr);
 	cr.in.impersonation_level = SMB2_IMPERSONATION_ANONYMOUS;
@@ -1138,6 +1147,14 @@ static bool test_compound_padding(struct torture_context *tctx,
 
 	smb2_transport_compound_set_related(tree->session->transport, true);
 
+	/*
+	 * We send 2 reads in the compound here as the protocol
+	 * allows the last read to be split off and possibly
+	 * go async. Check the padding on the first read returned,
+	 * not the second as the second may not be part of the
+	 * returned compound.
+	*/
+
 	ZERO_STRUCT(r);
 	h.data[0] = UINT64_MAX;
 	h.data[1] = UINT64_MAX;
@@ -1146,6 +1163,15 @@ static bool test_compound_padding(struct torture_context *tctx,
 	r.in.offset      = 0;
 	r.in.min_count      = 1;
 	req[1] = smb2_read_send(tree, &r);
+
+	ZERO_STRUCT(r2);
+	h.data[0] = UINT64_MAX;
+	h.data[1] = UINT64_MAX;
+	r2.in.file.handle = h;
+	r2.in.length      = 3;
+	r2.in.offset      = 0;
+	r2.in.min_count      = 1;
+	req[2] = smb2_read_send(tree, &r2);
 
 	status = smb2_create_recv(req[0], tree, &cr);
 	CHECK_STATUS(status, NT_STATUS_OK);
@@ -1170,10 +1196,14 @@ static bool test_compound_padding(struct torture_context *tctx,
 	status = smb2_read_recv(req[1], tree, &r);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
+	/* Pick up the second, possibly async, read. */
+	status = smb2_read_recv(req[2], tree, &r2);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
 	smb2_util_close(tree, cr.out.file.handle);
 
 	/* Check compound read from stream */
-	smb2_transport_compound_start(tree->session->transport, 2);
+	smb2_transport_compound_start(tree->session->transport, 3);
 
 	ZERO_STRUCT(cr);
 	cr.in.impersonation_level = SMB2_IMPERSONATION_ANONYMOUS;
@@ -1188,6 +1218,14 @@ static bool test_compound_padding(struct torture_context *tctx,
 
 	smb2_transport_compound_set_related(tree->session->transport, true);
 
+	/*
+	 * We send 2 reads in the compound here as the protocol
+	 * allows the last read to be split off and possibly
+	 * go async. Check the padding on the first read returned,
+	 * not the second as the second may not be part of the
+	 * returned compound.
+	 */
+
 	ZERO_STRUCT(r);
 	h.data[0] = UINT64_MAX;
 	h.data[1] = UINT64_MAX;
@@ -1196,6 +1234,15 @@ static bool test_compound_padding(struct torture_context *tctx,
 	r.in.offset      = 0;
 	r.in.min_count   = 1;
 	req[1] = smb2_read_send(tree, &r);
+
+	ZERO_STRUCT(r2);
+	h.data[0] = UINT64_MAX;
+	h.data[1] = UINT64_MAX;
+	r2.in.file.handle = h;
+	r2.in.length      = 3;
+	r2.in.offset      = 0;
+	r2.in.min_count   = 1;
+	req[2] = smb2_read_send(tree, &r2);
 
 	status = smb2_create_recv(req[0], tree, &cr);
 	CHECK_STATUS(status, NT_STATUS_OK);
@@ -1218,6 +1265,10 @@ static bool test_compound_padding(struct torture_context *tctx,
 	CHECK_VALUE(req[1]->in.body_size, 24);
 
 	status = smb2_read_recv(req[1], tree, &r);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	/* Pick up the second, possibly async, read. */
+	status = smb2_read_recv(req[2], tree, &r2);
 	CHECK_STATUS(status, NT_STATUS_OK);
 
 	h = cr.out.file.handle;
@@ -2274,6 +2325,205 @@ static bool test_compound_async_flush_flush(struct torture_context *tctx,
 	return ret;
 }
 
+/*
+ * For Samba/smbd this test must be run against the aio_delay_inject share
+ * as we need to ensure the last write in the compound takes longer than
+ * 500 us, which is the threshold for going async in smbd SMB2 writes.
+ */
+
+static bool test_compound_async_write_write(struct torture_context *tctx,
+					    struct smb2_tree *tree)
+{
+	struct smb2_handle fhandle = { .data = { 0, 0 } };
+	struct smb2_handle relhandle = { .data = { UINT64_MAX, UINT64_MAX } };
+	struct smb2_write w1;
+	struct smb2_write w2;
+	const char *fname = "compound_async_write_write";
+	struct smb2_request *req[2];
+	NTSTATUS status;
+	bool is_smbd = torture_setting_bool(tctx, "smbd", true);
+	bool ret = false;
+
+	/* Start clean. */
+	smb2_util_unlink(tree, fname);
+
+	/* Create a file. */
+	status = torture_smb2_testfile_access(tree,
+					      fname,
+					      &fhandle,
+					      SEC_RIGHTS_FILE_ALL);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	/* Now do a compound write + write handle. */
+	smb2_transport_compound_start(tree->session->transport, 2);
+
+	ZERO_STRUCT(w1);
+	w1.in.file.handle = fhandle;
+	w1.in.offset = 0;
+	w1.in.data = data_blob_talloc_zero(tctx, 64);
+	req[0] = smb2_write_send(tree, &w1);
+
+	torture_assert_not_null_goto(tctx, req[0], ret, done,
+		"smb2_write_send (1) failed\n");
+
+	smb2_transport_compound_set_related(tree->session->transport, true);
+
+	ZERO_STRUCT(w2);
+	w2.in.file.handle = relhandle;
+	w2.in.offset = 64;
+	w2.in.data = data_blob_talloc_zero(tctx, 64);
+	req[1] = smb2_write_send(tree, &w2);
+
+	torture_assert_not_null_goto(tctx, req[0], ret, done,
+		"smb2_write_send (2) failed\n");
+
+	status = smb2_write_recv(req[0], &w1);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+		"smb2_write_recv (1) failed.");
+
+	if (!is_smbd) {
+		/*
+		 * Windows and other servers don't go async.
+		 */
+		status = smb2_write_recv(req[1], &w2);
+	} else {
+		/*
+		 * For smbd, the second write should go async
+		 * as it's the last element of a compound.
+		 */
+		WAIT_FOR_ASYNC_RESPONSE(req[1]);
+		CHECK_VALUE(req[1]->cancel.can_cancel, true);
+		/*
+		 * Now pick up the real return.
+		 */
+		status = smb2_write_recv(req[1], &w2);
+	}
+
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+		"smb2_write_recv (2) failed.");
+
+	status = smb2_util_close(tree, fhandle);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+		"smb2_util_close failed.");
+	ZERO_STRUCT(fhandle);
+
+	ret = true;
+
+  done:
+
+	if (fhandle.data[0] != 0) {
+		smb2_util_close(tree, fhandle);
+	}
+
+	smb2_util_unlink(tree, fname);
+	return ret;
+}
+
+/*
+ * For Samba/smbd this test must be run against the aio_delay_inject share
+ * as we need to ensure the last read in the compound takes longer than
+ * 500 us, which is the threshold for going async in smbd SMB2 reads.
+ */
+
+static bool test_compound_async_read_read(struct torture_context *tctx,
+					    struct smb2_tree *tree)
+{
+	struct smb2_handle fhandle = { .data = { 0, 0 } };
+	struct smb2_handle relhandle = { .data = { UINT64_MAX, UINT64_MAX } };
+	struct smb2_write w;
+	struct smb2_read r1;
+	struct smb2_read r2;
+	const char *fname = "compound_async_read_read";
+	struct smb2_request *req[2];
+	NTSTATUS status;
+	bool is_smbd = torture_setting_bool(tctx, "smbd", true);
+	bool ret = false;
+
+	/* Start clean. */
+	smb2_util_unlink(tree, fname);
+
+	/* Create a file. */
+	status = torture_smb2_testfile_access(tree,
+					      fname,
+					      &fhandle,
+					      SEC_RIGHTS_FILE_ALL);
+	CHECK_STATUS(status, NT_STATUS_OK);
+
+	/* Write 128 bytes. */
+	ZERO_STRUCT(w);
+	w.in.file.handle = fhandle;
+	w.in.offset = 0;
+	w.in.data = data_blob_talloc_zero(tctx, 128);
+	status = smb2_write(tree, &w);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+		"smb2_write_recv (1) failed.");
+
+	/* Now do a compound read + read handle. */
+	smb2_transport_compound_start(tree->session->transport, 2);
+
+	ZERO_STRUCT(r1);
+	r1.in.file.handle = fhandle;
+	r1.in.length      = 64;
+	r1.in.offset      = 0;
+	req[0] = smb2_read_send(tree, &r1);
+
+	torture_assert_not_null_goto(tctx, req[0], ret, done,
+		"smb2_read_send (1) failed\n");
+
+	smb2_transport_compound_set_related(tree->session->transport, true);
+
+	ZERO_STRUCT(r2);
+	r2.in.file.handle = relhandle;
+	r2.in.length      = 64;
+	r2.in.offset      = 64;
+	req[1] = smb2_read_send(tree, &r2);
+
+	torture_assert_not_null_goto(tctx, req[0], ret, done,
+		"smb2_read_send (2) failed\n");
+
+	status = smb2_read_recv(req[0], tree, &r1);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+		"smb2_read_recv (1) failed.");
+
+	if (!is_smbd) {
+		/*
+		 * Windows and other servers don't go async.
+		 */
+		status = smb2_read_recv(req[1], tree, &r2);
+	} else {
+		/*
+		 * For smbd, the second write should go async
+		 * as it's the last element of a compound.
+		 */
+		WAIT_FOR_ASYNC_RESPONSE(req[1]);
+		CHECK_VALUE(req[1]->cancel.can_cancel, true);
+		/*
+		 * Now pick up the real return.
+		 */
+		status = smb2_read_recv(req[1], tree, &r2);
+	}
+
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+		"smb2_read_recv (2) failed.");
+
+	status = smb2_util_close(tree, fhandle);
+	torture_assert_ntstatus_ok_goto(tctx, status, ret, done,
+		"smb2_util_close failed.");
+	ZERO_STRUCT(fhandle);
+
+	ret = true;
+
+  done:
+
+	if (fhandle.data[0] != 0) {
+		smb2_util_close(tree, fhandle);
+	}
+
+	smb2_util_unlink(tree, fname);
+	return ret;
+}
+
+
 struct torture_suite *torture_smb2_compound_init(TALLOC_CTX *ctx)
 {
 	struct torture_suite *suite = torture_suite_create(ctx, "compound");
@@ -2334,6 +2584,10 @@ struct torture_suite *torture_smb2_compound_async_init(TALLOC_CTX *ctx)
 		test_compound_async_flush_close);
 	torture_suite_add_1smb2_test(suite, "flush_flush",
 		test_compound_async_flush_flush);
+	torture_suite_add_1smb2_test(suite, "write_write",
+		test_compound_async_write_write);
+	torture_suite_add_1smb2_test(suite, "read_read",
+		test_compound_async_read_read);
 
 	suite->description = talloc_strdup(suite, "SMB2-COMPOUND-ASYNC tests");
 

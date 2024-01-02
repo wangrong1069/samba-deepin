@@ -35,6 +35,7 @@ bld.SAMBA3_BINARY('smbtorture' + bld.env.suffix3,
                         test_notify_online.c
                         test_chain3.c
                         test_smb2.c
+                        test_smb1_dfs.c
                         test_authinfo_structs.c
                         test_smbsock_any_connect.c
                         test_cleanup.c
@@ -57,7 +58,8 @@ bld.SAMBA3_BINARY('smbtorture' + bld.env.suffix3,
                         test_idmap_cache.c
                         test_hidenewfiles.c
                         test_readdir_timestamp.c
-                        ../lib/util_sd.c
+                        test_rpc_scale.c
+                        test_tdb_validate.c
                         ''' + TORTURE3_ADDITIONAL_SOURCE,
                  deps='''
                       talloc
@@ -73,6 +75,8 @@ bld.SAMBA3_BINARY('smbtorture' + bld.env.suffix3,
                       IDMAP_TDB_COMMON
                       libcli_lsa3
                       samba-cluster-support
+                      util_sd
+                      TDB_VALIDATE
                       ''',
                  cflags='-DWINBINDD_SOCKET_DIR=\"%s\"' % bld.env.WINBINDD_SOCKET_DIR,
                  for_selftest=True)
@@ -112,12 +116,16 @@ bld.SAMBA3_BINARY('pdbtest',
                       ''',
                  for_selftest=True)
 
+if bld.CONFIG_SET('WITH_SMB1SERVER'):
+    SMB1_SOURCES = 'vfstest_chain.c'
+else:
+    SMB1_SOURCES = ''
+
 bld.SAMBA3_BINARY('vfstest',
                  source='''
                         cmd_vfs.c
                         vfstest.c
-                        vfstest_chain.c
-                        ''',
+                        ''' + SMB1_SOURCES,
                  deps='''
                       vfs
                       CMDLINE_S3

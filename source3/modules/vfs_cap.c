@@ -84,10 +84,8 @@ static int cap_get_quota(vfs_handle_struct *handle,
 	return SMB_VFS_NEXT_GET_QUOTA(handle, cap_smb_fname, qtype, id, dq);
 }
 
-static struct dirent *cap_readdir(vfs_handle_struct *handle,
-				  struct files_struct *dirfsp,
-				  DIR *dirp,
-				  SMB_STRUCT_STAT *sbuf)
+static struct dirent *
+cap_readdir(vfs_handle_struct *handle, struct files_struct *dirfsp, DIR *dirp)
 {
 	struct dirent *result;
 	struct dirent *newdirent;
@@ -95,7 +93,7 @@ static struct dirent *cap_readdir(vfs_handle_struct *handle,
 	size_t newnamelen;
 	DEBUG(3,("cap: cap_readdir\n"));
 
-	result = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirp, NULL);
+	result = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirp);
 	if (!result) {
 		return NULL;
 	}
@@ -152,8 +150,7 @@ static int cap_openat(vfs_handle_struct *handle,
 		      const struct files_struct *dirfsp,
 		      const struct smb_filename *smb_fname_in,
 		      files_struct *fsp,
-		      int flags,
-		      mode_t mode)
+		      const struct vfs_open_how *how)
 {
 	char *cappath = NULL;
 	struct smb_filename *smb_fname = NULL;
@@ -179,9 +176,7 @@ static int cap_openat(vfs_handle_struct *handle,
 				  dirfsp,
 				  smb_fname,
 				  fsp,
-				  flags,
-				  mode);
-
+				  how);
 	if (ret == -1) {
 		saved_errno = errno;
 	}

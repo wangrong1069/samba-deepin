@@ -334,7 +334,7 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 		 * nonce wrap, or the security of the whole
 		 * communication and the keys is destroyed.
 		 * We must drop the connection once we have
-		 * transfered too much data.
+		 * transferred too much data.
 		 *
 		 * NOTE: We assume nonces greater than 8 bytes.
 		 */
@@ -782,14 +782,12 @@ static struct tevent_req *smbd_smb2_session_setup_send(TALLOC_CTX *mem_ctx,
 						     smb2req->xconn,
 						     now,
 						     &c);
-		if (!NT_STATUS_IS_OK(status)) {
-			tevent_req_nterror(req, status);
+		if (tevent_req_nterror(req, status)) {
 			return tevent_req_post(req, ev);
 		}
 
 		status = smbXsrv_session_update(smb2req->session);
-		if (!NT_STATUS_IS_OK(status)) {
-			tevent_req_nterror(req, status);
+		if (tevent_req_nterror(req, status)) {
 			return tevent_req_post(req, ev);
 		}
 	}
@@ -832,8 +830,7 @@ auth:
 
 	status = smbXsrv_session_find_channel(smb2req->session,
 					      smb2req->xconn, &c);
-	if (!NT_STATUS_IS_OK(status)) {
-		tevent_req_nterror(req, status);
+	if (tevent_req_nterror(req, status)) {
 		return tevent_req_post(req, ev);
 	}
 

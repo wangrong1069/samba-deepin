@@ -64,7 +64,7 @@
  *  beginning with either a semicolon (';') or a pound sign ('#').
  *
  *  All whitespace in section names and parameter names is compressed
- *  to single spaces.  Leading and trailing whitespace is stipped from
+ *  to single spaces.  Leading and trailing whitespace is stripped from
  *  both names and values.
  *
  *  Only the first equals sign in a parameter line is significant.
@@ -88,21 +88,10 @@ bool pm_process(const char *filename,
 			      void *private_data),
 		void *private_data)
 {
-	FILE *f;
-	bool ret;
-
-	f = fopen(filename, "r");
-	if (f == NULL) {
-		return false;
-	}
-
-	ret = tini_parse(f, false, sfunc, pfunc, private_data);
-
-	fclose(f);
-
+	bool ret = pm_process_with_flags(
+		filename, false, sfunc, pfunc, private_data);
 	return ret;
 }
-
 
 bool pm_process_with_flags(const char *filename,
 			   bool allow_empty_values,

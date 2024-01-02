@@ -63,7 +63,7 @@ bld.SAMBA3_BINARY('smbget',
                  source='smbget.c',
                  deps='''
                  talloc
-                 cmdline
+                 CMDLINE_S3
                  smbclient''')
 
 bld.SAMBA3_BINARY('nmblookup',
@@ -75,12 +75,13 @@ bld.SAMBA3_BINARY('nmblookup',
                  LIBNMB''')
 
 bld.SAMBA3_BINARY('smbcacls',
-                 source='smbcacls.c ../lib/util_sd.c',
+                 source='smbcacls.c',
                  deps='''
                  talloc
                  CMDLINE_S3
                  msrpc3
                  libcli_lsa3
+                 util_sd
                  krb5samba''')
 
 bld.SAMBA3_BINARY('smbcquotas',
@@ -102,13 +103,14 @@ bld.SAMBA3_BINARY('eventlogadm',
                  install_path='${SBINDIR}')
 
 bld.SAMBA3_BINARY('sharesec',
-                 source='sharesec.c ../lib/util_sd.c',
+                 source='sharesec.c',
                  deps='''
                  talloc
                  msrpc3
                  libcli_lsa3
                  CMDLINE_S3
                  cmdline_contexts
+                 util_sd
                  ''')
 
 bld.SAMBA3_BINARY('log2pcap',
@@ -146,15 +148,6 @@ bld.SAMBA3_BINARY('dbwrap_tool',
 
 bld.SAMBA3_BINARY('dbwrap_torture',
                  source='dbwrap_torture.c',
-                 deps='''
-                 talloc
-                 CMDLINE_S3
-                 smbconf
-                 ''',
-                 install=False)
-
-bld.SAMBA3_BINARY('split_tokens',
-                 source='split_tokens.c',
                  deps='''
                  talloc
                  CMDLINE_S3
@@ -240,7 +233,6 @@ bld.SAMBA3_BINARY('net',
                  ../registry/reg_format.c
                  ../registry/reg_import.c
                  net_registry_util.c
-                 ../lib/util_sd.c
                  net_help_common.c''',
                  deps='''
                  talloc
@@ -285,6 +277,7 @@ bld.SAMBA3_BINARY('net',
                  common_auth
                  ADOUBLE
                  DNS_UTIL
+                 util_sd
                  ''')
 
 bld.SAMBA3_BINARY('mvxattr',
@@ -311,6 +304,11 @@ if bld.CONFIG_GET("WITH_PROFILE"):
     smbstatus_source += ' status_profile.c'
 else:
     smbstatus_source += ' status_profile_dummy.c'
+
+if bld.CONFIG_GET("HAVE_JANSSON"):
+    smbstatus_source += ' status_json.c'
+else:
+    smbstatus_source += ' status_json_dummy.c'
 
 bld.SAMBA3_BINARY('smbstatus',
                  source=smbstatus_source,

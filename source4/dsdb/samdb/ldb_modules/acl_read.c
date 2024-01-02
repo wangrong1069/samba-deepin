@@ -207,7 +207,7 @@ static bool ldb_attr_always_visible(const char *attr)
 }
 
 /* Collect a list of attributes required to match a given parse tree. */
-static int ldb_parse_tree_collect_acl_attrs(struct ldb_module *module,
+static int ldb_parse_tree_collect_acl_attrs(const struct ldb_module *module,
 					    TALLOC_CTX *mem_ctx,
 					    struct ldb_attr_vec *attrs,
 					    const struct ldb_parse_tree *tree)
@@ -606,9 +606,9 @@ static int acl_redact_attr(TALLOC_CTX *mem_ctx,
 
 	/* We must check whether the user has rights to view the attribute. */
 
-	ret = acl_check_access_on_attribute(ac->module, mem_ctx, sd, sid,
-					    access_mask, attr, objectclass);
-
+	ret = acl_check_access_on_attribute_implicit_owner(ac->module, mem_ctx, sd, sid,
+							   access_mask, attr, objectclass,
+							   IMPLICIT_OWNER_READ_CONTROL_RIGHTS);
 	if (ret == LDB_ERR_INSUFFICIENT_ACCESS_RIGHTS) {
 		ldb_msg_element_mark_inaccessible(el);
 	} else if (ret != LDB_SUCCESS) {

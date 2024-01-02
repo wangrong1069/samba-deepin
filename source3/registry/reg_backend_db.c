@@ -404,7 +404,7 @@ do_init:
 
 	/*
 	 * There are potentially quite a few store operations which are all
-	 * indiviually wrapped in tdb transactions. Wrapping them in a single
+	 * individually wrapped in tdb transactions. Wrapping them in a single
 	 * transaction gives just a single transaction_commit() to actually do
 	 * its fsync()s. See tdb/common/transaction.c for info about nested
 	 * transaction behaviour.
@@ -775,7 +775,7 @@ WERROR regdb_init(void)
 	TALLOC_FREE(db_path);
 
 	regdb_refcount = 1;
-	DEBUG(10, ("regdb_init: registry db openend. refcount reset (%d)\n",
+	DEBUG(10, ("regdb_init: registry db opened. refcount reset (%d)\n",
 		   regdb_refcount));
 
 	status = dbwrap_fetch_int32_bystring(regdb, REGDB_VERSION_KEYNAME,
@@ -1045,7 +1045,7 @@ static WERROR regdb_store_keys_internal2(struct db_context *db,
 {
 	TDB_DATA dbuf;
 	uint8_t *buffer = NULL;
-	int i = 0;
+	uint32_t i = 0;
 	uint32_t len, buflen;
 	uint32_t num_subkeys = regsubkey_ctr_numkeys(ctr);
 	char *keyname = NULL;
@@ -1739,7 +1739,7 @@ static WERROR regdb_fetch_keys_internal(struct db_context *db, const char *key,
 	uint32_t num_items;
 	uint8_t *buf;
 	uint32_t buflen, len;
-	int i;
+	uint32_t i;
 	fstring subkeyname;
 	TALLOC_CTX *frame = talloc_stackframe();
 	TDB_DATA value;
@@ -1854,7 +1854,7 @@ static int regdb_unpack_values(struct regval_ctr *values,
 	uint32_t	size;
 	uint8_t		*data_p;
 	uint32_t 	num_values = 0;
-	int 		i;
+	uint32_t	i;
 
 	/* loop and unpack the rest of the registry values */
 

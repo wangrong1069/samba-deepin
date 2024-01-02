@@ -159,7 +159,7 @@ static struct node_map *nodemap_init(TALLOC_CTX *mem_ctx)
  *  <PNN> <FLAGS> [RECMASTER] [CURRENT] [CAPABILITIES]
  * EOF or a blank line terminates input.
  *
- * By default, capablities for each node are
+ * By default, capabilities for each node are
  * CTDB_CAP_RECMASTER|CTDB_CAP_LMASTER.  These 2
  * capabilities can be faked off by adding, for example,
  * -CTDB_CAP_RECMASTER.
@@ -270,6 +270,10 @@ static bool nodemap_parse(struct node_map *node_map)
 		node->recovery_substate = NULL;
 
 		node_map->num_nodes += 1;
+	}
+
+	if (node_map->num_nodes == 0) {
+		goto fail;
 	}
 
 	DEBUG(DEBUG_INFO, ("Parsing nodemap done\n"));
@@ -521,6 +525,10 @@ static bool interfaces_parse(struct interface_map *iface_map)
 		iface_map->num += 1;
 	}
 
+	if (iface_map->num == 0) {
+		goto fail;
+	}
+
 	DEBUG(DEBUG_INFO, ("Parsing interfaces done\n"));
 	return true;
 
@@ -588,6 +596,10 @@ static bool vnnmap_parse(struct vnn_map *vnn_map)
 		vnn_map->size += 1;
 	}
 
+	if (vnn_map->size == 0) {
+		goto fail;
+	}
+
 	DEBUG(DEBUG_INFO, ("Parsing vnnmap done\n"));
 	return true;
 
@@ -606,8 +618,7 @@ static bool reclock_parse(struct ctdbd_context *ctdb)
 	}
 
 	if (line[0] == '\n') {
-		/* Recovery lock remains unset */
-		goto ok;
+		goto fail;
 	}
 
 	/* Get rid of pesky newline */
@@ -619,7 +630,7 @@ static bool reclock_parse(struct ctdbd_context *ctdb)
 	if (ctdb->reclock == NULL) {
 		goto fail;
 	}
-ok:
+
 	/* Swallow possible blank line following section.  Picky
 	 * compiler settings don't allow the return value to be
 	 * ignored, so make the compiler happy.
@@ -743,6 +754,10 @@ static bool dbmap_parse(struct database_map *db_map)
 		db->seq_num = seq_num;
 
 		DLIST_ADD_END(db_map->db, db);
+	}
+
+	if (db_map->db == NULL) {
+		goto fail;
 	}
 
 	DEBUG(DEBUG_INFO, ("Parsing dbmap done\n"));
@@ -1046,7 +1061,7 @@ static bool public_ips_parse(struct ctdbd_context *ctdb,
 
 	ctdb->known_ips = ipalloc_read_known_ips(ctdb, numnodes, false);
 
-	status = (ctdb->known_ips != NULL);
+	status = (ctdb->known_ips != NULL && ctdb->known_ips->num != 0);
 
 	if (status) {
 		D_INFO("Parsing public IPs done\n");
@@ -1139,11 +1154,53 @@ static bool control_failures_parse(struct ctdbd_context *ctdb)
 		DLIST_ADD(ctdb->control_failures, failure);
 	}
 
+	if (ctdb->control_failures == NULL) {
+		goto fail;
+	}
+
 	D_INFO("Parsing fake control failures done\n");
 	return true;
 
 fail:
 	D_INFO("Parsing fake control failures failed\n");
+	return false;
+}
+
+static bool runstate_parse(struct ctdbd_context *ctdb)
+{
+	char line[1024];
+	char *t;
+
+	if (fgets(line, sizeof(line), stdin) == NULL) {
+		goto fail;
+	}
+
+	if (line[0] == '\n') {
+		goto fail;
+	}
+
+	/* Get rid of pesky newline */
+	if ((t = strchr(line, '\n')) != NULL) {
+		*t = '\0';
+	}
+
+	ctdb->runstate = ctdb_runstate_from_string(line);
+	if (ctdb->runstate == CTDB_RUNSTATE_UNKNOWN) {
+		goto fail;
+	}
+
+	/* Swallow possible blank line following section.  Picky
+	 * compiler settings don't allow the return value to be
+	 * ignored, so make the compiler happy.
+	 */
+	if (fgets(line, sizeof(line), stdin) == NULL) {
+		;
+	}
+	D_INFO("Parsing runstate done\n");
+	return true;
+
+fail:
+	D_ERR("Parsing runstate failed\n");
 	return false;
 }
 
@@ -1246,6 +1303,8 @@ static struct ctdbd_context *ctdbd_setup(TALLOC_CTX *mem_ctx,
 		goto fail;
 	}
 
+	ctdb->runstate = CTDB_RUNSTATE_RUNNING;
+
 	while (fgets(line, sizeof(line), stdin) != NULL) {
 		char *t;
 
@@ -1268,6 +1327,8 @@ static struct ctdbd_context *ctdbd_setup(TALLOC_CTX *mem_ctx,
 			status = reclock_parse(ctdb);
 		} else if (strcmp(line, "CONTROLFAILS") == 0) {
 			status = control_failures_parse(ctdb);
+		} else if (strcmp(line, "RUNSTATE") == 0) {
+			status = runstate_parse(ctdb);
 		} else {
 			fprintf(stderr, "Unknown line %s\n", line);
 			status = false;
@@ -1288,7 +1349,6 @@ static struct ctdbd_context *ctdbd_setup(TALLOC_CTX *mem_ctx,
 	ctdb->recovery_end_time = tevent_timeval_current();
 
 	ctdb->log_level = DEBUG_ERR;
-	ctdb->runstate = CTDB_RUNSTATE_RUNNING;
 
 	ctdb_tunable_set_defaults(&ctdb->tun_list);
 

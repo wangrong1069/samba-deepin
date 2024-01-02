@@ -247,7 +247,9 @@
 		talloc_free(pac_data);
 		return ENOMEM;
 	}
-	nt_status = auth_convert_user_info_dc_saminfo3(LOGON_INFO, user_info_dc, &sam3);
+	nt_status = auth_convert_user_info_dc_saminfo3(LOGON_INFO, user_info_dc,
+						       AUTH_INCLUDE_RESOURCE_GROUPS,
+						       &sam3, NULL);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DEBUG(1, ("Getting Samba info failed: %s\n", nt_errstr(nt_status)));
 		talloc_free(pac_data);
@@ -283,7 +285,7 @@
 }
 
 static krb5_error_code kerberos_pac_buffer_present(krb5_context context,
-						   const krb5_pac pac,
+						   const krb5_const_pac pac,
 						   uint32_t type)
 {
 #ifdef SAMBA4_USES_HEIMDAL
@@ -305,11 +307,13 @@ static krb5_error_code kerberos_pac_buffer_present(krb5_context context,
 }
 
 krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
-					     krb5_pac pac,
+					     krb5_const_pac pac,
 					     krb5_context context,
 					     struct auth_user_info_dc **user_info_dc,
+					     const enum auth_group_inclusion group_inclusion,
 					     struct PAC_SIGNATURE_DATA *pac_srv_sig,
-					     struct PAC_SIGNATURE_DATA *pac_kdc_sig)
+					     struct PAC_SIGNATURE_DATA *pac_kdc_sig,
+					     struct PAC_DOMAIN_GROUP_MEMBERSHIP **resource_groups)
 {
 	NTSTATUS nt_status;
 	enum ndr_err_code ndr_err;
@@ -339,7 +343,11 @@ krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
 
 	pac_logon_info_in = data_blob_const(k5pac_logon_info_in.data, k5pac_logon_info_in.length);
 
-	ndr_err = ndr_pull_union_blob(&pac_logon_info_in, tmp_ctx, &info,
+	/*
+	 * Allocate this structure on mem_ctx so we can return its resource
+	 * groups to the caller.
+	 */
+	ndr_err = ndr_pull_union_blob(&pac_logon_info_in, mem_ctx, &info,
 				      PAC_TYPE_LOGON_INFO,
 				      (ndr_pull_flags_fn_t)ndr_pull_PAC_INFO);
 	smb_krb5_free_data_contents(context, &k5pac_logon_info_in);
@@ -385,10 +393,11 @@ krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
 		upn_dns_info = &_upn_dns_info.upn_dns_info;
 	}
 
-	/* Pull this right into the normal auth sysstem structures */
+	/* Pull this right into the normal auth system structures */
 	nt_status = make_user_info_dc_pac(mem_ctx,
 					 info.logon_info.info,
 					 upn_dns_info,
+					 group_inclusion,
 					 &user_info_dc_out);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		DBG_ERR("make_user_info_dc_pac() failed -%s\n",
@@ -416,7 +425,7 @@ krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
 		smb_krb5_free_data_contents(context, &k5pac_srv_checksum_in);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 			nt_status = ndr_map_error2ntstatus(ndr_err);
-			DEBUG(0,("can't parse the KDC signature: %s\n",
+			DEBUG(0,("can't parse the server signature: %s\n",
 				 nt_errstr(nt_status)));
 			return EINVAL;
 		}
@@ -441,6 +450,16 @@ krb5_error_code kerberos_pac_to_user_info_dc(TALLOC_CTX *mem_ctx,
 				 nt_errstr(nt_status)));
 			return EINVAL;
 		}
+	}
+
+	/*
+	 * If we have resource groups and the caller wants them returned, we
+	 * oblige.
+	 */
+	if (resource_groups != NULL &&
+	    info.logon_info.info->resource_groups.groups.count != 0)
+	{
+		*resource_groups = &info.logon_info.info->resource_groups;
 	}
 
 	/*
@@ -487,7 +506,14 @@ NTSTATUS kerberos_pac_blob_to_user_info_dc(TALLOC_CTX *mem_ctx,
 	}
 
 
-	ret = kerberos_pac_to_user_info_dc(mem_ctx, pac, context, user_info_dc, pac_srv_sig, pac_kdc_sig);
+	ret = kerberos_pac_to_user_info_dc(mem_ctx,
+					   pac,
+					   context,
+					   user_info_dc,
+					   AUTH_INCLUDE_RESOURCE_GROUPS,
+					   pac_srv_sig,
+					   pac_kdc_sig,
+					   NULL);
 	krb5_pac_free(context, pac);
 	if (ret) {
 		return map_nt_error_from_unix_common(ret);

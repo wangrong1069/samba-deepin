@@ -290,11 +290,7 @@ bool is_ntfs_stream_smb_fname(const struct smb_filename *smb_fname)
 {
 	assert_valid_stream_smb_fname(smb_fname);
 
-	if (smb_fname->stream_name == NULL) {
-		return false;
-	}
-
-	return true;
+	return (smb_fname->stream_name != NULL);
 }
 
 /****************************************************************************
@@ -341,7 +337,7 @@ bool is_ntfs_default_stream_smb_fname(const struct smb_filename *smb_fname)
  Filter out Windows invalid EA names (list probed from Windows 2012).
 ****************************************************************************/
 
-static char bad_ea_name_chars[] = "\"*+,/:;<=>?[\\]|";
+static const char bad_ea_name_chars[] = "\"*+,/:;<=>?[\\]|";
 
 bool is_invalid_windows_ea_name(const char *name)
 {

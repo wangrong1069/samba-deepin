@@ -46,29 +46,7 @@ typedef uintptr_t (*heim_type_hash)(void *);
 typedef heim_string_t (*heim_type_description)(void *);
 
 typedef struct heim_type_data *heim_type_t;
-
-enum {
-    HEIM_TID_NUMBER = 0,
-    HEIM_TID_NULL = 1,
-    HEIM_TID_BOOL = 2,
-    HEIM_TID_TAGGED_UNUSED2 = 3, /* reserved for tagged object types */
-    HEIM_TID_TAGGED_UNUSED3 = 4, /* reserved for tagged object types */
-    HEIM_TID_TAGGED_UNUSED4 = 5, /* reserved for tagged object types */
-    HEIM_TID_TAGGED_UNUSED5 = 6, /* reserved for tagged object types */
-    HEIM_TID_TAGGED_UNUSED6 = 7, /* reserved for tagged object types */
-    HEIM_TID_MEMORY = 128,
-    HEIM_TID_ARRAY = 129,
-    HEIM_TID_DICT = 130,
-    HEIM_TID_STRING = 131,
-    HEIM_TID_AUTORELEASE = 132,
-    HEIM_TID_ERROR = 133,
-    HEIM_TID_DATA = 134,
-    HEIM_TID_DB = 135,
-    HEIM_TID_PA_AUTH_MECH = 136,
-    HEIM_TID_PAC = 137,
-    HEIM_TID_USER = 255
-
-};
+typedef const struct heim_type_data *heim_const_type_t;
 
 struct heim_type_data {
     heim_tid_t tid;
@@ -81,7 +59,7 @@ struct heim_type_data {
     heim_type_description desc;
 };
 
-heim_type_t _heim_get_isa(heim_object_t);
+heim_const_type_t _heim_get_isa(heim_object_t);
 
 heim_type_t
 _heim_create_type(const char *name,
@@ -93,7 +71,7 @@ _heim_create_type(const char *name,
 		  heim_type_description desc);
 
 heim_object_t
-_heim_alloc_object(heim_type_t type, size_t size);
+_heim_alloc_object(heim_const_type_t type, size_t size);
 
 void *
 _heim_get_isaextra(heim_object_t o, size_t idx);

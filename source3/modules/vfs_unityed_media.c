@@ -614,10 +614,8 @@ err:
  * End of data: return NULL
  * Failure: set errno, return NULL
  */
-static struct dirent *um_readdir(vfs_handle_struct *handle,
-				 struct files_struct *dirfsp,
-				 DIR *dirp,
-				 SMB_STRUCT_STAT *sbuf)
+static struct dirent *
+um_readdir(vfs_handle_struct *handle, struct files_struct *dirfsp, DIR *dirp)
 {
 	um_dirinfo_struct* dirInfo = (um_dirinfo_struct*)dirp;
 	struct dirent *d = NULL;
@@ -633,7 +631,7 @@ static struct dirent *um_readdir(vfs_handle_struct *handle,
 		   dirInfo->clientSubDirname));
 
 	if (!dirInfo->isInMediaFiles) {
-		return SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream, sbuf);
+		return SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream);
 	}
 
 	do {
@@ -644,7 +642,7 @@ static struct dirent *um_readdir(vfs_handle_struct *handle,
 		uintmax_t number;
 
 		skip = false;
-		d = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream, sbuf);
+		d = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream);
 
 		if (d == NULL) {
 			break;
@@ -710,23 +708,6 @@ static struct dirent *um_readdir(vfs_handle_struct *handle,
 err:
 	TALLOC_FREE(dirInfo);
 	return NULL;
-}
-
-static void um_seekdir(vfs_handle_struct *handle,
-		       DIR *dirp,
-		       long offset)
-{
-	DEBUG(10, ("Entering and leaving um_seekdir\n"));
-	SMB_VFS_NEXT_SEEKDIR(handle,
-			     ((um_dirinfo_struct*)dirp)->dirstream, offset);
-}
-
-static long um_telldir(vfs_handle_struct *handle,
-		       DIR *dirp)
-{
-	DEBUG(10, ("Entering and leaving um_telldir\n"));
-	return SMB_VFS_NEXT_TELLDIR(handle,
-				    ((um_dirinfo_struct*)dirp)->dirstream);
 }
 
 static void um_rewinddir(vfs_handle_struct *handle,
@@ -798,8 +779,7 @@ static int um_openat(struct vfs_handle_struct *handle,
 		     const struct files_struct *dirfsp,
 		     const struct smb_filename *smb_fname,
 		     struct files_struct *fsp,
-		     int flags,
-		     mode_t mode)
+		     const struct vfs_open_how *how)
 {
 	struct smb_filename *client_fname = NULL;
 	int ret;
@@ -812,8 +792,7 @@ static int um_openat(struct vfs_handle_struct *handle,
 					   dirfsp,
 					   smb_fname,
 					   fsp,
-					   flags,
-					   mode);
+					   how);
 	}
 
 	if (alloc_get_client_smb_fname(handle, talloc_tos(),
@@ -840,8 +819,7 @@ static int um_openat(struct vfs_handle_struct *handle,
 				  dirfsp,
 				  client_fname,
 				  fsp,
-				  flags,
-				  mode);
+				  how);
 err:
 	TALLOC_FREE(client_fname);
 	DEBUG(10, ("Leaving with smb_fname->base_name '%s'\n",
@@ -851,6 +829,7 @@ err:
 
 static NTSTATUS um_create_file(vfs_handle_struct *handle,
 			       struct smb_request *req,
+			       struct files_struct *dirfsp,
 			       struct smb_filename *smb_fname,
 			       uint32_t access_mask,
 			       uint32_t share_access,
@@ -878,6 +857,7 @@ static NTSTATUS um_create_file(vfs_handle_struct *handle,
 		return SMB_VFS_NEXT_CREATE_FILE(
 			handle,
 			req,
+			dirfsp,
 			smb_fname,
 			access_mask,
 			share_access,
@@ -912,6 +892,7 @@ static NTSTATUS um_create_file(vfs_handle_struct *handle,
 	status = SMB_VFS_NEXT_CREATE_FILE(
 		handle,
 		req,
+		dirfsp,
 		client_fname,
 		access_mask,
 		share_access,
@@ -1516,8 +1497,6 @@ static struct vfs_fn_pointers vfs_um_fns = {
 
 	.fdopendir_fn = um_fdopendir,
 	.readdir_fn = um_readdir,
-	.seekdir_fn = um_seekdir,
-	.telldir_fn = um_telldir,
 	.rewind_dir_fn = um_rewinddir,
 	.mkdirat_fn = um_mkdirat,
 	.closedir_fn = um_closedir,

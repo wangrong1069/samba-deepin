@@ -45,10 +45,14 @@ def remove_sysvol_references(samdb, logger, dc_name):
 
         # This is verbose, but it is the safe, escape-proof way
         # to add a base and add an arbitrary RDN.
-        if dn.add_base(samdb.get_config_basedn()) == False:
+        try:
+            dn.add_base(samdb.get_config_basedn())
+        except ldb.LdbError:
             raise DemoteException("Failed constructing DN %s by adding base %s"
                                   % (dn, samdb.get_config_basedn()))
-        if dn.add_child("CN=X") == False:
+        try:
+            dn.add_child("CN=X")
+        except ldb.LdbError:
             raise DemoteException("Failed constructing DN %s by adding child CN=X"
                                   % (dn))
         dn.set_component(0, "CN", dc_name)
@@ -68,10 +72,14 @@ def remove_sysvol_references(samdb, logger, dc_name):
         # This is verbose, but it is the safe, escape-proof way
         # to add a base and add an arbitrary RDN.
         dn = ldb.Dn(samdb, s)
-        if dn.add_base(samdb.get_default_basedn()) == False:
+        try:
+            dn.add_base(samdb.get_default_basedn())
+        except ldb.LdbError:
             raise DemoteException("Failed constructing DN %s by adding base %s"
                                   % (dn, samdb.get_default_basedn()))
-        if dn.add_child("CN=X") == False:
+        try:
+            dn.add_child("CN=X")
+        except ldb.LdbError:
             raise DemoteException("Failed constructing DN %s by adding child "
                                   "CN=X (soon to be CN=%s)" % (dn, dc_name))
         dn.set_component(0, "CN", dc_name)
@@ -122,7 +130,7 @@ def remove_dns_references(samdb, logger, dnsHostName, ignore_no_name=False):
     # default.  This is by default all the partitions of type
     # domainDNS.  By finding the canocial name of all the partitions,
     # we find the likely candidates.  We only remove the record if it
-    # maches the IP that was used by the dnsHostName.  This avoids us
+    # matches the IP that was used by the dnsHostName.  This avoids us
     # needing to look a the dns_update_list file from in the demote
     # script.
 
@@ -405,7 +413,6 @@ def remove_dc(samdb, logger, dc_name):
 
         ntds_dn = ldb.Dn(samdb, "CN=NTDS Settings")
         ntds_dn.add_base(server_dn)
-        pass
 
     # Confirm this is really an ntdsDSA object
     try:
@@ -415,14 +422,13 @@ def remove_dc(samdb, logger, dc_name):
         (enum, estr) = e7.args
         if enum == ldb.ERR_NO_SUCH_OBJECT:
             ntds_msgs = []
-            pass
         else:
             samdb.transaction_cancel()
             raise DemoteException(
                 "Failure checking if %s is an NTDS DSA in %s: %s" %
                 (ntds_dn, samdb.domain_dns_name(), estr))
 
-    # If the NTDS Settings child DN wasn't found or wasnt an ntdsDSA
+    # If the NTDS Settings child DN wasn't found or wasn't an ntdsDSA
     # object, just remove the server object located above
     if (len(ntds_msgs) == 0):
         if server_dn is None:

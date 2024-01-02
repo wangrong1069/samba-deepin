@@ -654,7 +654,7 @@ static bool test_analyse_objects(struct torture_context *tctx,
 					ndr_err = ndr_pull_struct_blob(&plain_data, ptr,
 								       ptr, pull_fn);
 					if (NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-						ndr_print_debug(print_fn, name, ptr);
+						(void)ndr_print_debug(1, print_fn, name, ptr, __location__, __func__);
 					} else {
 						DEBUG(0, ("Failed to decode %s\n", name));
 					}
@@ -859,7 +859,7 @@ static bool test_GetNCChanges(struct torture_context *tctx,
 				ctr6 = &r.out.ctr->ctr7.ctr.mszip6.ts->ctr6;
 			} else if (ret == true && *r.out.level_out == 7
 				   && r.out.ctr->ctr7.level == 6
-				   && r.out.ctr->ctr7.type == DRSUAPI_COMPRESSION_TYPE_XPRESS
+				   && r.out.ctr->ctr7.type == DRSUAPI_COMPRESSION_TYPE_WIN2K3_LZ77_DIRECT2
 				   && r.out.ctr->ctr7.ctr.xpress6.ts) {
 				out_level = 6;
 				ctr6 = &r.out.ctr->ctr7.ctr.xpress6.ts->ctr6;

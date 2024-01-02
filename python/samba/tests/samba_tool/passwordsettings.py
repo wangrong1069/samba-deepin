@@ -255,7 +255,7 @@ class PwdSettingsCmdTestCase(SambaToolCmdTest):
                                                  "pso", "delete"), pso_name,
                                                  "-H", self.server,
                                                  self.user_auth)
-        self.assertCmdFail(result, "Deleteing a non-existent PSO should fail")
+        self.assertCmdFail(result, "Deleting a non-existent PSO should fail")
         self.assertIn("Unable to find PSO", err)
 
     def check_pso_applied(self, user, pso):
@@ -459,7 +459,7 @@ class PwdSettingsCmdTestCase(SambaToolCmdTest):
         self.assertCmdSuccess(result, out, err)
         self.assertEqual(err, "", "Shouldn't be any error messages")
         self.assertIn("successful", out)
-        self.assertNotEquals(max_pwd_age, self.ldb.get_maxPwdAge())
+        self.assertNotEqual(max_pwd_age, self.ldb.get_maxPwdAge())
 
         # check we can't set the domain min password age to more than the max
         min_pwd_age = self.ldb.get_minPwdAge()
@@ -481,4 +481,4 @@ class PwdSettingsCmdTestCase(SambaToolCmdTest):
         self.assertCmdSuccess(result, out, err)
         self.assertEqual(err, "", "Shouldn't be any error messages")
         self.assertIn("successful", out)
-        self.assertNotEquals(min_pwd_age, self.ldb.get_minPwdAge())
+        self.assertNotEqual(min_pwd_age, self.ldb.get_minPwdAge())

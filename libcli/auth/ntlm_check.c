@@ -71,7 +71,7 @@ static bool smb_pwd_check_ntlmv1(TALLOC_CTX *mem_ctx,
 	DEBUGADD(100,("Value from encryption was |\n"));
 	dump_data(100, p24, 24);
 #endif
-	ok = (memcmp(p24, nt_response->data, 24) == 0);
+	ok = mem_equal_const_time(p24, nt_response->data, 24);
 	if (!ok) {
 		return false;
 	}
@@ -157,7 +157,7 @@ static bool smb_pwd_check_ntlmv2(TALLOC_CTX *mem_ctx,
 #endif
 	data_blob_clear_free(&client_key_data);
 
-	ok = (memcmp(value_from_encryption, ntv2_response->data, 16) == 0);
+	ok = mem_equal_const_time(value_from_encryption, ntv2_response->data, 16);
 	if (!ok) {
 		return false;
 	}
@@ -259,19 +259,26 @@ static bool smb_sess_key_ntlmv2(TALLOC_CTX *mem_ctx,
 
 NTSTATUS hash_password_check(TALLOC_CTX *mem_ctx,
 			     bool lanman_auth,
+			     enum ntlm_auth_level ntlm_auth,
 			     const struct samr_Password *client_lanman,
 			     const struct samr_Password *client_nt,
 			     const char *username, 
 			     const struct samr_Password *stored_lanman, 
 			     const struct samr_Password *stored_nt)
 {
+	if (ntlm_auth == NTLM_AUTH_DISABLED) {
+		DBG_WARNING("hash_password_check: NTLM authentication not "
+			    "permitted by configuration.\n");
+		return NT_STATUS_NTLM_BLOCKED;
+	}
+
 	if (stored_nt == NULL) {
 		DEBUG(3,("hash_password_check: NO NT password stored for user %s.\n",
 			 username));
 	}
 
 	if (client_nt && stored_nt) {
-		if (memcmp(client_nt->hash, stored_nt->hash, sizeof(stored_nt->hash)) == 0) {
+		if (mem_equal_const_time(client_nt->hash, stored_nt->hash, sizeof(stored_nt->hash))) {
 			return NT_STATUS_OK;
 		} else {
 			DEBUG(3,("hash_password_check: Interactive logon: NT password check failed for user %s\n",
@@ -289,7 +296,7 @@ NTSTATUS hash_password_check(TALLOC_CTX *mem_ctx,
 			return NT_STATUS_NOT_FOUND;
 		}
 
-		if (memcmp(client_lanman->hash, stored_lanman->hash, sizeof(stored_lanman->hash)) == 0) {
+		if (mem_equal_const_time(client_lanman->hash, stored_lanman->hash, sizeof(stored_lanman->hash))) {
 			return NT_STATUS_OK;
 		} else {
 			DEBUG(3,("hash_password_check: Interactive logon: LANMAN password check failed for user %s\n",
@@ -387,6 +394,7 @@ NTSTATUS ntlm_password_check(TALLOC_CTX *mem_ctx,
 		}
 		return hash_password_check(mem_ctx, 
 					   lanman_auth,
+					   ntlm_auth,
 					   lm_ok ? &client_lm : NULL, 
 					   nt_response->length ? &client_nt : NULL, 
 					   username,  

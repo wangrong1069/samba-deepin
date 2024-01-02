@@ -5139,6 +5139,7 @@ static void show_userlist(struct rpc_pipe_client *pipe_hnd,
 	WERROR result;
 	NTSTATUS status;
 	struct smbXcli_tcon *orig_tcon = NULL;
+	char *orig_share = NULL;
 	struct dcerpc_binding_handle *b = pipe_hnd->binding_handle;
 
 	status = dcerpc_srvsvc_NetShareGetInfo(b, mem_ctx,
@@ -5161,14 +5162,11 @@ static void show_userlist(struct rpc_pipe_client *pipe_hnd,
 	}
 
 	if (cli_state_has_tcon(cli)) {
-		orig_tcon = cli_state_save_tcon(cli);
-		if (orig_tcon == NULL) {
-			return;
-		}
+		cli_state_save_tcon_share(cli, &orig_tcon, &orig_share);
 	}
 
 	if (!NT_STATUS_IS_OK(cli_tree_connect(cli, netname, "A:", NULL))) {
-		cli_state_restore_tcon(cli, orig_tcon);
+		cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 		return;
 	}
 
@@ -5211,7 +5209,7 @@ static void show_userlist(struct rpc_pipe_client *pipe_hnd,
 	if (fnum != (uint16_t)-1)
 		cli_close(cli, fnum);
 	cli_tdis(cli);
-	cli_state_restore_tcon(cli, orig_tcon);
+	cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 
 	return;
 }
@@ -5656,7 +5654,7 @@ static int rpc_file_close(struct net_context *c, int argc, const char **argv)
 
 static void display_file_info_3(struct FILE_INFO_3 *r)
 {
-	d_printf("%-7.1d %-20.20s 0x%-4.2x %-6.1d %s\n",
+	d_printf("%-7.1" PRIu32 " %-20.20s 0x%-4.2x %-6.1u %s\n",
 		 r->fi3_id, r->fi3_username, r->fi3_permissions,
 		 r->fi3_num_locks, r->fi3_pathname);
 }
@@ -7500,7 +7498,7 @@ bool net_rpc_check(struct net_context *c, unsigned flags)
 	return ret;
 }
 
-/* syncronise sam database via samsync rpc calls */
+/* synchronise sam database via samsync rpc calls */
 static int rpc_vampire(struct net_context *c, int argc, const char **argv)
 {
 	struct functable func[] = {
@@ -7802,9 +7800,9 @@ int rpc_printer_migrate(struct net_context *c, int argc, const char **argv)
 			"forms",
 			rpc_printer_migrate_forms,
 			NET_TRANSPORT_RPC,
-			N_("Migrate froms to local server"),
+			N_("Migrate forms to local server"),
 			N_("net rpc printer migrate forms\n"
-			   "    Migrate froms to local server")
+			   "    Migrate forms to local server")
 		},
 		{
 			"printers",

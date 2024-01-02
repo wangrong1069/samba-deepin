@@ -108,12 +108,20 @@ class LDAPBase(object):
         return [str(x["cn"][0]) for x in res]
 
     def find_netbios(self):
-        res = self.ldb.search(base="CN=Partitions,%s" % self.config_dn,
-                              scope=SCOPE_SUBTREE, attrs=["nETBIOSName"])
-        assert len(res) > 0
+        try:
+            res = self.ldb.search(base="CN=Partitions,%s" % self.config_dn,
+                                  scope=SCOPE_SUBTREE, attrs=["nETBIOSName"])
+        except LdbError as e:
+            enum, estr = e
+            if estr in ["Operation unavailable without authentication"]:
+                raise CommandError(estr, e)
+
+        if len(res) == 0:
+            raise CommandError("Could not find netbios name")
+
         for x in res:
             if "nETBIOSName" in x:
-                return x["nETBIOSName"][0]
+                return x["nETBIOSName"][0].decode()
 
     def object_exists(self, object_dn):
         res = None
@@ -270,7 +278,7 @@ class Descriptor(object):
             self.dacl_list.sort()
 
     def extract_dacl(self):
-        """ Extracts the DACL as a list of ACE string (with the brakets).
+        """ Extracts the DACL as a list of ACE string (with the brackets).
         """
         try:
             if "S:" in self.sddl:
@@ -279,7 +287,7 @@ class Descriptor(object):
                 res = re.search(r"D:(.*?)(\(.*\))", self.sddl).group(2)
         except AttributeError:
             return []
-        return re.findall("(\(.*?\))", res)
+        return re.findall(r"(\(.*?\))", res)
 
     def fix_sid(self, ace):
         res = "%s" % ace
@@ -459,7 +467,8 @@ class LDAPObject(object):
                 "ipsecISAKMPReference", "ipsecFilterReference",
                 "msDs-masteredBy", "lastSetTime",
                 "ipsecNegotiationPolicyReference", "subRefs", "gPCFileSysPath",
-                "accountExpires", "invocationId", "operatingSystemVersion",
+                "accountExpires", "invocationId",
+                "operatingSystem", "operatingSystemVersion",
                 "oEMInformation", "schemaInfo",
                 # After Exchange preps
                 "targetAddress", "msExchMailboxGuid", "siteFolderGUID"]
@@ -556,7 +565,7 @@ class LDAPObject(object):
         elif self.con.view == "collision":
             res = d1.diff_1(d2)
         else:
-            raise Exception("Unknown --view option value.")
+            raise ValueError(f"Unknown --view option value: {self.con.view}")
         #
         self.screen_output = res[1]
         other.screen_output = res[1]
@@ -587,10 +596,14 @@ class LDAPObject(object):
         for x in self.attributes:
             if x.upper() in self.ignore_attributes or x.upper() in missing_attrs:
                 continue
-            if isinstance(self.attributes[x], list) and isinstance(other.attributes[x], list):
-                self.attributes[x] = sorted(self.attributes[x])
-                other.attributes[x] = sorted(other.attributes[x])
-            if self.attributes[x] != other.attributes[x]:
+            ours = self.attributes[x]
+            theirs = other.attributes.get(x)
+
+            if isinstance(ours, list) and isinstance(theirs, list):
+                ours = sorted(ours)
+                theirs = sorted(theirs)
+
+            if ours != theirs:
                 p = None
                 q = None
                 m = None
@@ -598,17 +611,14 @@ class LDAPObject(object):
                 # First check if the difference can be fixed but shunting the first part
                 # of the DomainHostName e.g. 'mysamba4.test.local' => 'mysamba4'
                 if x.upper() in self.other_attributes:
-                    p = [self.con.domain_name.split(".")[0] == j for j in self.attributes[x]]
-                    q = [other.con.domain_name.split(".")[0] == j for j in other.attributes[x]]
+                    p = [self.con.domain_name.split(".")[0] == j for j in ours]
+                    q = [other.con.domain_name.split(".")[0] == j for j in theirs]
                     if p == q:
                         continue
                 # Attribute values that are list that contain DN based values that may differ
                 elif x.upper() in self.dn_attributes:
-                    m = p
-                    n = q
-                    if not p and not q:
-                        m = self.attributes[x]
-                        n = other.attributes[x]
+                    m = ours
+                    n = theirs
                     p = [self.fix_dn(j) for j in m]
                     q = [other.fix_dn(j) for j in n]
                     if p == q:
@@ -618,8 +628,8 @@ class LDAPObject(object):
                     m = p
                     n = q
                     if not p and not q:
-                        m = self.attributes[x]
-                        n = other.attributes[x]
+                        m = ours
+                        n = theirs
                     p = [self.fix_domain_name(j) for j in m]
                     q = [other.fix_domain_name(j) for j in n]
                     if p == q:
@@ -630,8 +640,8 @@ class LDAPObject(object):
                     m = p
                     n = q
                     if not p and not q:
-                        m = self.attributes[x]
-                        n = other.attributes[x]
+                        m = ours
+                        n = theirs
                     p = [self.fix_server_name(j) for j in m]
                     q = [other.fix_server_name(j) for j in n]
                     if p == q:
@@ -642,8 +652,8 @@ class LDAPObject(object):
                     m = p
                     n = q
                     if not p and not q:
-                        m = self.attributes[x]
-                        n = other.attributes[x]
+                        m = ours
+                        n = theirs
                     p = [self.fix_domain_netbios(j) for j in m]
                     q = [other.fix_domain_netbios(j) for j in n]
                     if p == q:
@@ -655,7 +665,7 @@ class LDAPObject(object):
                 if p and q:
                     res += 8 * " " + x + " => \n%s\n%s" % (p, q) + "\n"
                 else:
-                    res += 8 * " " + x + " => \n%s\n%s" % (self.attributes[x], other.attributes[x]) + "\n"
+                    res += 8 * " " + x + " => \n%s\n%s" % (ours, theirs) + "\n"
                 self.df_value_attrs.append(x)
         #
         if missing_attrs:
@@ -867,7 +877,7 @@ class cmd_ldapcmp(Command):
         Option("-v", "--verbose", dest="verbose", action="store_true", default=False,
                help="Print all DN pairs that have been compared"),
         Option("--sd", dest="descriptor", action="store_true", default=False,
-               help="Compare nTSecurityDescriptor attibutes only"),
+               help="Compare nTSecurityDescriptor attributes only"),
         Option("--sort-aces", dest="sort_aces", action="store_true", default=False,
                help="Sort ACEs before comparison of nTSecurityDescriptor attribute"),
         Option("--view", dest="view", default="section", choices=["section", "collision"],
@@ -879,7 +889,7 @@ class cmd_ldapcmp(Command):
         Option("--scope", dest="scope", default="SUB", choices=["SUB", "ONE", "BASE"],
                help="Pass search scope that builds DN list. Options: SUB, ONE, BASE"),
         Option("--filter", dest="filter", default="",
-               help="List of comma separated attributes to ignore in the comparision"),
+               help="List of comma separated attributes to ignore in the comparison"),
         Option("--skip-missing-dn", dest="skip_missing_dn", action="store_true", default=False,
                help="Skip report and failure due to missing DNs in one server or another"),
     ]

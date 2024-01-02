@@ -45,7 +45,7 @@
  *                          size of the file before transferring it. With this
  *                          option, we remember that hint, and commit after
  *                          writing in that file position. If the client
- *                          doesn't declare the size of file, commiting on EOF 
+ *                          doesn't declare the size of file, committing on EOF
  *                          is not triggered.
  *
  *          = growth        Commits after a write operation has made the file
@@ -181,8 +181,7 @@ static int commit_openat(struct vfs_handle_struct *handle,
 			 const struct files_struct *dirfsp,
 			 const struct smb_filename *smb_fname,
 			 files_struct *fsp,
-			 int flags,
-			 mode_t mode)
+			 const struct vfs_open_how *how)
 {
         off_t dthresh;
 	const char *eof_mode;
@@ -190,13 +189,12 @@ static int commit_openat(struct vfs_handle_struct *handle,
         int fd;
 
         /* Don't bother with read-only files. */
-        if ((flags & O_ACCMODE) == O_RDONLY) {
+        if ((how->flags & O_ACCMODE) == O_RDONLY) {
                 return SMB_VFS_NEXT_OPENAT(handle,
 					   dirfsp,
 					   smb_fname,
 					   fsp,
-					   flags,
-					   mode);
+					   how);
         }
 
         /* Read and check module configuration */
@@ -226,7 +224,7 @@ static int commit_openat(struct vfs_handle_struct *handle,
                 }
         }
 
-        fd = SMB_VFS_NEXT_OPENAT(handle, dirfsp, smb_fname, fsp, flags, mode);
+	fd = SMB_VFS_NEXT_OPENAT(handle, dirfsp, smb_fname, fsp, how);
 	if (fd == -1) {
 		VFS_REMOVE_FSP_EXTENSION(handle, fsp);
 		return fd;

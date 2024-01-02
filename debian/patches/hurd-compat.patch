@@ -1,0 +1,43 @@
+Subject: hurd compatibility changes
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Thu, 03 Nov 2022 20:49:33 +0300
+
+Hurd does not define PIPE_BUF, so lib/tevent/testsuite.c fails to compile
+(yes, this file is used as part of *samba* testsuite, not tevent testsuite).
+Define it to a safe minimal value like 512 bytes.
+
+Hurd does not provide SA_NOCLDWAIT define, so lib/util/tests/tfork.c does
+not compile. This is only needed during testing to omit zombie process
+generation, which has only cosmetic effect.  Define it to be 0.
+
+Based on prior work and ideas by Samuel Thibault.
+
+diff --git a/lib/tevent/testsuite.c b/lib/tevent/testsuite.c
+index 492b8807996..0bbfc2ed280 100644
+--- a/lib/tevent/testsuite.c
++++ b/lib/tevent/testsuite.c
+@@ -36,6 +36,10 @@
+ #include "system/threads.h"
+ #include <assert.h>
+ #endif
++#include <limits.h>
++#ifndef PIPE_BUF /* eg hurd does not define it */
++# define PIPE_BUF 512 /* a safe bet */
++#endif
+ 
+ static struct tevent_context *
+ test_tevent_context_init(TALLOC_CTX *mem_ctx)
+diff --git a/lib/util/tests/tfork.c b/lib/util/tests/tfork.c
+index 70ae97583fc..72288e03abb 100644
+--- a/lib/util/tests/tfork.c
++++ b/lib/util/tests/tfork.c
+@@ -33,6 +33,9 @@
+ #ifdef HAVE_PTHREAD
+ #include <pthread.h>
+ #endif
++#ifndef SA_NOCLDWAIT
++#define SA_NOCLDWAIT 0
++#endif
+ 
+ static bool test_tfork_simple(struct torture_context *tctx)
+ {

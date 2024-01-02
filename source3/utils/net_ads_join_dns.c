@@ -56,6 +56,11 @@ static NTSTATUS net_update_dns_internal(struct net_context *c,
 	fstring dns_server;
 	const char *dnsdomain = NULL;
 	char *root_domain = NULL;
+	uint32_t ttl = 3600;
+
+	if (c->opt_dns_ttl > 0) {
+		ttl = MIN(c->opt_dns_ttl, UINT32_MAX);
+	}
 
 	if ( (dnsdomain = strchr_m( machine_name, '.')) == NULL ) {
 		d_printf(_("No DNS domain configured for %s. "
@@ -158,6 +163,7 @@ static NTSTATUS net_update_dns_internal(struct net_context *c,
 		                      addrs,
 				      num_addrs,
 				      flags,
+				      ttl,
 				      remove_host);
 		if (ERR_DNS_IS_OK(dns_err)) {
 			status = NT_STATUS_OK;
@@ -244,6 +250,7 @@ void net_ads_join_dns_updates(struct net_context *c, TALLOC_CTX *ctx, struct lib
 	ADS_STRUCT *ads_dns = NULL;
 	int ret;
 	NTSTATUS status;
+	char *machine_password = NULL;
 
 	/*
 	 * In a clustered environment, don't do dynamic dns updates:
@@ -271,8 +278,11 @@ void net_ads_join_dns_updates(struct net_context *c, TALLOC_CTX *ctx, struct lib
 	 * kinit with the machine password to do dns update.
 	 */
 
-	ads_dns = ads_init(lp_realm(), NULL, r->in.dc_name, ADS_SASL_PLAIN);
-
+	ads_dns = ads_init(ctx,
+			   lp_realm(),
+			   NULL,
+			   r->in.dc_name,
+			   ADS_SASL_PLAIN);
 	if (ads_dns == NULL) {
 		d_fprintf(stderr, _("DNS update failed: out of memory!\n"));
 		goto done;
@@ -280,27 +290,31 @@ void net_ads_join_dns_updates(struct net_context *c, TALLOC_CTX *ctx, struct lib
 
 	use_in_memory_ccache();
 
-	ret = asprintf(&ads_dns->auth.user_name, "%s$", lp_netbios_name());
-	if (ret == -1) {
+	ads_dns->auth.user_name = talloc_asprintf(ads_dns,
+						  "%s$",
+						  lp_netbios_name());
+	if (ads_dns->auth.user_name == NULL) {
 		d_fprintf(stderr, _("DNS update failed: out of memory\n"));
 		goto done;
 	}
 
-	ads_dns->auth.password = secrets_fetch_machine_password(
+	machine_password = secrets_fetch_machine_password(
 		r->out.netbios_domain_name, NULL, NULL);
-	if (ads_dns->auth.password == NULL) {
-		d_fprintf(stderr, _("DNS update failed: out of memory\n"));
-		goto done;
+	if (machine_password != NULL) {
+		ads_dns->auth.password = talloc_strdup(ads_dns,
+						       machine_password);
+		SAFE_FREE(machine_password);
+		if (ads_dns->auth.password == NULL) {
+			d_fprintf(stderr,
+				  _("DNS update failed: out of memory\n"));
+			goto done;
+		}
 	}
 
-	ads_dns->auth.realm = SMB_STRDUP(r->out.dns_domain_name);
+	ads_dns->auth.realm = talloc_asprintf_strupper_m(ads_dns, "%s", r->out.dns_domain_name);
 	if (ads_dns->auth.realm == NULL) {
-		d_fprintf(stderr, _("DNS update failed: out of memory\n"));
-		goto done;
-	}
-
-	if (!strupper_m(ads_dns->auth.realm)) {
-		d_fprintf(stderr, _("strupper_m %s failed\n"), ads_dns->auth.realm);
+		d_fprintf(stderr, _("talloc_asprintf_strupper_m %s failed\n"),
+				  ads_dns->auth.realm);
 		goto done;
 	}
 
@@ -319,7 +333,7 @@ void net_ads_join_dns_updates(struct net_context *c, TALLOC_CTX *ctx, struct lib
 	}
 
 done:
-	ads_destroy(&ads_dns);
+	TALLOC_FREE(ads_dns);
 #endif
 
 	return;

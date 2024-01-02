@@ -169,17 +169,18 @@ static void reset_connections_capture_tcp_handler(struct tevent_context *ev,
 				       &conn.server, &conn.client,
 				       &ack_seq, &seq, &rst, &window);
 	if (ret != 0) {
-		/* probably a non-tcp ACK packet */
+		/* Not a TCP-ACK?  Unexpected protocol? */
+		DBG_DEBUG("Failed to parse packet, errno=%d\n", ret);
 		return;
 	}
 
 	if (window == htons(1234) && (rst || seq == 0)) {
 		/* Ignore packets that we sent! */
-		D_DEBUG("Ignoring packet: %s, "
-			"seq=%"PRIu32", ack_seq=%"PRIu32", "
-			"rst=%d, window=%"PRIu16"\n",
-			ctdb_connection_to_string(state, &conn, false),
-			seq, ack_seq, rst, ntohs(window));
+		DBG_DEBUG("Ignoring sent packet: %s, "
+			  "seq=%"PRIu32", ack_seq=%"PRIu32", "
+			  "rst=%d, window=%"PRIu16"\n",
+			  ctdb_connection_to_string(state, &conn, false),
+			  seq, ack_seq, rst, ntohs(window));
 		return;
 	}
 
@@ -197,7 +198,7 @@ static void reset_connections_capture_tcp_handler(struct tevent_context *ev,
 		return;
 	}
 
-	D_INFO("Sending a TCP RST to for connection %s\n",
+	D_INFO("Sending a TCP RST for connection %s\n",
 	       ctdb_connection_to_string(state, &conn, true));
 
 	ret = ctdb_sys_send_tcp(&conn.server, &conn.client, ack_seq, seq, 1);
@@ -290,8 +291,8 @@ static int reset_connections_tickle_connection(
 		return 1;
 	}
 
-	DBG_DEBUG("Sending tickle ACK for connection '%s'\n",
-		  ctdb_connection_to_string(state, conn, true));
+	DBG_INFO("Sending tickle ACK for connection '%s'\n",
+		 ctdb_connection_to_string(state, conn, true));
 	ret = ctdb_sys_send_tcp(&conn->server, &conn->client, 0, 0, 0);
 	if (ret != 0) {
 		DBG_ERR("Error sending tickle ACK\n");

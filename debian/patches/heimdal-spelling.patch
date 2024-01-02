@@ -1,0 +1,139 @@
+From: Michael Tokarev <mjt@tls.msk.ru>
+Subject: Heimdal: spelling fixes (underun prefered relase encyption confunder)
+
+diff --git a/third_party/heimdal/lib/asn1/asn1_err.et b/third_party/heimdal/lib/asn1/asn1_err.et
+index ac7a9ebaa52..dc08a86cf30 100644
+--- a/third_party/heimdal/lib/asn1/asn1_err.et
++++ b/third_party/heimdal/lib/asn1/asn1_err.et
+@@ -25,3 +25,3 @@ error_code EXACT_CONSTRAINT,	"ASN.1 wrong number of elements"
+ error_code INDEF_OVERRUN,   	"ASN.1 BER indefinte encoding overrun"
+-error_code INDEF_UNDERRUN,   	"ASN.1 BER indefinte encoding underun"
++error_code INDEF_UNDERRUN,   	"ASN.1 BER indefinte encoding underrun"
+ error_code GOT_BER,		"ASN.1 got BER encoded when expected DER"
+diff --git a/third_party/heimdal/lib/asn1/asn1_print.c b/third_party/heimdal/lib/asn1/asn1_print.c
+index 40c37fbbb94..d65116d4379 100644
+--- a/third_party/heimdal/lib/asn1/asn1_print.c
++++ b/third_party/heimdal/lib/asn1/asn1_print.c
+@@ -568,3 +568,3 @@ dotype(unsigned char *buf, size_t len, char **argv, size_t *size)
+             errx(1, "Could not decode and print data as type %s: "
+-                 "BER indefinte encoding underun", typename);
++                 "BER indefinte encoding underrun", typename);
+         case ASN1_GOT_BER:
+diff --git a/third_party/heimdal/lib/base/heimbase.c b/third_party/heimdal/lib/base/heimbase.c
+index 1e6805a25e7..b5f325f9c8d 100644
+--- a/third_party/heimdal/lib/base/heimbase.c
++++ b/third_party/heimdal/lib/base/heimbase.c
+@@ -691,3 +691,3 @@ heim_auto_release(heim_object_t ptr)
+     if (tls == NULL || (ar = tls->current) == NULL)
+-	heim_abort("no auto relase pool in place, would leak");
++	heim_abort("no auto release pool in place, would leak");
+ 
+diff --git a/third_party/heimdal/lib/gssapi/spnego/accept_sec_context.c b/third_party/heimdal/lib/gssapi/spnego/accept_sec_context.c
+index c4ac7455cf6..7a211900fd3 100644
+--- a/third_party/heimdal/lib/gssapi/spnego/accept_sec_context.c
++++ b/third_party/heimdal/lib/gssapi/spnego/accept_sec_context.c
+@@ -749,3 +749,3 @@ acceptor_start
+ 				       *minor_status,
+-				       "SPNEGO acceptor didn't find a prefered mechanism");
++				       "SPNEGO acceptor didn't find a preferred mechanism");
+     }
+diff --git a/third_party/heimdal/lib/hx509/cert.c b/third_party/heimdal/lib/hx509/cert.c
+index 3dda886edc5..b27282de8c5 100644
+--- a/third_party/heimdal/lib/hx509/cert.c
++++ b/third_party/heimdal/lib/hx509/cert.c
+@@ -1449,3 +1449,3 @@ _hx509_calculate_path(hx509_context context,
+ 	    hx509_set_error_string(context, 0, HX509_PATH_TOO_LONG,
+-				   "Path too long while bulding "
++				   "Path too long while building "
+ 				   "certificate chain");
+diff --git a/third_party/heimdal/lib/hx509/hx509_err.et b/third_party/heimdal/lib/hx509/hx509_err.et
+index db81f5d294b..1eca18e043e 100644
+--- a/third_party/heimdal/lib/hx509/hx509_err.et
++++ b/third_party/heimdal/lib/hx509/hx509_err.et
+@@ -64,4 +64,4 @@ error_code NO_PROMPTER, "No prompter function defined"
+ error_code SIGNATURE_WITHOUT_SIGNER, "Signature requires signer, but none available"
+-error_code RSA_PUBLIC_ENCRYPT, "RSA public encyption failed"
+-error_code RSA_PRIVATE_ENCRYPT, "RSA private encyption failed"
++error_code RSA_PUBLIC_ENCRYPT, "RSA public encryption failed"
++error_code RSA_PRIVATE_ENCRYPT, "RSA private encryption failed"
+ error_code RSA_PUBLIC_DECRYPT, "RSA public decryption failed"
+diff --git a/third_party/heimdal/lib/krb5/crypto.c b/third_party/heimdal/lib/krb5/crypto.c
+index 2fb4f0620f7..0da3071361a 100644
+--- a/third_party/heimdal/lib/krb5/crypto.c
++++ b/third_party/heimdal/lib/krb5/crypto.c
+@@ -1228,3 +1228,3 @@ decrypt_internal_derived(krb5_context context,
+ 			       N_("Encrypted data shorter then "
+-				  "checksum + confunder", ""));
++				  "checksum + confounder", ""));
+ 	return KRB5_BAD_MSIZE;
+@@ -1307,3 +1307,3 @@ decrypt_internal_enc_then_cksum(krb5_context context,
+ 			       N_("Encrypted data shorter then "
+-				  "checksum + confunder", ""));
++				  "checksum + confounder", ""));
+ 	return KRB5_BAD_MSIZE;
+@@ -1393,3 +1393,3 @@ decrypt_internal(krb5_context context,
+ 			       N_("Encrypted data shorter then "
+-				  "checksum + confunder", ""));
++				  "checksum + confounder", ""));
+ 	return KRB5_BAD_MSIZE;
+@@ -1459,3 +1459,3 @@ decrypt_internal_special(krb5_context context,
+ 			       N_("Encrypted data shorter then "
+-				  "checksum + confunder", ""));
++				  "checksum + confounder", ""));
+ 	return KRB5_BAD_MSIZE;
+diff --git a/third_party/heimdal/lib/sqlite/sqlite3.c b/third_party/heimdal/lib/sqlite/sqlite3.c
+index de55858cb0f..7aaed45e977 100644
+--- a/third_party/heimdal/lib/sqlite/sqlite3.c
++++ b/third_party/heimdal/lib/sqlite/sqlite3.c
+@@ -95908,3 +95908,3 @@ static int vdbeSorterFlushPMA(VdbeSorter *pSorter){
+   ** fall back to using the final sub-task. The first (pSorter->nTask-1)
+-  ** sub-tasks are prefered as they use background threads - the final
++  ** sub-tasks are preferred as they use background threads - the final
+   ** sub-task uses the main thread. */
+diff --git a/third_party/heimdal/po/heim_com_err569856/de.po b/third_party/heimdal/po/heim_com_err569856/de.po
+index 5e6ace5d766..ba2dbf6e93d 100644
+--- a/third_party/heimdal/po/heim_com_err569856/de.po
++++ b/third_party/heimdal/po/heim_com_err569856/de.po
+@@ -275,3 +275,3 @@ msgstr "Signatur erfordert Unterzeichner, aber keiner verfügbar"
+ #: ../lib/hx509/hx509_err.c:84 ../lib/hx509/hx509_err.c:85
+-msgid "RSA public encyption failed"
++msgid "RSA public encryption failed"
+ msgstr "RSA-Verschlüsselung mit öffentlichem Schlüssel fehlgeschlagen"
+diff --git a/third_party/heimdal/po/heim_com_err569856/heim_com_err569856.pot b/third_party/heimdal/po/heim_com_err569856/heim_com_err569856.pot
+index 2913f6bcb9c..2305f21a962 100644
+--- a/third_party/heimdal/po/heim_com_err569856/heim_com_err569856.pot
++++ b/third_party/heimdal/po/heim_com_err569856/heim_com_err569856.pot
+@@ -269,3 +269,3 @@ msgstr ""
+ #: ../lib/hx509/hx509_err.c:84 ../lib/hx509/hx509_err.c:85
+-msgid "RSA public encyption failed"
++msgid "RSA public encryption failed"
+ msgstr ""
+diff --git a/third_party/heimdal/po/heimdal_krb5/de.po b/third_party/heimdal/po/heimdal_krb5/de.po
+index e7e8a1deaed..a846e4b7ece 100644
+--- a/third_party/heimdal/po/heimdal_krb5/de.po
++++ b/third_party/heimdal/po/heimdal_krb5/de.po
+@@ -327,5 +327,4 @@ msgstr "Prüfsummentyp %s ist deaktiviert."
+ 
+-# FIXME: s/confunder/confounder/
+ #: lib/krb5/crypto.c:2958
+-msgid "Encrypted data shorter then checksum + confunder"
++msgid "Encrypted data shorter then checksum + confounder"
+ msgstr "verschlüsselte Daten kürzer als Prüfsumme + Störfaktor"
+diff --git a/third_party/heimdal/po/heimdal_krb5/heimdal_krb5.pot b/third_party/heimdal/po/heimdal_krb5/heimdal_krb5.pot
+index 3edacd2c246..25e1919c063 100644
+--- a/third_party/heimdal/po/heimdal_krb5/heimdal_krb5.pot
++++ b/third_party/heimdal/po/heimdal_krb5/heimdal_krb5.pot
+@@ -551,3 +551,3 @@ msgstr ""
+ #: lib/krb5/crypto.c:2958
+-msgid "Encrypted data shorter then checksum + confunder"
++msgid "Encrypted data shorter then checksum + confounder"
+ msgstr ""
+diff --git a/third_party/heimdal/po/heimdal_krb5/sv_SE.po b/third_party/heimdal/po/heimdal_krb5/sv_SE.po
+index f9721845a0b..79d094172bf 100644
+--- a/third_party/heimdal/po/heimdal_krb5/sv_SE.po
++++ b/third_party/heimdal/po/heimdal_krb5/sv_SE.po
+@@ -542,3 +542,3 @@ msgstr ""
+ #: lib/krb5/crypto.c:2979
+-msgid "Encrypted data shorter then checksum + confunder"
++msgid "Encrypted data shorter then checksum + confounder"
+ msgstr ""

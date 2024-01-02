@@ -66,6 +66,16 @@ conf.CHECK_FUNCS('dirfd', headers='dirent.h')
 conf.CHECK_DECLS('dirfd', reverse=True, headers='dirent.h')
 conf.CHECK_STRUCTURE_MEMBER('DIR', 'dd_fd', define='HAVE_DIR_DD_FD',  headers='dirent.h')
 
+if conf.env['WITH_KERNEL_KEYRING'] != False:
+    require_keyutils = False
+    if conf.env['WITH_KERNEL_KEYRING'] == True:
+        require_keyutils = True
+    conf.CHECK_FUNCS_IN('add_key keyctl_get_persistent',
+                        'keyutils', headers='keyutils.h',
+                        mandatory=require_keyutils)
+    conf.CHECK_SIZEOF('key_serial_t', headers='keyutils.h',
+                      critical=require_keyutils)
+
 heimdal_no_error_flags = ['-Wno-error=discarded-qualifiers',
                           '-Wno-error=cast-qual',
                           '-Wno-error=missing-field-initializers',
@@ -75,7 +85,8 @@ heimdal_no_error_flags = ['-Wno-error=discarded-qualifiers',
                           '-Wno-error=unused-but-set-variable',
                           '-Wno-error=unused-const-variable',
                           '-Wno-error=unused-variable',
-                          '-Wno-error=unused-result']
+                          '-Wno-error=unused-result',
+                          '-Wno-error=old-style-definition']
 for flag in heimdal_no_error_flags:
     conf.ADD_NAMED_CFLAGS('HEIMDAL_NO_ERROR_CFLAGS',
                           flag,
@@ -204,6 +215,8 @@ conf.define('HAVE_KRB5_PROMPT_TYPE', 1)
 
 if conf.CONFIG_SET('USING_EMBEDDED_HEIMDAL'):
     conf.define('HAVE_KRB5_ADDLOG_FUNC_NEED_CONTEXT', 1)
+    conf.define('HAVE_KRB5_CONST_PAC', 1)
+    conf.define('KRB5_CONST_PAC_GET_BUFFER', 1)
 else:
     pass # TODO
 

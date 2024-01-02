@@ -19,7 +19,7 @@ use target::Samba3;
 use Archive::Tar;
 
 sub new($$$$$) {
-	my ($classname, $SambaCtx, $bindir, $srcdir, $server_maxtime) = @_;
+	my ($classname, $SambaCtx, $bindir, $srcdir, $server_maxtime, $default_ldb_backend) = @_;
 
 	my $self = {
 		vars => {},
@@ -27,7 +27,8 @@ sub new($$$$$) {
 		bindir => $bindir,
 		srcdir => $srcdir,
 		server_maxtime => $server_maxtime,
-		target3 => new Samba3($SambaCtx, $bindir, $srcdir, $server_maxtime)
+		target3 => new Samba3($SambaCtx, $bindir, $srcdir, $server_maxtime),
+		default_ldb_backend => $default_ldb_backend,
 	};
 	bless $self;
 	return $self;
@@ -778,10 +779,11 @@ sub provision_raw_step1($$)
 	panic action = $RealBin/gdb_backtrace \%d
 	smbd:suicide mode = yes
 	smbd:FSCTL_SMBTORTURE = yes
+	smbd:validate_oplock_types = yes
 	wins support = yes
 	server role = $ctx->{server_role}
 	server services = +echo $services
-        dcerpc endpoint servers = +winreg +srvsvc
+        dcerpc endpoint servers = +winreg +srvsvc +rpcecho
 	notify:inotify = false
 	ldb:nosync = true
 	ldap server require strong auth = yes
@@ -807,6 +809,9 @@ sub provision_raw_step1($$)
 
         rpc server port:netlogon = 1026
 	include system krb5 conf = no
+
+	debug syslog format = always
+	debug hires timestamp = yes
 
 ";
 
@@ -933,6 +938,7 @@ nogroup:x:65534:nobody
                 GID_RFC2307TEST => $gid_rfc2307test,
                 SERVER_ROLE => $ctx->{server_role},
 	        RESOLV_CONF => $ctx->{resolv_conf},
+		KRB5_CRL_FILE => $crlfile,
 	};
 
 	if (defined($ctx->{use_resolv_wrapper})) {
@@ -1092,7 +1098,7 @@ servicePrincipalName: http/testupnspn.$ctx->{dnsname}
 		return undef;
 	}
 
-	# Create to users alice and bob!
+	# Create two users alice and bob!
 	my $user_account_array = ["alice", "bob", "jane", "joe"];
 
 	foreach my $user_account (@{$user_account_array}) {
@@ -1585,7 +1591,7 @@ sub provision_vampire_dc($$$)
 	$cmd .= "$samba_tool domain join $ret->{CONFIGURATION} $dcvars->{REALM} DC --realm=$dcvars->{REALM}";
 	$cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD} --domain-critical-only";
 	$cmd .= " --machinepass=machine$ret->{PASSWORD}";
-	$cmd .= " --backend-store=mdb";
+	$cmd .= " --backend-store=$self->{default_ldb_backend}";
 
 	unless (system($cmd) == 0) {
 		warn("Join failed\n$cmd");
@@ -1665,7 +1671,9 @@ sub provision_ad_dc_ntvfs($$$)
 	server require schannel:LOCALDC\$ = no
 	server schannel require seal:LOCALDC\$ = no
 	";
-	push (@{$extra_provision_options}, "--use-ntvfs");
+	push (@{$extra_provision_options},
+	      "--base-schema=2008_R2",
+	      "--use-ntvfs");
 	my $ret = $self->provision($prefix,
 				   "domain controller",
 				   "localdc",
@@ -1962,7 +1970,7 @@ sub read_config_h($)
 	return \%ret;
 }
 
-sub provision_ad_dc($$$$$$$)
+sub provision_ad_dc()
 {
 	my ($self,
 	    $prefix,
@@ -1971,7 +1979,8 @@ sub provision_ad_dc($$$$$$$)
 	    $realm,
 	    $force_fips_mode,
 	    $smbconf_args,
-	    $extra_provision_options) = @_;
+	    $extra_provision_options,
+	    $functional_level) = @_;
 
 	my $prefix_abs = abs_path($prefix);
 
@@ -1986,6 +1995,20 @@ sub provision_ad_dc($$$$$$$)
 
 	my $config_h = {};
 
+	if (!defined($functional_level)) {
+		$functional_level = "2016";
+	}
+
+	# If we choose to have distinct environments for experimental
+	# 2012 as well as the experimental 2016 support, we should
+	# extend what we match here.
+	if ($functional_level eq "2016") {
+		$smbconf_args = "$smbconf_args
+
+[global]
+	ad dc functional level = 2016
+";
+	}
 	if (defined($ENV{CONFIG_H})) {
 		$config_h = read_config_h($ENV{CONFIG_H});
 	}
@@ -2128,14 +2151,14 @@ sub provision_ad_dc($$$$$$$)
 	copy = print1
 ";
 
-	push (@{$extra_provision_options}, "--backend-store=mdb");
+	push (@{$extra_provision_options}, "--backend-store=$self->{default_ldb_backend}");
 	print "PROVISIONING AD DC...\n";
 	my $ret = $self->provision($prefix,
 				   "domain controller",
 				   $hostname,
 				   $domain,
 				   $realm,
-				   "2008",
+				   $functional_level,
 				   "locDCpass1",
 				   undef,
 				   undef,
@@ -2372,8 +2395,8 @@ sub check_env($$)
 	offlinebackupdc      => ["backupfromdc"],
 	labdc                => ["backupfromdc"],
 
-	# aliases in order to split autbuild tasks
-	fl2008dc             => ["ad_dc"],
+	# aliases in order to split autobuild tasks
+	fl2008dc             => ["ad_dc_ntvfs"],
 	ad_dc_default        => ["ad_dc"],
 	ad_dc_default_smb1   => ["ad_dc_smb1"],
 	ad_dc_default_smb1_done   => ["ad_dc_default_smb1"],
@@ -2400,17 +2423,8 @@ sub return_alias_env
 
 sub setup_fl2008dc
 {
-	my ($self, $path) = @_;
-
-	my $extra_args = ["--base-schema=2008_R2"];
-	my $env = $self->provision_ad_dc_ntvfs($path, $extra_args);
-	if (defined $env) {
-	        if (not defined($self->check_or_start($env, "standard"))) {
-		    warn("Failed to start fl2008dc");
-		        return undef;
-		}
-	}
-	return $env;
+	my ($self, $path, $dep_env) = @_;
+	return $self->return_alias_env($path, $dep_env)
 }
 
 sub setup_ad_dc_default
@@ -2716,7 +2730,7 @@ sub setup_rodc
 
 sub _setup_ad_dc
 {
-	my ($self, $path, $conf_opts, $server, $dom) = @_;
+	my ($self, $path, $conf_opts, $server, $dom, $functional_level) = @_;
 
 	# If we didn't build with ADS, pretend this env was never available
 	if (not $self->{target3}->have_ads()) {
@@ -2736,7 +2750,8 @@ sub _setup_ad_dc
 					 $dom,
 					 undef,
 					 $conf_opts,
-					 undef);
+					 undef,
+					 $functional_level);
 	unless ($env) {
 		return undef;
 	}
@@ -2833,7 +2848,7 @@ sub setup_ad_dc_no_ntlm
 					 "ADNONTLMDOMAIN",
 					 "adnontlmdom.samba.example.com",
 					 undef,
-					 "ntlm auth = disabled",
+					 "ntlm auth = disabled\nnt hash store = never",
 					 undef);
 	unless ($env) {
 		return undef;
@@ -2981,15 +2996,18 @@ sub setup_schema_dc
 	my ($self, $path) = @_;
 
 	# provision the PDC using an older base schema
-	my $provision_args = ["--base-schema=2008_R2", "--backend-store=mdb"];
+	my $provision_args = ["--base-schema=2008_R2", "--backend-store=$self->{default_ldb_backend}"];
 
+	# We set the functional level to 2008_R2 to match the older
+	# base-schema (to allow schema upgrade to be tested)
 	my $env = $self->provision_ad_dc($path,
 					 "liveupgrade1dc",
 					 "SCHEMADOMAIN",
 					 "schema.samba.example.com",
 					 undef,
 					 "drs: max link sync = 2",
-					 $provision_args);
+					 $provision_args,
+					 "2008_R2");
 	unless ($env) {
 		return undef;
 	}
@@ -3027,7 +3045,7 @@ sub setup_schema_pair_dc
 	my $join_cmd = $cmd_vars;
 	$join_cmd .= "$samba_tool domain join $env->{CONFIGURATION} $dcvars->{REALM} DC --realm=$dcvars->{REALM}";
 	$join_cmd .= " -U$dcvars->{DC_USERNAME}\%$dcvars->{DC_PASSWORD} ";
-	$join_cmd .= " --backend-store=mdb";
+	$join_cmd .= " --backend-store=$self->{default_ldb_backend}";
 
 	my $upgrade_cmd = $cmd_vars;
 	$upgrade_cmd .= "$samba_tool domain schemaupgrade $dcvars->{CONFIGURATION}";
@@ -3261,6 +3279,11 @@ sub prepare_dc_testenv
 
 	$ctx->{smb_conf_extra_options} = "
 	$conf_options
+
+	# Some of the DCs based on this will be in FL 2016 domains, so
+	# claim FL 2016 DC capability
+	ad dc functional level = 2016
+
 	max xmit = 32K
 	server max protocol = SMB2
 	samba kcc command = /bin/true
@@ -3483,7 +3506,7 @@ sub setup_labdc
 	my $backupdir = File::Temp->newdir();
 	my $server_args = $self->get_backup_server_args($dcvars);
 	my $backup_args = "rename $env->{DOMAIN} $env->{REALM} $server_args";
-	$backup_args .= " --no-secrets --backend-store=mdb";
+	$backup_args .= " --no-secrets --backend-store=$self->{default_ldb_backend}";
 	my $backup_file = $self->create_backup($env, $dcvars, $backupdir,
 					       $backup_args);
 	unless($backup_file) {

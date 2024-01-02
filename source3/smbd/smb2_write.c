@@ -193,8 +193,7 @@ static NTSTATUS smb2_write_complete_internal(struct tevent_req *req,
 	files_struct *fsp = state->fsp;
 
 	if (nwritten == -1) {
-		if (err == EOVERFLOW &&
-		    is_ntfs_stream_smb_fname(fsp->fsp_name)) {
+		if (err == EOVERFLOW && fsp_is_alternate_stream(fsp)) {
 			status = NT_STATUS_FILE_SYSTEM_LIMITATION;
 		} else {
 			status = map_nt_error_from_unix(err);
@@ -298,7 +297,7 @@ static struct tevent_req *smbd_smb2_write_send(TALLOC_CTX *mem_ctx,
 	DEBUG(10,("smbd_smb2_write: %s - %s\n",
 		  fsp_str_dbg(fsp), fsp_fnum_dbg(fsp)));
 
-	smbreq = smbd_smb2_fake_smb_request(smb2req);
+	smbreq = smbd_smb2_fake_smb_request(smb2req, fsp);
 	if (tevent_req_nomem(smbreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -308,6 +307,7 @@ static struct tevent_req *smbd_smb2_write_send(TALLOC_CTX *mem_ctx,
 
 	if (IS_IPC(smbreq->conn)) {
 		struct tevent_req *subreq = NULL;
+                bool ok;
 
 		if (!fsp_is_np(fsp)) {
 			tevent_req_nterror(req, NT_STATUS_FILE_CLOSED);
@@ -324,6 +324,18 @@ static struct tevent_req *smbd_smb2_write_send(TALLOC_CTX *mem_ctx,
 		tevent_req_set_callback(subreq,
 					smbd_smb2_write_pipe_done,
 					req);
+
+		/*
+		 * Make sure we mark the fsp as having outstanding async
+		 * activity so we don't crash on shutdown close.
+		 */
+
+		ok = aio_add_req_to_fsp(fsp, req);
+		if (!ok) {
+			tevent_req_nterror(req, NT_STATUS_NO_MEMORY);
+			return tevent_req_post(req, ev);
+		}
+
 		return req;
 	}
 

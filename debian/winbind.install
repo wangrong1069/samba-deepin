@@ -1,5 +1,7 @@
-#!/usr/bin/dh-exec --with-scripts=filter-arch
+#!/usr/bin/dh-exec --with-scripts=filter-arch,filter-build-profiles
 [linux-any] lib/systemd/system/winbind.service
+<pkg.samba.mitkrb5> usr/lib/*/samba/krb5/winbind_krb5_localauth.so
+<pkg.samba.mitkrb5> usr/share/man/man8/winbind_krb5_localauth.8
 usr/bin/ntlm_auth
 usr/bin/wbinfo
 usr/lib/*/samba/idmap

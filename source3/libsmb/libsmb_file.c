@@ -197,12 +197,11 @@ SMBC_open_ctx(SMBCCTX *context,
 	/* Check if opendir needed ... */
 
 	if (!NT_STATUS_IS_OK(status)) {
-		int eno = 0;
-
-		eno = SMBC_errno(context, srv->cli);
 		file = smbc_getFunctionOpendir(context)(context, fname);
-		if (!file) errno = eno;
 		TALLOC_FREE(frame);
+		if (file == NULL) {
+			errno = cli_status_to_errno(status);
+		}
 		return file;
 	}
 
@@ -402,6 +401,7 @@ SMBC_close_ctx(SMBCCTX *context,
                SMBCFILE *file)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
+	NTSTATUS status;
 
 	if (!context || !context->internal->initialized) {
 		errno = EINVAL;
@@ -421,19 +421,20 @@ SMBC_close_ctx(SMBCCTX *context,
 		return smbc_getFunctionClosedir(context)(context, file);
 	}
 
-	if (!NT_STATUS_IS_OK(cli_close(file->targetcli, file->cli_fd))) {
+	status = cli_close(file->targetcli, file->cli_fd);
+	if (!NT_STATUS_IS_OK(status)) {
 		SMBCSRV *srv;
 		DEBUG(3, ("cli_close failed on %s. purging server.\n",
 			  file->fname));
 		/* Deallocate slot and remove the server
 		 * from the server cache if unused */
-		errno = SMBC_errno(context, file->targetcli);
 		srv = file->srv;
 		DLIST_REMOVE(context->internal->files, file);
 		SAFE_FREE(file->fname);
 		SAFE_FREE(file);
 		smbc_getFunctionRemoveUnusedServer(context)(context, srv);
 		TALLOC_FREE(frame);
+		errno = cli_status_to_errno(status);
 		return -1;
 	}
 
@@ -448,7 +449,7 @@ SMBC_close_ctx(SMBCCTX *context,
  * Get info from an SMB server on a file. Use a qpathinfo call first
  * and if that fails, use getatr, as Win95 sometimes refuses qpathinfo
  */
-bool
+NTSTATUS
 SMBC_getatr(SMBCCTX * context,
             SMBCSRV *srv,
             const char *path,
@@ -471,25 +472,22 @@ SMBC_getatr(SMBCCTX * context,
 	NTSTATUS status;
 
 	if (!context || !context->internal->initialized) {
-		errno = EINVAL;
 		TALLOC_FREE(frame);
- 		return False;
+		return NT_STATUS_INVALID_PARAMETER;
  	}
 
 	/* path fixup for . and .. */
 	if (ISDOT(path) || ISDOTDOT(path)) {
 		fixedpath = talloc_strdup(frame, "\\");
 		if (!fixedpath) {
-			errno = ENOMEM;
 			TALLOC_FREE(frame);
-			return False;
+			return NT_STATUS_NO_MEMORY;
 		}
 	} else {
 		fixedpath = talloc_strdup(frame, path);
 		if (!fixedpath) {
-			errno = ENOMEM;
 			TALLOC_FREE(frame);
-			return False;
+			return NT_STATUS_NO_MEMORY;
 		}
 		trim_string(fixedpath, NULL, "\\..");
 		trim_string(fixedpath, NULL, "\\.");
@@ -505,8 +503,7 @@ SMBC_getatr(SMBCCTX * context,
 	if (!NT_STATUS_IS_OK(status)) {
 		d_printf("Couldn't resolve %s\n", path);
 		TALLOC_FREE(frame);
-		errno = cli_status_to_errno(status);
-		return False;
+		return NT_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
 
 	if (!srv->no_pathinfo2) {
@@ -530,8 +527,7 @@ SMBC_getatr(SMBCCTX * context,
 		if (!not_supported_error) {
 			/* "Normal error". Just return it to caller. */
 			TALLOC_FREE(frame);
-			errno = cli_status_to_errno(status);
-			return false;
+			return status;
 		}
         }
 
@@ -558,8 +554,7 @@ SMBC_getatr(SMBCCTX * context,
 		if (!not_supported_error) {
 			/* "Normal error". Just return it to caller. */
 			TALLOC_FREE(frame);
-			errno = cli_status_to_errno(status);
-			return false;
+			return status;
 		}
         }
 
@@ -567,7 +562,6 @@ SMBC_getatr(SMBCCTX * context,
 
 	/* if this is NT then don't bother with the getatr */
 	if (smb1cli_conn_capabilities(targetcli->conn) & CAP_NT_SMBS) {
-		status = NT_STATUS_OBJECT_NAME_NOT_FOUND;
 		goto all_failed;
         }
 
@@ -590,15 +584,14 @@ setup_stat:
 		   write_time_ts);
 
 	TALLOC_FREE(frame);
-	return true;
+	return NT_STATUS_OK;
 
 all_failed:
 	srv->no_pathinfo2 = False;
 	srv->no_pathinfo3 = False;
 
 	TALLOC_FREE(frame);
-	errno = cli_status_to_errno(status);
-	return False;
+	return status;
 }
 
 /*
@@ -620,8 +613,8 @@ SMBC_setatr(SMBCCTX * context, SMBCSRV *srv, char *path,
             uint16_t attr)
 {
         uint16_t fd;
-        int ret;
 	uint32_t lattr = (uint32_t)attr;
+	NTSTATUS status;
 	TALLOC_CTX *frame = talloc_stackframe();
 
 	if (attr == (uint16_t)-1) {
@@ -665,17 +658,20 @@ SMBC_setatr(SMBCCTX * context, SMBCSRV *srv, char *path,
                 srv->no_pathinfo = True;
 
                 /* Open the file */
-                if (!NT_STATUS_IS_OK(cli_open(srv->cli, path, O_RDWR, DENY_NONE, &fd))) {
-                        errno = SMBC_errno(context, srv->cli);
+		status = cli_open(srv->cli, path, O_RDWR, DENY_NONE, &fd);
+		if (!NT_STATUS_IS_OK(status)) {
 			TALLOC_FREE(frame);
+                        errno = cli_status_to_errno(status);
                         return False;
                 }
 
                 /* Set the new attributes */
-                ret = NT_STATUS_IS_OK(cli_setattrE(srv->cli, fd,
-                                   change_time.tv_sec,
-                                   access_time.tv_sec,
-                                   write_time.tv_sec));
+		status = cli_setattrE(
+			srv->cli,
+			fd,
+			change_time.tv_sec,
+			access_time.tv_sec,
+			write_time.tv_sec);
 
                 /* Close the file */
                 cli_close(srv->cli, fd);
@@ -686,13 +682,13 @@ SMBC_setatr(SMBCCTX * context, SMBCSRV *srv, char *path,
                  * cli_setatr() for that, and with only this parameter, it
                  * seems to work on win98.
                  */
-                if (ret && attr != (uint16_t) -1) {
-                        ret = NT_STATUS_IS_OK(cli_setatr(srv->cli, path, (uint32_t)attr, 0));
+                if (NT_STATUS_IS_OK(status) && attr != (uint16_t) -1) {
+			status = cli_setatr(srv->cli, path, (uint32_t)attr, 0);
                 }
 
-                if (! ret) {
-                        errno = SMBC_errno(context, srv->cli);
+                if (!NT_STATUS_IS_OK(status)) {
 			TALLOC_FREE(frame);
+                        errno = cli_status_to_errno(status);
                         return False;
                 }
         }

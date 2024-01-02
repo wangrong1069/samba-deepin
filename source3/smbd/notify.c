@@ -366,7 +366,7 @@ NTSTATUS change_notify_add_request(struct smb_request *req,
 	DLIST_ADD_END(fsp->notify->requests, request);
 
 	map->mid = request->req->mid;
-	DLIST_ADD(sconn->smb1.notify_mid_maps, map);
+	DLIST_ADD(sconn->notify_mid_maps, map);
 
 	return NT_STATUS_OK;
 }
@@ -396,7 +396,7 @@ static void change_notify_remove_request(struct smbd_server_connection *sconn,
 	}
 
 	DLIST_REMOVE(fsp->notify->requests, req);
-	DLIST_REMOVE(sconn->smb1.notify_mid_maps, req->mid_map);
+	DLIST_REMOVE(sconn->notify_mid_maps, req->mid_map);
 	TALLOC_FREE(req);
 }
 
@@ -443,7 +443,7 @@ bool remove_pending_change_notify_requests_by_mid(
 {
 	struct notify_mid_map *map;
 
-	for (map = sconn->smb1.notify_mid_maps; map; map = map->next) {
+	for (map = sconn->notify_mid_maps; map; map = map->next) {
 		if (map->mid == mid) {
 			break;
 		}
@@ -462,7 +462,7 @@ void smbd_notify_cancel_by_smbreq(const struct smb_request *smbreq)
 	struct smbd_server_connection *sconn = smbreq->sconn;
 	struct notify_mid_map *map;
 
-	for (map = sconn->smb1.notify_mid_maps; map; map = map->next) {
+	for (map = sconn->notify_mid_maps; map; map = map->next) {
 		if (map->req->req == smbreq) {
 			break;
 		}
@@ -644,7 +644,7 @@ static bool user_can_stat_name_under_fsp(files_struct *fsp, const char *name)
 	rights = SEC_DIR_LIST|SEC_DIR_TRAVERSE;
 	p = strrchr_m(filepath, '/');
 	/*
-	 * Check each path component, exluding the share root.
+	 * Check each path component, excluding the share root.
 	 *
 	 * We could check all components including root using
 	 * a do { .. } while() loop, but IMHO the logic is clearer
@@ -823,7 +823,7 @@ static void notify_fsp(files_struct *fsp, struct timespec when,
 	}
 
 	string_replace(tmp, '/', '\\');
-	change->name = tmp;	
+	change->name = tmp;
 
 	change->when = when;
 	change->action = action;
@@ -864,33 +864,83 @@ char *notify_filter_string(TALLOC_CTX *mem_ctx, uint32_t filter)
 	char *result = NULL;
 
 	result = talloc_strdup(mem_ctx, "");
+	if (result == NULL) {
+		return NULL;
+	}
 
-	if (filter & FILE_NOTIFY_CHANGE_FILE_NAME)
+	if (filter & FILE_NOTIFY_CHANGE_FILE_NAME) {
 		result = talloc_asprintf_append(result, "FILE_NAME|");
-	if (filter & FILE_NOTIFY_CHANGE_DIR_NAME)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_DIR_NAME) {
 		result = talloc_asprintf_append(result, "DIR_NAME|");
-	if (filter & FILE_NOTIFY_CHANGE_ATTRIBUTES)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_ATTRIBUTES) {
 		result = talloc_asprintf_append(result, "ATTRIBUTES|");
-	if (filter & FILE_NOTIFY_CHANGE_SIZE)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_SIZE) {
 		result = talloc_asprintf_append(result, "SIZE|");
-	if (filter & FILE_NOTIFY_CHANGE_LAST_WRITE)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_LAST_WRITE) {
 		result = talloc_asprintf_append(result, "LAST_WRITE|");
-	if (filter & FILE_NOTIFY_CHANGE_LAST_ACCESS)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_LAST_ACCESS) {
 		result = talloc_asprintf_append(result, "LAST_ACCESS|");
-	if (filter & FILE_NOTIFY_CHANGE_CREATION)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_CREATION) {
 		result = talloc_asprintf_append(result, "CREATION|");
-	if (filter & FILE_NOTIFY_CHANGE_EA)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_EA) {
 		result = talloc_asprintf_append(result, "EA|");
-	if (filter & FILE_NOTIFY_CHANGE_SECURITY)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_SECURITY) {
 		result = talloc_asprintf_append(result, "SECURITY|");
-	if (filter & FILE_NOTIFY_CHANGE_STREAM_NAME)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_STREAM_NAME) {
 		result = talloc_asprintf_append(result, "STREAM_NAME|");
-	if (filter & FILE_NOTIFY_CHANGE_STREAM_SIZE)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_STREAM_SIZE) {
 		result = talloc_asprintf_append(result, "STREAM_SIZE|");
-	if (filter & FILE_NOTIFY_CHANGE_STREAM_WRITE)
+		if (result == NULL) {
+			return NULL;
+		}
+	}
+	if (filter & FILE_NOTIFY_CHANGE_STREAM_WRITE) {
 		result = talloc_asprintf_append(result, "STREAM_WRITE|");
+		if (result == NULL) {
+			return NULL;
+		}
+	}
 
-	if (result == NULL) return NULL;
 	if (*result == '\0') return result;
 
 	result[strlen(result)-1] = '\0';

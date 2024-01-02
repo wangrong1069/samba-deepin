@@ -1,5 +1,6 @@
 From: Brian May <bam@debian.org>
 Subject: Patch in symbol table from rfc3454, for Heimdal scripts
+Forwarded: not-needed
 
 Status: cherry-picked from heimdal package
 ---

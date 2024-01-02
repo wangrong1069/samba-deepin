@@ -16,35 +16,42 @@ TRUST_SERVER="$5"
 TRUST_PASSWORD="$6"
 
 wbinfo="$VALGRIND $BINDIR/wbinfo"
-ldbmodify="$VALGRIND $BINDIR/ldbmodify"
-ldbsearch="$VALGRIND $BINDIR/ldbsearch"
+ldbmodify="${VALGRIND} ldbmodify"
+if [ -x "${BINDIR}/ldbmodify" ]; then
+	ldbmodify="${VALGRIND} ${BINDIR}/ldbmodify"
+fi
+
+ldbsearch="${VALGRIND} ldbsearch"
+if [ -x "${BINDIR}/ldbsearch" ]; then
+	ldbsearch="${VALGRIND} ${BINDIR}/ldbsearch"
+fi
 
 failed=0
 
-. `dirname $0`/../../testprogs/blackbox/subunit.sh
+. $(dirname $0)/../../testprogs/blackbox/subunit.sh
 
 DOMAIN_SID=$($wbinfo -n "$DOMAIN/" | cut -f 1 -d " ")
-if [ $? -ne 0 ] ; then
-    echo "Could not find domain SID" | subunit_fail_test "test_idmap_ad"
-    exit 1
+if [ $? -ne 0 ]; then
+	echo "Could not find domain SID" | subunit_fail_test "test_idmap_ad"
+	exit 1
 fi
 
 TRUST_DOMAIN_SID=$($wbinfo -n "$TRUST_DOMAIN/" | cut -f 1 -d " ")
-if [ $? -ne 0 ] ; then
-    echo "Could not find trusted domain SID" | subunit_fail_test "test_idmap_ad"
-    exit 1
+if [ $? -ne 0 ]; then
+	echo "Could not find trusted domain SID" | subunit_fail_test "test_idmap_ad"
+	exit 1
 fi
 
 BASE_DN=$($ldbsearch -H ldap://$DC_SERVER -b "" --scope=base defaultNamingContext | awk '/^defaultNamingContext/ {print $2}')
-if [ $? -ne 0 ] ; then
-    echo "Could not find base DN" | subunit_fail_test "test_idmap_ad"
-    exit 1
+if [ $? -ne 0 ]; then
+	echo "Could not find base DN" | subunit_fail_test "test_idmap_ad"
+	exit 1
 fi
 
 TRUST_BASE_DN=$($ldbsearch -H ldap://$TRUST_SERVER -b "" --scope=base defaultNamingContext | awk '/^defaultNamingContext/ {print $2}')
-if [ $? -ne 0 ] ; then
-    echo "Could not find trusted base DN" | subunit_fail_test "test_idmap_ad"
-    exit 1
+if [ $? -ne 0 ]; then
+	echo "Could not find trusted base DN" | subunit_fail_test "test_idmap_ad"
+	exit 1
 fi
 
 #
@@ -63,43 +70,47 @@ add: loginShell
 loginShell: /bin/tcsh
 add: gecos
 gecos: Administrator Full Name
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$DC_SERVER -U "$DOMAIN\Administrator%$DC_PASSWORD"
 dn: CN=Domain Users,CN=Users,$BASE_DN
 changetype: modify
 add: gidNumber
 gidNumber: 2000001
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$DC_SERVER -U "$DOMAIN\Administrator%$DC_PASSWORD"
 dn: CN=Domain Admins,CN=Users,$BASE_DN
 changetype: modify
 add: gidNumber
 gidNumber: 2000002
+
+dn: ou=sub,$BASE_DN
+changetype: add
+objectClass: organizationalUnit
+
+dn: cn=forbidden,ou=sub,$BASE_DN
+changetype: add
+objectClass: user
+samaccountName: forbidden
+uidNumber: 2000003
+gidNumber: 2000001
+unixHomeDirectory: /home/forbidden
+loginShell: /bin/tcsh
+gecos: User in forbidden OU
 EOF
 
 #
 # Add POSIX ids to trusted domain
 #
 cat <<EOF | $ldbmodify -H ldap://$TRUST_SERVER \
-		       -U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
+	-U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
 dn: CN=Administrator,CN=Users,$TRUST_BASE_DN
 changetype: modify
 add: uidNumber
 uidNumber: 2500000
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$TRUST_SERVER \
-		       -U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
 dn: CN=Domain Users,CN=Users,$TRUST_BASE_DN
 changetype: modify
 add: gidNumber
 gidNumber: 2500001
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$TRUST_SERVER \
-		       -U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
 dn: CN=Domain Admins,CN=Users,$TRUST_BASE_DN
 changetype: modify
 add: gidNumber
@@ -145,6 +156,20 @@ echo "wbinfo returned: \"$out\", expecting \"$DOMAIN_SID-512\""
 test "$out" = "$DOMAIN_SID-512"
 ret=$?
 testit "Test gid lookup of Domain Admins" test $ret -eq 0 || failed=$(expr $failed + 1)
+
+#
+# Test 5: Make sure deny_ou is really denied
+# This depends on the "deny ous" setting in Samba3.pm
+#
+
+sid="$($wbinfo -n $DOMAIN/forbidden | awk '{print $1}')"
+testit "Could create forbidden" test -n "$sid" || failed=$(expr $failed + 1)
+if [ -n "$sid" ]
+then
+    uid="$($wbinfo --sid-to-uid $sid)"
+    testit "Can not resolve forbidden user" test -z "$uid" ||
+	failed=$(($failed + 1))
+fi
 
 #
 # Trusted domain test 1: Test uid of Administrator, should be 2500000
@@ -202,43 +227,39 @@ delete: loginShell
 loginShell: /bin/tcsh
 delete: gecos
 gecos: Administrator Full Name
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$DC_SERVER -U "$DOMAIN\Administrator%$DC_PASSWORD"
 dn: CN=Domain Users,CN=Users,$BASE_DN
 changetype: modify
 delete: gidNumber
 gidNumber: 2000001
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$DC_SERVER -U "$DOMAIN\Administrator%$DC_PASSWORD"
 dn: CN=Domain Admins,CN=Users,$BASE_DN
 changetype: modify
 delete: gidNumber
 gidNumber: 2000002
+
+dn: cn=forbidden,ou=sub,$BASE_DN
+changetype: delete
+
+dn: ou=sub,$BASE_DN
+changetype: delete
 EOF
 
 #
 # Remove POSIX ids from trusted domain
 #
 cat <<EOF | $ldbmodify -H ldap://$TRUST_SERVER \
-		       -U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
+	-U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
 dn: CN=Administrator,CN=Users,$TRUST_BASE_DN
 changetype: modify
 delete: uidNumber
 uidNumber: 2500000
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$TRUST_SERVER \
-		       -U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
 dn: CN=Domain Users,CN=Users,$TRUST_BASE_DN
 changetype: modify
 delete: gidNumber
 gidNumber: 2500001
-EOF
 
-cat <<EOF | $ldbmodify -H ldap://$TRUST_SERVER \
-		       -U "$TRUST_DOMAIN\Administrator%$TRUST_PASSWORD"
 dn: CN=Domain Admins,CN=Users,$TRUST_BASE_DN
 changetype: modify
 delete: gidNumber

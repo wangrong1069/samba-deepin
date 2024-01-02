@@ -36,6 +36,7 @@
 #include "debug.h"
 #include "lib/util/signal.h" /* Avoid /usr/include/signal.h */
 #include "fault.h"
+#include "util_process.h"
 
 static struct {
 	bool disabled;
@@ -64,6 +65,7 @@ _PUBLIC_ void fault_setup_disable(void)
 }
 
 
+#if !defined(HAVE_DISABLE_FAULT_HANDLING)
 /*******************************************************************
 report a fault
 ********************************************************************/
@@ -91,7 +93,7 @@ static void sig_fault(int sig)
 {
 	fault_report(sig);
 }
-
+#endif
 /*******************************************************************
 setup our fault handlers
 ********************************************************************/
@@ -169,9 +171,16 @@ static void smb_panic_default(const char *why)
 
 _PUBLIC_ void smb_panic_log(const char *why)
 {
+	const char *binary_name = process_get_saved_binary_name();
+	const char *short_title = process_get_short_title();
+	const char *long_title = process_get_long_title();
+
 	DEBUGSEP(0);
-	DEBUG(0,("INTERNAL ERROR: %s in pid %lld (%s)\n",
+	DEBUG(0,("INTERNAL ERROR: %s in %s (%s) (%s) pid %lld (%s)\n",
 		 why,
+		 binary_name,
+		 short_title,
+		 long_title,
 		 (unsigned long long)getpid(),
 		 SAMBA_VERSION_STRING));
 	DEBUG(0,("If you are running a recent Samba version, and "
@@ -188,6 +197,9 @@ _PUBLIC_ void smb_panic_log(const char *why)
 
 /**
    Something really nasty happened - panic !
+
+   This function is in this file to allow sharing the last set process
+   title into the logs before the backtrace
 **/
 _PUBLIC_ void smb_panic(const char *why)
 {
@@ -221,9 +233,13 @@ _PUBLIC_ void smb_panic(const char *why)
 void log_stack_trace(void)
 {
 #ifdef HAVE_LIBUNWIND
-	/* Try to use libunwind before any other technique since on ia64
-	 * libunwind correctly walks the stack in more circumstances than
-	 * backtrace.
+	/*
+	 * --with-libunwind is required to use libunwind, the
+	 * backtrace_symbols() code below is the default.
+	 *
+	 * This code is available because a previous version of this
+	 * comment asserted that on ia64 libunwind correctly walks the
+	 * stack in more circumstances than backtrace.
 	 */
 	unw_cursor_t cursor;
 	unw_context_t uc;

@@ -1,0 +1,22 @@
+#!/bin/sh
+
+set -e
+
+# Try to add the nss entry to the "passwd" and "group" lines in
+# /etc/nsswitch.conf to automatically enable libnss-winbind support;
+# do not change the configuration if the lines already contain "winbind"
+# Only add winbind, not wins, since the latter is of little use in 2022+
+
+if [ "$1" = configure ] && [ -z "$2" ]; then
+    echo "First installation detected, adding winbind to /etc/nsswitch.conf..."
+    if ! [ -e /etc/nsswitch.conf ]; then
+        echo "Could not find /etc/nsswitch.conf."
+    else
+        sed -r -i \
+          -e  '/^(passwd|group):.*[[:space:]]winbind\b/b' \
+          -e 's/^(passwd|group):.*/& winbind/' \
+          /etc/nsswitch.conf
+    fi
+fi
+
+#DEBHELPER#

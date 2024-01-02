@@ -214,13 +214,32 @@ struct ndr_print {
 #define LIBNDR_FLAG_NO_NDR_SIZE		(1U<<31)
 
 /* useful macro for debugging */
-#define NDR_PRINT_DEBUG(type, p) ndr_print_debug((ndr_print_fn_t)ndr_print_ ##type, #p, p)
+#define NDR_PRINT_DEBUG(type, p) (void)ndr_print_debug(1, (ndr_print_fn_t)ndr_print_ ##type, #p, p, __location__, __func__)
 #define NDR_PRINT_DEBUGC(dbgc_class, type, p) ndr_print_debugc(dbgc_class, (ndr_print_fn_t)ndr_print_ ##type, #p, p)
 #define NDR_PRINT_UNION_DEBUG(type, level, p) ndr_print_union_debug((ndr_print_fn_t)ndr_print_ ##type, #p, level, p)
 #define NDR_PRINT_FUNCTION_DEBUG(type, flags, p) ndr_print_function_debug((ndr_print_function_t)ndr_print_ ##type, #type, flags, p)
 #define NDR_PRINT_BOTH_DEBUG(type, p) NDR_PRINT_FUNCTION_DEBUG(type, NDR_BOTH, p)
 #define NDR_PRINT_OUT_DEBUG(type, p) NDR_PRINT_FUNCTION_DEBUG(type, NDR_OUT, p)
 #define NDR_PRINT_IN_DEBUG(type, p) NDR_PRINT_FUNCTION_DEBUG(type, NDR_IN | NDR_SET_VALUES, p)
+
+/**
+ * @brief Prints NDR structure.
+ *
+ * Like NDR_PRINT_DEBUG, but takes a debug level parameter.
+ *
+ * @param[in]  l	The debug level.
+ * @param[in]  type	ndr_print_#type is the function that will be called.
+ * @param[in]  p	Pointer to the struct.
+ *
+ * @code
+ *     NDR_PRINT_DEBUG_LEVEL(DBGLVL_DEBUG, wbint_userinfo, state->info);
+ * @endcode
+ *
+ * @return void.
+ */
+#define NDR_PRINT_DEBUG_LEVEL(l, type, p) \
+	(void) ( CHECK_DEBUGLVL(l) \
+		&& ndr_print_debug(l, (ndr_print_fn_t)ndr_print_ ##type, #p, p, __location__, __func__) )
 
 /* useful macro for debugging in strings */
 #define NDR_PRINT_STRUCT_STRING(ctx, type, p) ndr_print_struct_string(ctx, (ndr_print_fn_t)ndr_print_ ##type, #p, p)
@@ -270,10 +289,26 @@ enum ndr_err_code {
 	} \
 } while (0)
 
+/*
+ * Values here are chosen to be distinct from but recognisable as the
+ * values in ntifs.h and claims.idl
+ */
 enum ndr_compression_alg {
-	NDR_COMPRESSION_MSZIP_CAB = 1,
-	NDR_COMPRESSION_MSZIP	= 2,
-	NDR_COMPRESSION_XPRESS	= 3
+	NDR_COMPRESSION_NONE            = 0,   /* 0x00 in ntifs.h */
+	NDR_COMPRESSION_XPRESS_LZNT1	= 102, /* MS-XCA 0x02 in ntifs.h
+						* (Unimplemented)
+						*/
+	NDR_COMPRESSION_XPRESS_RAW	= 103, /* MS-XCA 0x03 in ntifs.h
+						* (implemented in
+						* lib/compression but
+						* not connected to libndr)
+						*/
+	NDR_COMPRESSION_XPRESS_HUFF_RAW = 104, /* MS-XCA 0x04 in ntifs.h */
+	NDR_COMPRESSION_MSZIP_CAB       = 201,
+	NDR_COMPRESSION_MSZIP	        = 202,
+	NDR_COMPRESSION_XPRESS	        = 203,
+	NDR_COMPRESSION_WIN2K3_LZ77_DIRECT2	= 204, /* Unimplemented */
+	NDR_COMPRESSION_INVALID         = 255,
 };
 
 /*
@@ -598,7 +633,7 @@ void ndr_print_debug_helper(struct ndr_print *ndr, const char *format, ...) PRIN
 void ndr_print_debugc_helper(struct ndr_print *ndr, const char *format, ...) PRINTF_ATTRIBUTE(2,3);
 void ndr_print_printf_helper(struct ndr_print *ndr, const char *format, ...) PRINTF_ATTRIBUTE(2,3);
 void ndr_print_string_helper(struct ndr_print *ndr, const char *format, ...) PRINTF_ATTRIBUTE(2,3);
-void ndr_print_debug(ndr_print_fn_t fn, const char *name, void *ptr);
+bool ndr_print_debug(int level, ndr_print_fn_t fn, const char *name, void *ptr, const char *location, const char *function);
 void ndr_print_debugc(int dbgc_class, ndr_print_fn_t fn, const char *name, void *ptr);
 void ndr_print_union_debug(ndr_print_fn_t fn, const char *name, uint32_t level, void *ptr);
 void ndr_print_function_debug(ndr_print_function_t fn, const char *name, int flags, void *ptr);
@@ -715,6 +750,7 @@ NDR_SCALAR_PROTO(udlong, uint64_t)
 NDR_SCALAR_PROTO(udlongr, uint64_t)
 NDR_SCALAR_PROTO(dlong, int64_t)
 NDR_SCALAR_PROTO(hyper, uint64_t)
+NDR_SCALAR_PROTO(int64, int64_t)
 NDR_SCALAR_PROTO(pointer, void *)
 NDR_SCALAR_PROTO(time_t, time_t)
 NDR_SCALAR_PROTO(uid_t, uid_t)

@@ -35,6 +35,7 @@
 #include "secrets.h"
 #include "../lib/util/memcache.h"
 #include "ctdbd_conn.h"
+#include "lib/util/util_process.h"
 #include "util_cluster.h"
 #include "printing/queue_process.h"
 #include "rpc_server/rpc_config.h"
@@ -121,21 +122,6 @@ static void smbd_parent_conf_updated(struct messaging_context *msg,
 		DBG_ERR("Failed to reinit guest info\n");
 	}
 	messaging_send_to_children(msg, MSG_SMB_CONF_UPDATED, NULL);
-}
-
-/*******************************************************************
- Delete a statcache entry.
- ********************************************************************/
-
-static void smb_stat_cache_delete(struct messaging_context *msg,
-				  void *private_data,
-				  uint32_t msg_tnype,
-				  struct server_id server_id,
-				  DATA_BLOB *data)
-{
-	const char *name = (const char *)data->data;
-	DEBUG(10,("smb_stat_cache_delete: delete name %s\n", name));
-	stat_cache_delete(name);
 }
 
 /****************************************************************************
@@ -428,12 +414,14 @@ static bool smbd_notifyd_init(struct messaging_context *msg, bool interactive,
 		return true;
 	}
 
-	status = smbd_reinit_after_fork(msg, ev, true, "smbd-notifyd");
+	status = smbd_reinit_after_fork(msg, ev, true);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(1, ("%s: reinit_after_fork failed: %s\n",
 			  __func__, nt_errstr(status)));
 		exit(1);
 	}
+
+	process_set_title("smbd-notifyd", "notifyd");
 
 	reopen_logs();
 
@@ -642,7 +630,7 @@ static bool cleanupd_init(struct messaging_context *msg, bool interactive,
 
 	close(up_pipe[0]);
 
-	status = smbd_reinit_after_fork(msg, ev, true, "cleanupd");
+	status = smbd_reinit_after_fork(msg, ev, true);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("reinit_after_fork failed: %s\n",
 			    nt_errstr(status));
@@ -651,6 +639,8 @@ static bool cleanupd_init(struct messaging_context *msg, bool interactive,
 
 		exit(1);
 	}
+
+	process_set_title("smbd-cleanupd", "cleanupd");
 
 	se = tevent_add_signal(ev,
 			       ev,
@@ -984,7 +974,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 	smb_set_close_on_exec(fd);
 
 	if (s->parent->interactive) {
-		reinit_after_fork(msg_ctx, ev, true, NULL);
+		reinit_after_fork(msg_ctx, ev, true);
 		smbd_process(ev, msg_ctx, fd, true);
 		exit_server_cleanly("end of interactive mode");
 		return;
@@ -997,6 +987,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 
 	pid = fork();
 	if (pid == 0) {
+		char addrstr[INET6_ADDRSTRLEN];
 		NTSTATUS status = NT_STATUS_OK;
 
 		/*
@@ -1010,7 +1001,7 @@ static void smbd_accept_connection(struct tevent_context *ev,
 		 * them, counting worker smbds. */
 		CatchChild();
 
-		status = smbd_reinit_after_fork(msg_ctx, ev, true, NULL);
+		status = smbd_reinit_after_fork(msg_ctx, ev, true);
 		if (!NT_STATUS_IS_OK(status)) {
 			if (NT_STATUS_EQUAL(status,
 					    NT_STATUS_TOO_MANY_OPENED_FILES)) {
@@ -1033,6 +1024,9 @@ static void smbd_accept_connection(struct tevent_context *ev,
 			DEBUG(0,("reinit_after_fork() failed\n"));
 			smb_panic("reinit_after_fork() failed");
 		}
+
+		print_sockaddr(addrstr, sizeof(addrstr), &addr);
+		process_set_title("smbd[%s]", "client [%s]", addrstr);
 
 		smbd_process(ev, msg_ctx, fd, false);
 	 exit:
@@ -1271,8 +1265,6 @@ static bool open_sockets_smbd(struct smbd_parent_context *parent,
 	messaging_register(msg_ctx, NULL, MSG_SHUTDOWN, msg_exit_server);
 	messaging_register(msg_ctx, ev_ctx, MSG_SMB_CONF_UPDATED,
 			   smbd_parent_conf_updated);
-	messaging_register(msg_ctx, NULL, MSG_SMB_STAT_CACHE_DELETE,
-			   smb_stat_cache_delete);
 	messaging_register(msg_ctx, NULL, MSG_DEBUG, smbd_msg_debug);
 	messaging_register(msg_ctx, NULL, MSG_SMB_FORCE_TDIS,
 			   smb_parent_send_to_children);
@@ -1436,7 +1428,7 @@ struct smbd_claim_version_state {
 
 static void smbd_claim_version_parser(struct server_id exclusive,
 				      size_t num_shared,
-				      struct server_id *shared,
+				      const struct server_id *shared,
 				      const uint8_t *data,
 				      size_t datalen,
 				      void *private_data)
@@ -1471,8 +1463,12 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return NT_STATUS_UNSUCCESSFUL;
 	}
 
-	status = g_lock_lock(
-		ctx, key, G_LOCK_READ, (struct timeval) { .tv_sec = 60 });
+	status = g_lock_lock(ctx,
+			     key,
+			     G_LOCK_READ,
+			     (struct timeval) { .tv_sec = 60 },
+			     NULL,
+			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_READ) failed: %s\n",
 			    nt_errstr(status));
@@ -1500,8 +1496,12 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return NT_STATUS_OK;
 	}
 
-	status = g_lock_lock(
-		ctx, key, G_LOCK_UPGRADE, (struct timeval) { .tv_sec = 60 });
+	status = g_lock_lock(ctx,
+			     key,
+			     G_LOCK_UPGRADE,
+			     (struct timeval) { .tv_sec = 60 },
+			     NULL,
+			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_WRITE) failed: %s\n",
 			    nt_errstr(status));
@@ -1520,8 +1520,12 @@ static NTSTATUS smbd_claim_version(struct messaging_context *msg,
 		return status;
 	}
 
-	status = g_lock_lock(
-		ctx, key, G_LOCK_DOWNGRADE, (struct timeval) { .tv_sec = 60 });
+	status = g_lock_lock(ctx,
+			     key,
+			     G_LOCK_DOWNGRADE,
+			     (struct timeval) { .tv_sec = 60 },
+			     NULL,
+			     NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("g_lock_lock(G_LOCK_READ) failed: %s\n",
 			    nt_errstr(status));
@@ -1599,7 +1603,6 @@ extern void build_options(bool screen);
 		loadparm_s3_global_substitution();
 	static const struct smbd_shim smbd_shim_fns =
 	{
-		.send_stat_cache_delete_message = smbd_send_stat_cache_delete_message,
 		.change_to_root_user = smbd_change_to_root_user,
 		.become_authenticated_pipe_user = smbd_become_authenticated_pipe_user,
 		.unbecome_authenticated_pipe_user = smbd_unbecome_authenticated_pipe_user,
@@ -1614,6 +1617,8 @@ extern void build_options(bool screen);
 		.exit_server_cleanly = smbd_exit_server_cleanly,
 	};
 	bool ok;
+
+	setproctitle_init(argc, discard_const(argv), environ);
 
 	/*
 	 * Do this before any other talloc operation
@@ -1866,7 +1871,7 @@ extern void build_options(bool screen);
 	if (cmdline_daemon_cfg->daemon)
 		pidfile_create(lp_pid_directory(), "smbd");
 
-	status = reinit_after_fork(msg_ctx, ev_ctx, false, NULL);
+	status = reinit_after_fork(msg_ctx, ev_ctx, false);
 	if (!NT_STATUS_IS_OK(status)) {
 		exit_daemon("reinit_after_fork() failed", map_errno_from_nt_status(status));
 	}
@@ -1994,7 +1999,7 @@ extern void build_options(bool screen);
 
 	/* Open the share_info.tdb here, so we don't have to open
 	   after the fork on every single connection.  This is a small
-	   performance improvment and reduces the total number of system
+	   performance improvement and reduces the total number of system
 	   fds used. */
 	status = share_info_db_init();
 	if (!NT_STATUS_IS_OK(status)) {
@@ -2110,7 +2115,7 @@ extern void build_options(bool screen);
 		*/
 		struct stat st;
 		if (fstat(0, &st) != 0) {
-			return false;
+			return 1;
 		}
 		if (S_ISFIFO(st.st_mode) || S_ISSOCK(st.st_mode)) {
 			tevent_add_fd(ev_ctx,

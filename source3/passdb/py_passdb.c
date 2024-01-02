@@ -17,7 +17,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include <pytalloc.h>
 #include "includes.h"
 #include "python/py3compat.h"
@@ -797,6 +797,8 @@ static PyObject *py_samu_get_plaintext_passwd(PyObject *obj, void *closure)
 	}
 
 	py_plaintext_pw = PyUnicode_FromString(plaintext_pw);
+
+	BURN_STR(discard_const_p(char, plaintext_pw));
 	talloc_free(frame);
 	return py_plaintext_pw;
 }
@@ -3696,7 +3698,7 @@ static PyMethodDef py_pdb_methods[] = {
 		Get account policy information as a dictionary." },
 	{ "set_account_policy", py_pdb_set_account_policy, METH_VARARGS,
 		"get_account_policy(Mapping) -> None\n\n \
-		Set account policy settings from a dicionary." },
+		Set account policy settings from a dictionary." },
 	/* get_seq_num */
 	{ "search_users", py_pdb_search_users, METH_VARARGS,
 		"search_users(acct_flags) -> List\n\n \

@@ -31,7 +31,7 @@ interface xattr
 	 * it's used to pass the information from
 	 * the old hex string attrib information
 	 * we have a handwritten parser which converts
-	 * the hex string to the xattr_DosInfoFFFFCompat strucure
+	 * the hex string to the xattr_DosInfoFFFFCompat structure
 	 */
 
 	typedef struct {
@@ -94,12 +94,19 @@ interface xattr
 		NTTIME create_time;
 	} xattr_DosInfo4;
 
+	typedef struct {
+		xattr_DosInfoValidFlags valid_flags;
+		uint32 attrib;
+		NTTIME create_time;
+	} xattr_DosInfo5;
+
 	typedef [public,switch_type(uint16)] union {
 		[case(0xFFFF)] xattr_DosInfoFFFFCompat compatinfoFFFF;
                 [case(1)] xattr_DosInfo1 info1;
                 [case(2)] xattr_DosInfo2Old oldinfo2;
 		[case(3)] xattr_DosInfo3 info3;
 		[case(4)] xattr_DosInfo4 info4;
+		[case(5)] xattr_DosInfo5 info5;
         } xattr_DosInfo;
 
 	typedef [public] struct {
@@ -197,6 +204,11 @@ interface xattr
 					 * this hash (to allow
 					 * forensics later, if we have
 					 * a bug in one codepath */
+		/*
+		 * "time" is always set to 0. Left here to avoid
+		 * bumping the union versions. Remove in case a v5 is
+		 * necessary.
+		 */
 		NTTIME time;
 		uint8 sys_acl_hash[64]; /* 64 bytes hash. */
 	} security_descriptor_hash_v4;

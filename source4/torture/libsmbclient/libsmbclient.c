@@ -668,7 +668,7 @@ static bool torture_libsmbclient_readdirplus_seek(struct torture_context *tctx)
 		success,
 		done,
 		talloc_asprintf(tctx,
-				"after seek (20) readdir name missmatch "
+				"after seek (20) readdir name mismatch "
 				"file %s - got %s\n",
 				dirent_20->name,
 				getdentries[0].name));
@@ -700,7 +700,7 @@ static bool torture_libsmbclient_readdirplus_seek(struct torture_context *tctx)
 		success,
 		done,
 		talloc_asprintf(tctx,
-				"after seek (20) readdirplus name missmatch "
+				"after seek (20) readdirplus name mismatch "
 				"file %s - got %s\n",
 				dirent_20->name,
 				direntries_20->name));
@@ -733,7 +733,7 @@ static bool torture_libsmbclient_readdirplus_seek(struct torture_context *tctx)
 		success,
 		done,
 		talloc_asprintf(tctx,
-				"after seek (20) readdirplus2 name missmatch "
+				"after seek (20) readdirplus2 name mismatch "
 				"file %s - got %s\n",
 				dirent_20->name,
 				direntries_20->name));
@@ -937,7 +937,7 @@ static bool torture_libsmbclient_readdirplus2(struct torture_context *tctx)
 		success,
 		done,
 		talloc_asprintf(tctx,
-			"filename '%s' ino missmatch. "
+			"filename '%s' ino mismatch. "
 			"From smbc_readdirplus2 = %"PRIx64" "
 			"From smbc_stat = %"PRIx64"",
 			filename,
@@ -1542,17 +1542,30 @@ static bool torture_libsmbclient_getxattr(struct torture_context *tctx)
 			ret));
 
 	/*
-	 * Ensure getting a valid attribute returns 0.
+	 * Ensure getting a valid attribute computes its size.
 	 */
-	ret = smbc_getxattr(getxattr_name, "system.*", value, sizeof(value));
-	torture_assert_int_equal_goto(tctx,
-		ret,
-		0,
+	ret = smbc_getxattr(getxattr_name, "system.*", NULL, 0);
+	torture_assert_goto(tctx,
+		ret >= 0,
 		ok,
 		done,
 		talloc_asprintf(tctx,
-			"smbc_getxattr(foobar) on '%s' should "
-			"get -1, got %d\n",
+			"smbc_getxattr(foobar, NULL) on '%s' should "
+			"get >=0, got %d\n",
+			getxattr_name,
+			ret));
+
+	/*
+	 * Ensure getting a valid attribute returns its size.
+	 */
+	ret = smbc_getxattr(getxattr_name, "system.*", value, sizeof(value));
+	torture_assert_goto(tctx,
+		ret >= 0,
+		ok,
+		done,
+		talloc_asprintf(tctx,
+			"smbc_getxattr(foobar, value) on '%s' should "
+			"get >=0, got %d\n",
 			getxattr_name,
 			ret));
 

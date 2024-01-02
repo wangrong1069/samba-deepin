@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Samba system utilities
    Copyright (C) Andrew Tridgell 1992-1998
@@ -210,9 +210,6 @@ static void make_create_timespec(const struct stat *pst, struct stat_ex *dst,
 		dst->st_ex_btime = calc_create_time_stat(pst);
 		dst->st_ex_iflags |= ST_EX_IFLAG_CALCULATED_BTIME;
 	}
-
-	dst->st_ex_itime = dst->st_ex_btime;
-	dst->st_ex_iflags |= ST_EX_IFLAG_CALCULATED_ITIME;
 }
 
 /****************************************************************************
@@ -239,19 +236,6 @@ void update_stat_ex_create_time(struct stat_ex *dst,
 	dst->st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_BTIME;
 }
 
-void update_stat_ex_itime(struct stat_ex *dst,
-			  struct timespec itime)
-{
-	dst->st_ex_itime = itime;
-	dst->st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_ITIME;
-}
-
-void update_stat_ex_file_id(struct stat_ex *dst, uint64_t file_id)
-{
-	dst->st_ex_file_id = file_id;
-	dst->st_ex_iflags &= ~ST_EX_IFLAG_CALCULATED_FILE_ID;
-}
-
 void update_stat_ex_from_saved_stat(struct stat_ex *dst,
 				    const struct stat_ex *src)
 {
@@ -261,14 +245,6 @@ void update_stat_ex_from_saved_stat(struct stat_ex *dst,
 
 	if (!(src->st_ex_iflags & ST_EX_IFLAG_CALCULATED_BTIME)) {
 		update_stat_ex_create_time(dst, src->st_ex_btime);
-	}
-
-	if (!(src->st_ex_iflags & ST_EX_IFLAG_CALCULATED_ITIME)) {
-		update_stat_ex_itime(dst, src->st_ex_itime);
-	}
-
-	if (!(src->st_ex_iflags & ST_EX_IFLAG_CALCULATED_FILE_ID)) {
-		update_stat_ex_file_id(dst, src->st_ex_file_id);
 	}
 }
 
@@ -306,60 +282,6 @@ void init_stat_ex_from_stat (struct stat_ex *dst,
 #else
 	dst->st_ex_flags = 0;
 #endif
-	dst->st_ex_file_id = dst->st_ex_ino;
-	dst->st_ex_iflags |= ST_EX_IFLAG_CALCULATED_FILE_ID;
-}
-
-/*******************************************************************
- Create a clock-derived itime (invented) time. Used to generate
- the fileid.
-********************************************************************/
-
-void create_clock_itime(struct stat_ex *dst)
-{
-	NTTIME tval;
-	struct timespec itime;
-	uint64_t mixin;
-	uint8_t rval;
-
-	/* Start with the system clock. */
-	itime = timespec_current();
-
-	/* Convert to NTTIME. */
-	tval = unix_timespec_to_nt_time(itime);
-
-	/*
-	 * In case the system clock is poor granularity
-	 * (happens on VM or docker images) then mix in
-	 * 8 bits of randomness.
-	 */
-	generate_random_buffer((unsigned char *)&rval, 1);
-	mixin = rval;
-
-	/*
-	 * Shift up by 55 bits. This gives us approx 114 years
-	 * of headroom.
-	 */
-	mixin <<= 55;
-
-	/* And OR into the nttime. */
-	tval |= mixin;
-
-	/*
-	 * Convert to a unix timespec, ignoring any
-	 * constraints on seconds being higher than
-	 * TIME_T_MAX or lower than TIME_T_MIN. These
-	 * are only needed to allow unix display time functions
-	 * to work correctly, and this is being used to
-	 * generate a fileid. All we care about is the
-	 * NTTIME being valid across all NTTIME ranges
-	 * (which we carefully ensured above).
-	 */
-
-	itime = nt_time_to_unix_timespec_raw(tval);
-
-	/* And set as a generated itime. */
-	update_stat_ex_itime(dst, itime);
 }
 
 /*******************************************************************
@@ -721,18 +643,45 @@ static bool set_process_capability(enum smbd_capability capability,
  Gain the oplock capability from the kernel if possible.
 ****************************************************************************/
 
+#if defined(HAVE_POSIX_CAPABILITIES) && defined(CAP_DAC_OVERRIDE)
+static bool have_cap_dac_override = true;
+#else
+static bool have_cap_dac_override = false;
+#endif
+
 void set_effective_capability(enum smbd_capability capability)
 {
+	bool ret = false;
+
+	if (capability != DAC_OVERRIDE_CAPABILITY || have_cap_dac_override) {
 #if defined(HAVE_POSIX_CAPABILITIES)
-	set_process_capability(capability, True);
+		ret = set_process_capability(capability, True);
 #endif /* HAVE_POSIX_CAPABILITIES */
+	}
+
+	/*
+	 * Fallback to become_root() if CAP_DAC_OVERRIDE is not
+	 * available.
+	 */
+	if (capability == DAC_OVERRIDE_CAPABILITY) {
+		if (!ret) {
+			have_cap_dac_override = false;
+		}
+		if (!have_cap_dac_override) {
+			become_root();
+		}
+	}
 }
 
 void drop_effective_capability(enum smbd_capability capability)
 {
+	if (capability != DAC_OVERRIDE_CAPABILITY || have_cap_dac_override) {
 #if defined(HAVE_POSIX_CAPABILITIES)
-	set_process_capability(capability, False);
+		set_process_capability(capability, False);
 #endif /* HAVE_POSIX_CAPABILITIES */
+	} else {
+		unbecome_root();
+	}
 }
 
 /**************************************************************************
@@ -805,7 +754,7 @@ int getgroups_max(void)
 
 /**************************************************************************
  Wrap setgroups and getgroups for systems that declare getgroups() as
- returning an array of gid_t, but actuall return an array of int.
+ returning an array of gid_t, but actually return an array of int.
 ****************************************************************************/
 
 #if defined(HAVE_BROKEN_GETGROUPS)
@@ -831,9 +780,9 @@ static int sys_broken_getgroups(int setlen, gid_t *gidset)
 	 */
 
 	if(setlen < 0) {
-		errno = EINVAL; 
+		errno = EINVAL;
 		return -1;
-	} 
+	}
 
 	if((group_list = SMB_MALLOC_ARRAY(GID_T, setlen)) == NULL) {
 		DEBUG(0,("sys_getgroups: Malloc fail.\n"));
@@ -863,14 +812,14 @@ static int sys_broken_getgroups(int setlen, gid_t *gidset)
 static int sys_broken_setgroups(int setlen, gid_t *gidset)
 {
 	GID_T *group_list;
-	int i ; 
+	int i ;
 
 	if (setlen == 0)
 		return 0 ;
 
 	if (setlen < 0 || setlen > setgroups_max()) {
-		errno = EINVAL; 
-		return -1;   
+		errno = EINVAL;
+		return -1;
 	}
 
 	/*
@@ -880,11 +829,11 @@ static int sys_broken_setgroups(int setlen, gid_t *gidset)
 
 	if((group_list = SMB_MALLOC_ARRAY(GID_T, setlen)) == NULL) {
 		DEBUG(0,("sys_setgroups: Malloc fail.\n"));
-		return -1;    
+		return -1;
 	}
 
-	for(i = 0; i < setlen; i++) 
-		group_list[i] = (GID_T) gidset[i]; 
+	for(i = 0; i < setlen; i++)
+		group_list[i] = (GID_T) gidset[i];
 
 	if(samba_setgroups(setlen, group_list) != 0) {
 		int saved_errno = errno;
@@ -921,7 +870,7 @@ static int sys_bsd_setgroups(gid_t primary_gid, int setlen, const gid_t *gidset)
 	/* setgroups(2) will fail with EINVAL if we pass too many groups. */
 	max = setgroups_max();
 
-	/* No group list, just make sure we are setting the efective GID. */
+	/* No group list, just make sure we are setting the effective GID. */
 	if (setlen == 0) {
 		return samba_setgroups(1, &primary_gid);
 	}

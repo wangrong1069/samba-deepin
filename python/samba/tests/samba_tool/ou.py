@@ -204,9 +204,9 @@ class OUCmdTestCase(SambaToolCmdTest):
             self.assertIn('Moved ou "%s"' % full_ou_dn, out)
 
             found = self._find_ou(ou["name"])
-            self.assertNotEquals(found.get("dn"), olddn,
-                                 "Moved ou '%s' still exists with the same dn" %
-                                 ou["name"])
+            self.assertNotEqual(found.get("dn"), olddn,
+                                "Moved ou '%s' still exists with the same dn" %
+                                ou["name"])
             newexpecteddn = ldb.Dn(self.samdb,
                                    "OU=%s,OU=%s,%s" %
                                    (ou["name"], parentou["name"],
@@ -261,10 +261,11 @@ class OUCmdTestCase(SambaToolCmdTest):
             found = self.assertMatch(out, str(obj.dn),
                                      "object '%s' not found" % obj.dn)
 
-    def _randomOU(self, base={}):
+    def _randomOU(self, base=None):
         """create an ou with random attribute values, you can specify base
         attributes"""
-
+        if base is None:
+            base = {}
         ou = {
             "name": self.randomName(),
             "description": self.randomName(count=100),

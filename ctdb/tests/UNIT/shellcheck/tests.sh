@@ -29,3 +29,8 @@ shellcheck_test -s bash \
 	"${TEST_SCRIPTS_DIR}/integration.bash" \
 	"${TEST_SCRIPTS_DIR}/integration_local_daemons.bash" \
 	"${TEST_SCRIPTS_DIR}/integration_real_cluster.bash"
+
+# Test scripts and stubs
+shellcheck_test -s sh \
+	"${CTDB_TEST_DIR}/UNIT/eventscripts/scripts/"* \
+	"${CTDB_TEST_DIR}/UNIT/eventscripts/stubs/"*

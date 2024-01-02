@@ -100,10 +100,10 @@ rk_base32_encode(const void *data, int size, char **str, enum rk_base32_flags fl
 	p[6] = chars[(c & 0x0000000000000003e0ULL) >> 5];
 	p[7] = chars[(c & 0x00000000000000001fULL) >> 0];
         switch (i - size) {
-        case 4: p[2] = p[3] = '=';  fallthrough;
-        case 3: p[4] = '=';         fallthrough;
-        case 2: p[5] = p[6] = '=';  fallthrough;
-        case 1: p[7] = '=';         fallthrough;
+        case 4: p[2] = p[3] = '=';  HEIM_FALLTHROUGH;
+        case 3: p[4] = '=';         HEIM_FALLTHROUGH;
+        case 2: p[5] = p[6] = '=';  HEIM_FALLTHROUGH;
+        case 1: p[7] = '=';         HEIM_FALLTHROUGH;
         default:                    break;
         }
 	p += 8;
@@ -141,9 +141,7 @@ token_decode(const char *token, enum rk_base32_flags flags)
     int preserve_order = !!(flags & RK_BASE32_FLAG_PRESERVE_ORDER);
     int i, c;
 
-    if (strlen(token) < 8)
-	return DECODE_ERROR;
-    for (i = 0; i < 8; i++) {
+    for (i = 0; i < 8 && token[i] != '\0'; i++) {
 	val <<= 5;
 	if (token[i] == '=')
 	    marker++;
@@ -157,7 +155,7 @@ token_decode(const char *token, enum rk_base32_flags flags)
         else
             val |= c;
     }
-    if (marker > 6)
+    if (i < 8 || marker > 6)
 	return DECODE_ERROR;
     return (marker << 40) | val;
 }

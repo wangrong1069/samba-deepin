@@ -208,10 +208,7 @@ class drs_Replicate(object):
         # (if we support it and haven't already tried that)
         supports_ext = self.supports_ext
 
-        # TODO fix up the below line when we next update werror_err_table.txt
-        # and pull in the new error-code
-        # return (error_code == werror.WERR_DS_DRA_RECYCLED_TARGET and
-        return (error_code == 0x21bf and
+        return (error_code == werror.WERR_DS_DRA_RECYCLED_TARGET and
                 supports_ext & DRSUAPI_SUPPORTED_EXTENSION_GETCHGREQ_V10 and
                 (req.more_flags & drsuapi.DRSUAPI_DRS_GET_TGT) == 0)
 
@@ -452,7 +449,7 @@ class drs_ReplicateRenamer(drs_Replicate):
             ctr.naming_context.dn = self.rename_dn(ctr.naming_context.dn)
 
         # rename the first object in each partition. This will cause every
-        # subsequent object in the partiton to be renamed as a side-effect
+        # subsequent object in the partition to be renamed as a side-effect
         if first_chunk and ctr.object_count != 0:
             self.rename_top_level_object(ctr.first_object.object)
 

@@ -36,7 +36,7 @@ def check(self, *k, **kw):
                  if d:
                      additional_dirs.append(d)
 
-    # we add the additional dirs twice: once for the test data, and again if the compilation test suceeds below
+    # we add the additional dirs twice: once for the test data, and again if the compilation test succeeds below
     def add_options_dir(dirs, env):
         for x in dirs:
              if not x in env.CPPPATH:
@@ -126,7 +126,7 @@ def CHECK_LARGEFILE(conf, define='HAVE_LARGEFILE'):
 
 
 @conf
-def CHECK_C_PROTOTYPE(conf, function, prototype, define, headers=None, msg=None):
+def CHECK_C_PROTOTYPE(conf, function, prototype, define, headers=None, msg=None, lib=None):
     '''verify that a C prototype matches the one on the current system'''
     if not conf.CHECK_DECLS(function, headers=headers):
         return False
@@ -138,7 +138,8 @@ def CHECK_C_PROTOTYPE(conf, function, prototype, define, headers=None, msg=None)
                            headers=headers,
                            link=False,
                            execute=False,
-                           msg=msg)
+                           msg=msg,
+                           lib=lib)
 
 
 @conf
@@ -397,7 +398,7 @@ WriteMakefile(
 
     if section:
         man = Utils.readf(os.path.join(bdir,'Makefile'))
-        m = re.search('MAN%sEXT\s+=\s+(\w+)' % section, man)
+        m = re.search(r'MAN%sEXT\s+=\s+(\w+)' % section, man)
         if not m:
             conf.end_msg('not found', color='YELLOW')
             return

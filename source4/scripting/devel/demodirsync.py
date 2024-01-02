@@ -59,7 +59,6 @@ if (len(ctrls)):
         if arr[0] == 'dirsync':
             cookie = ndr_unpack(drsblobs.ldapControlDirSyncCookie, base64.b64decode(arr[3]))
             guid = cookie.blob.guid1
-            pass
 if not guid:
     print("No dirsync control ... strange")
     sys.exit(1)
@@ -81,7 +80,7 @@ controls = ["dirsync:1:1:50:%s" % base64.b64encode(ndr_pack(cookie)).decode('utf
 (msgs, ctrls) = remote_ldb.searchex(expression="(samaccountname=*)", base=base, attrs=["objectClass"], controls=controls)
 if (len(ctrls)):
     for ctl in ctrls:
-        cookie = printdirsync(ctl)
+        printdirsync(ctl)
     print("Returned %d entries" % len(msgs))
 
 cookie = savedcookie

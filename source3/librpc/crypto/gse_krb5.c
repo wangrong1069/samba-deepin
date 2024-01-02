@@ -150,7 +150,7 @@ static krb5_error_code fill_keytab_from_password(krb5_context krbctx,
 	ret = 0;
 
 out:
-	SAFE_FREE(enctypes);
+	krb5_free_enctypes(krbctx, enctypes);
 	return ret;
 }
 
@@ -240,8 +240,8 @@ static krb5_error_code fill_mem_keytab_from_secrets(krb5_context krbctx,
 		 * check if keytab is up to date */
 
 		if ((ct->length == KRB5_KEY_LENGTH(KRB5_KT_KEY(&kt_entry))) &&
-		    (memcmp(KRB5_KEY_DATA(KRB5_KT_KEY(&kt_entry)),
-					ct->data, ct->length) == 0)) {
+		    (mem_equal_const_time(KRB5_KEY_DATA(KRB5_KT_KEY(&kt_entry)),
+					  ct->data, ct->length))) {
 			/* keytab is already up to date, return */
 			smb_krb5_kt_free_entry(krbctx, &kt_entry);
 			goto out;

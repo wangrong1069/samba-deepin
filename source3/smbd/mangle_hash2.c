@@ -30,7 +30,7 @@
   for simplicity, we only allow ascii characters in 8.3 names
  */
 
- /* hash alghorithm changed to FNV1 by idra@samba.org (Simo Sorce).
+ /* hash algorithm changed to FNV1 by idra@samba.org (Simo Sorce).
   * see http://www.isthe.com/chongo/tech/comp/fnv/index.html for a
   * discussion on Fowler / Noll / Vo (FNV) Hash by one of it's authors
   */
@@ -443,10 +443,8 @@ static bool is_8_3(const char *name, bool check_case, bool allow_wildcards, cons
 	char *dot_p;
 
 	/* as a special case, the names '.' and '..' are allowable 8.3 names */
-	if (name[0] == '.') {
-		if (!name[1] || (name[1] == '.' && !name[2])) {
-			return True;
-		}
+	if (ISDOT(name) || (ISDOTDOT(name))) {
+		return true;
 	}
 
 	/* the simplest test is on the overall length of the

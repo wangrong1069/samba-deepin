@@ -972,7 +972,7 @@ SMBC_opendir_ctx(SMBCCTX *context,
 					SAFE_FREE(dir->fname);
 					SAFE_FREE(dir);
 				}
-				saved_errno = SMBC_errno(context, targetcli);
+				saved_errno = cli_status_to_errno(status);
 
                                 if (saved_errno == EINVAL) {
 					struct stat sb = {0};
@@ -985,10 +985,12 @@ SMBC_opendir_ctx(SMBCCTX *context,
                                          */
                                         path[path_len] = '\0'; /* restore original path */
 
-                                        if (SMBC_getatr(context,
-							srv,
-							path,
-							&sb) &&
+					status = SMBC_getatr(
+						context,
+						srv,
+						path,
+						&sb);
+					if (NT_STATUS_IS_OK(status) &&
                                             !S_ISDIR(sb.st_mode)) {
 
                                                 /* It is.  Correct the error value */
@@ -1734,9 +1736,11 @@ SMBC_rmdir_ctx(SMBCCTX *context,
 	}
 	/*d_printf(">>>rmdir: resolved path as %s\n", targetpath);*/
 
-	if (!NT_STATUS_IS_OK(cli_rmdir(targetcli, targetpath))) {
+	status = cli_rmdir(targetcli, targetpath);
 
-		errno = SMBC_errno(context, targetcli);
+	if (!NT_STATUS_IS_OK(status)) {
+
+		errno = cli_status_to_errno(status);
 
 		if (errno == EACCES) {  /* Check if the dir empty or not */
 
@@ -1759,9 +1763,8 @@ SMBC_rmdir_ctx(SMBCCTX *context,
 
 			if (!NT_STATUS_IS_OK(status)) {
 				/* Fix errno to ignore latest error ... */
-				DEBUG(5, ("smbc_rmdir: "
-                                          "cli_list returned an error: %d\n",
-					  SMBC_errno(context, targetcli)));
+				DBG_INFO("cli_list returned an error: %s\n",
+					 nt_errstr(status));
 				errno = EACCES;
 
 			}
@@ -2241,22 +2244,26 @@ SMBC_unlink_ctx(SMBCCTX *context,
 	}
 	/*d_printf(">>>unlink: resolved path as %s\n", targetpath);*/
 
-	if (!NT_STATUS_IS_OK(cli_unlink(targetcli, targetpath, FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN))) {
+	status = cli_unlink(
+		targetcli,
+		targetpath,
+		FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN);
 
-		errno = SMBC_errno(context, targetcli);
+	if (!NT_STATUS_IS_OK(status)) {
+
+		errno = cli_status_to_errno(status);
 
 		if (errno == EACCES) { /* Check if the file is a directory */
 
 			int saverr = errno;
 			struct stat sb = {0};
-			bool ok;
 
-			ok = SMBC_getatr(context, srv, path, &sb);
-			if (!ok) {
+			status = SMBC_getatr(context, srv, path, &sb);
+			if (!NT_STATUS_IS_OK(status)) {
 				/* Hmmm, bad error ... What? */
 
-				errno = SMBC_errno(context, targetcli);
 				TALLOC_FREE(frame);
+				errno = cli_status_to_errno(status);
 				return -1;
 
 			}

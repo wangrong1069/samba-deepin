@@ -23,8 +23,11 @@
 */
 
 #include "replace.h"
+#define TEVENT_DEPRECATED
 #include "tevent.h"
 #include "tevent_internal.h"
+
+#undef tevent_thread_call_depth_reset_from_req
 
 /********************************************************************
  * Debug wrapper functions, modeled (with lot's of code copied as is)
@@ -47,10 +50,29 @@ int tevent_set_debug(struct tevent_context *ev,
 		errno = EINVAL;
 		return -1;
 	}
-
+	if (debug != NULL) {
+		/*
+		 * tevent_set_max_debug_level(ev, TEVENT_DEBUG_TRACE)
+		 * can be used to get full tracing, but we can to
+		 * avoid overhead by default.
+		 */
+		ev->debug_ops.max_level = TEVENT_DEBUG_WARNING;
+	} else {
+		ev->debug_ops.max_level = TEVENT_DEBUG_FATAL;
+	}
 	ev->debug_ops.debug = debug;
 	ev->debug_ops.context = context;
 	return 0;
+}
+
+enum tevent_debug_level
+tevent_set_max_debug_level(struct tevent_context *ev,
+			   enum tevent_debug_level max_level)
+{
+	enum tevent_debug_level old_level;
+	old_level = ev->debug_ops.max_level;
+	ev->debug_ops.max_level = max_level;
+	return old_level;
 }
 
 /*
@@ -95,6 +117,9 @@ void tevent_debug(struct tevent_context *ev, enum tevent_debug_level level,
 	}
 	if (ev->wrapper.glue != NULL) {
 		ev = tevent_wrapper_main_ev(ev);
+	}
+	if (level > ev->debug_ops.max_level) {
+		return;
 	}
 	if (ev->debug_ops.debug == NULL) {
 		return;
@@ -259,4 +284,88 @@ void tevent_trace_immediate_callback(struct tevent_context *ev,
 	if (ev->tracing.im.callback != NULL) {
 		ev->tracing.im.callback(im, tp, ev->tracing.im.private_data);
 	}
+}
+
+void tevent_set_trace_queue_callback(struct tevent_context *ev,
+				     tevent_trace_queue_callback_t cb,
+				     void *private_data)
+{
+	if (ev->wrapper.glue != NULL) {
+		ev = tevent_wrapper_main_ev(ev);
+		tevent_abort(ev, "tevent_set_trace_queue_callback() "
+		             "on wrapper");
+		return;
+	}
+
+	ev->tracing.qe.callback = cb;
+	ev->tracing.qe.private_data = private_data;
+}
+
+void tevent_get_trace_queue_callback(struct tevent_context *ev,
+				     tevent_trace_queue_callback_t *cb,
+				     void *p_private_data)
+{
+	*cb = ev->tracing.qe.callback;
+	*(void**)p_private_data = ev->tracing.qe.private_data;
+}
+
+void tevent_trace_queue_callback(struct tevent_context *ev,
+				 struct tevent_queue_entry *qe,
+				 enum tevent_event_trace_point tp)
+{
+	if (ev->tracing.qe.callback != NULL) {
+		ev->tracing.qe.callback(qe, tp, ev->tracing.qe.private_data);
+	}
+}
+
+_PRIVATE_ __thread
+struct tevent_thread_call_depth_state tevent_thread_call_depth_state_g;
+
+void tevent_thread_call_depth_activate(size_t *ptr)
+{
+}
+
+void tevent_thread_call_depth_deactivate(void)
+{
+}
+
+void tevent_thread_call_depth_start(struct tevent_req *req)
+{
+}
+
+void tevent_thread_call_depth_reset_from_req(struct tevent_req *req)
+{
+	_tevent_thread_call_depth_reset_from_req(req, NULL);
+}
+
+void _tevent_thread_call_depth_reset_from_req(struct tevent_req *req,
+					     const char *fname)
+{
+	if (tevent_thread_call_depth_state_g.cb != NULL) {
+		tevent_thread_call_depth_state_g.cb(
+			tevent_thread_call_depth_state_g.cb_private,
+			TEVENT_CALL_FLOW_REQ_RESET,
+			req,
+			req->internal.call_depth,
+			fname);
+	}
+}
+
+void tevent_thread_call_depth_set_callback(tevent_call_depth_callback_t f,
+					   void *private_data)
+{
+	/* In case of deactivation, make sure that call depth is set to 0 */
+	if (tevent_thread_call_depth_state_g.cb != NULL) {
+		tevent_thread_call_depth_state_g.cb(
+			tevent_thread_call_depth_state_g.cb_private,
+			TEVENT_CALL_FLOW_REQ_RESET,
+			NULL,
+			0,
+			"tevent_thread_call_depth_set_callback");
+	}
+	tevent_thread_call_depth_state_g = (struct tevent_thread_call_depth_state)
+	{
+		.cb = f,
+		.cb_private = private_data,
+	};
 }

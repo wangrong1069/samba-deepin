@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
 
    generalised event loop handling
@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include <talloc.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <stdbool.h>
 
 /* for old gcc releases that don't have the feature test macro __has_attribute */
@@ -38,6 +39,15 @@
 #define __has_attribute(x) 0
 #endif
 
+#ifdef TEVENT_DEPRECATED
+#ifndef _DEPRECATED_
+#if __has_attribute(deprecated) || (__GNUC__ >= 3)
+#define _DEPRECATED_ __attribute__ ((deprecated))
+#else
+#define _DEPRECATED_
+#endif
+#endif
+#endif
 
 struct tevent_context;
 struct tevent_ops;
@@ -614,6 +624,18 @@ typedef void (*tevent_debug_fn)(void *context,
 /**
  * Set destination for tevent debug messages
  *
+ * As of version 0.15.0 the invocation of
+ * the debug function for indiviual messages
+ * is limited by the current max_debug_level,
+ * which means TEVENT_DEBUG_TRACE messages
+ * are not passed by default:
+ *
+ * - tevent_set_debug() with debug == NULL implies
+ *   tevent_set_max_debug_level(ev, TEVENT_DEBUG_FATAL).
+ *
+ * - tevent_set_debug() with debug != NULL implies
+ *   tevent_set_max_debug_level(ev, TEVENT_DEBUG_WARNING).
+ *
  * @param[in] ev        Event context to debug
  * @param[in] debug     Function to handle output printing
  * @param[in] context   The context to pass to the debug function.
@@ -621,10 +643,28 @@ typedef void (*tevent_debug_fn)(void *context,
  * @return Always returns 0 as of version 0.9.8
  *
  * @note Default is to emit no debug messages
+ *
+ * @see tevent_set_max_debug_level()
  */
 int tevent_set_debug(struct tevent_context *ev,
 		     tevent_debug_fn debug,
 		     void *context);
+
+/**
+ * Set maximum debug level for tevent debug messages
+ *
+ * @param[in] ev         Event context to debug
+ * @param[in] max_level  Function to handle output printing
+ *
+ * @return The former max level is returned.
+ *
+ * @see tevent_set_debug()
+ *
+ * @note Available as of tevent 0.15.0
+ */
+enum tevent_debug_level
+tevent_set_max_debug_level(struct tevent_context *ev,
+			   enum tevent_debug_level max_level);
 
 /**
  * Designate stderr for debug message output
@@ -1009,6 +1049,13 @@ typedef void (*tevent_req_fn)(struct tevent_req *subreq);
  *                      callback.
  */
 void tevent_req_set_callback(struct tevent_req *req, tevent_req_fn fn, void *pvt);
+void _tevent_req_set_callback(struct tevent_req *req,
+			      tevent_req_fn fn,
+			      const char *fn_name,
+			      void *pvt);
+
+#define tevent_req_set_callback(req, fn, pvt) \
+	_tevent_req_set_callback(req, fn, #fn, pvt)
 
 #ifdef DOXYGEN
 /**
@@ -1165,6 +1212,11 @@ typedef bool (*tevent_req_cancel_fn)(struct tevent_req *req);
  * @param[in]  fn       A pointer to the cancel function.
  */
 void tevent_req_set_cancel_fn(struct tevent_req *req, tevent_req_cancel_fn fn);
+void _tevent_req_set_cancel_fn(struct tevent_req *req,
+			       tevent_req_cancel_fn fn,
+			       const char *fn_name);
+#define tevent_req_set_cancel_fn(req, fn) \
+	_tevent_req_set_cancel_fn(req, fn, #fn)
 
 #ifdef DOXYGEN
 /**
@@ -1226,6 +1278,11 @@ typedef void (*tevent_req_cleanup_fn)(struct tevent_req *req,
  * @param[in]  fn       A pointer to the cancel function.
  */
 void tevent_req_set_cleanup_fn(struct tevent_req *req, tevent_req_cleanup_fn fn);
+void _tevent_req_set_cleanup_fn(struct tevent_req *req,
+				tevent_req_cleanup_fn fn,
+				const char *fn_name);
+#define tevent_req_set_cleanup_fn(req, fn) \
+	_tevent_req_set_cleanup_fn(req, fn, #fn)
 
 #ifdef DOXYGEN
 /**
@@ -1261,9 +1318,20 @@ struct tevent_req *_tevent_req_create(TALLOC_CTX *mem_ctx,
 				      const char *type,
 				      const char *location);
 
+struct tevent_req *__tevent_req_create(TALLOC_CTX *mem_ctx,
+				       void *pstate,
+				       size_t state_size,
+				       const char *type,
+				       const char *func,
+				       const char *location);
+
 #define tevent_req_create(_mem_ctx, _pstate, _type) \
-	_tevent_req_create((_mem_ctx), (_pstate), sizeof(_type), \
-			   #_type, __location__)
+	__tevent_req_create((_mem_ctx),             \
+			    (_pstate),              \
+			    sizeof(_type),          \
+			    #_type,                 \
+			    __func__,               \
+			    __location__)
 #endif
 
 /**
@@ -1908,6 +1976,212 @@ struct timeval tevent_timeval_add(const struct timeval *tv, uint32_t secs,
  */
 struct timeval tevent_timeval_current_ofs(uint32_t secs, uint32_t usecs);
 
+/**
+ *
+ * @brief A cached version of getpid()
+ *
+ * We use getpid() in a lot a performance critical situations
+ * in order to check if caches are still valid in the current process.
+ *
+ * Calling getpid() always add the cost of an additional syscall!
+ *
+ * When tevent is build with pthread support, we already make use
+ * of pthread_atfork(), so it's trivial to use it maintain a cache for getpid().
+ *
+ * @return              The pid of the current process.
+ */
+pid_t tevent_cached_getpid(void);
+
+/* @} */
+
+
+/**
+ * @defgroup tevent_thread_call_depth The tevent call depth tracking functions
+ * @ingroup tevent
+ *
+ *
+ * The call depth tracking consists of two parts.
+ *
+ * Part 1 - storing the depth inside each tevent request.
+ *
+ * Each instance of 'struct tevent_req' internally stores the value of the
+ * current depth. If a new subrequest is created via tevent_req_create(), the
+ * newly created subrequest gets the value from the parent incremented by 1.
+ *
+ * Part 2 - updating external variable with the call depth of the currently
+ * processed tevent request.
+ *
+ * The intended use of call depth is for the trace indentation.  This is done
+ * by registering the address of an external size_t variable via
+ * tevent_thread_call_depth_activate(). And the tracing code just reads it's
+ * value.
+ *
+ * The updates happen during:
+ *
+ * tevent_req_create()
+ * - external variable is set to the value of the newly created request (i.e.
+ *   value of the parent incremented by 1)
+ *
+ * tevent_req_notify_callback()
+ * - external variable is set to the value of the parent tevent request, which
+ *   is just about to be processed
+ *
+ * tevent_queue_immediate_trigger()
+ * - external variable is set to the value of the request coming from the queue
+ *
+ *
+ * While 'Part 1' maintains the call depth value inside each teven request
+ * precisely, the value of the external variable depends on the call flow and
+ * can be changed after return from a function call, so it no longer matches
+ * the value of the request being processed in the current function.
+ *
+ * @code
+ * struct tevent_req *foo_send(TALLOC_CTX *mem_ctx, struct tevent_context *ev)
+ * {
+ *     struct tevent_req *req, *subreq;
+ *     struct foo_state *state;
+ *
+ *     // External variable has value 'X', which is the value in parent code
+ *     // It is ok, since tracing starts often only after tevent_req_create()
+ *     req = tevent_req_create(mem_ctx, &state, struct foo_state);
+ *
+ *     // External variable has now value 'X + 1'
+ *     D_DEBUG("foo_send(): the external variable has the expected value\n");
+ *
+ *     subreq = bar_send(state, ev, ...);
+ *     tevent_req_set_callback(subreq, foo_done, req);
+ *
+ *     // External variable has value 'X + 1 + n', where n > 0 and n is the
+ *     // depth reached in bar_send().
+ *     // We want to reset it via tevent_thread_call_depth_reset_from_req(),
+ *     // since we want the following D_DEBUG() to have the right trace
+ *     //indentation.
+ *
+ *     tevent_thread_call_depth_reset_from_req(req);
+ *     // External variable has again value 'X + 1' taken from req.
+ *     D_DEBUG("foo_send(): the external variable has the expected value\n");
+ *     return req;
+ * }
+ *
+ * static void foo_done(struct tevent_req *subreq)
+ * {
+ *     struct tevent_req *req =
+ *         tevent_req_callback_data(subreq,
+ *         struct tevent_req);
+ *     struct foo_state *state =
+ *         tevent_req_data(req,
+ *         struct foo_state);
+ *
+ *     // external variable has value 'X + 1'
+ *
+ *     D_DEBUG("foo_done(): the external variable has the expected value\n");
+ *     status = bar_recv(subreq, state, ...)
+ *     tevent_req_done(req);
+ * }
+ *
+ * NTSTATUS foo_recv(struct tevent_req *req)
+ * {
+ *     struct foo_state *state = tevent_req_data( req, struct foo_state);
+ *
+ *     // external variable has value 'X' (not 'X + 1')
+ *     // which is ok, if we consider _recv() to be an access function
+ *     // called from the parent context
+ *
+ *     D_DEBUG("foo_recv(): external variable has the value from parent\n");
+ *     return NT_STATUS_OK;
+ * }
+ * @endcode
+ *
+ * Interface has 3 parts:
+ *
+ * Part 1: activation/deactivation
+ *
+ * void tevent_thread_call_depth_set_callback(f, private_data)
+ * Register a callback that can track 'call depth' and 'request flow'
+ * NULL as a function callback means deactivation.
+ *
+ * Part 2: Mark the request (and its subrequests) to be tracked
+ *
+ * tevent_thread_call_depth_start(struct tevent_req *req)
+ *
+ * By default, all newly created requests have call depth set to 0.
+ * tevent_thread_call_depth_start() should be called shortly after
+ * tevent_req_create(). It sets the call depth to 1.
+ * Subrequest will have call depth 2 and so on.
+ *
+ * Part 3: reset the external variable using value from tevent request
+ *
+ * tevent_thread_call_depth_reset_from_req(struct tevent_req *req)
+ *
+ * If the call depth is used for trace indentation, it might be useful to
+ * reset the external variable to the call depth of currently processed tevent
+ * request, since the ext. variable can be changed after return from a function
+ * call that has created subrequests.
+ *
+ * THREADING
+ *
+ * The state is thread specific, i.e. each thread can activate it and register
+ * its own external variable.
+ *
+ * @{
+ */
+
+enum tevent_thread_call_depth_cmd {
+	TEVENT_CALL_FLOW_REQ_RESET,
+	TEVENT_CALL_FLOW_REQ_CREATE,
+	TEVENT_CALL_FLOW_REQ_CANCEL,
+	TEVENT_CALL_FLOW_REQ_CLEANUP,
+	TEVENT_CALL_FLOW_REQ_NOTIFY_CB,
+	TEVENT_CALL_FLOW_REQ_QUEUE_ENTER,
+	TEVENT_CALL_FLOW_REQ_QUEUE_TRIGGER,
+	TEVENT_CALL_FLOW_REQ_QUEUE_LEAVE,
+};
+
+typedef void (*tevent_call_depth_callback_t)(
+	void *private_data,
+	enum tevent_thread_call_depth_cmd cmd,
+	struct tevent_req *req,
+	size_t depth,
+	const char *fname);
+
+struct tevent_thread_call_depth_state {
+	tevent_call_depth_callback_t cb;
+	void *cb_private;
+};
+
+extern __thread struct tevent_thread_call_depth_state
+	tevent_thread_call_depth_state_g;
+
+/**
+ * Register callback function for request/subrequest call depth / flow tracking.
+ *
+ * @param[in]  f  External call depth and flow handling function
+ */
+void tevent_thread_call_depth_set_callback(tevent_call_depth_callback_t f,
+					   void *private_data);
+
+#ifdef TEVENT_DEPRECATED
+
+void tevent_thread_call_depth_activate(size_t *ptr) _DEPRECATED_;
+void tevent_thread_call_depth_deactivate(void) _DEPRECATED_;
+void tevent_thread_call_depth_start(struct tevent_req *req) _DEPRECATED_;
+
+#endif
+
+/**
+ * Reset the external call depth to the call depth of the request.
+ *
+ * @param[in]  req   Request from which the call depth is reset.
+ * variable.
+ */
+void tevent_thread_call_depth_reset_from_req(struct tevent_req *req);
+
+void _tevent_thread_call_depth_reset_from_req(struct tevent_req *req,
+					      const char *fname);
+
+#define tevent_thread_call_depth_reset_from_req(req) \
+	_tevent_thread_call_depth_reset_from_req(req, __func__)
+
 /* @} */
 
 
@@ -1929,6 +2203,55 @@ struct timeval tevent_timeval_current_ofs(uint32_t secs, uint32_t usecs);
 
 struct tevent_queue;
 struct tevent_queue_entry;
+
+/**
+ * @brief Associate a custom tag with the queue entry.
+ *
+ * This tag can be then retrieved with tevent_queue_entry_get_tag()
+ *
+ * @param[in]  qe   The queue entry.
+ *
+ * @param[in]  tag  Custom tag.
+ */
+void tevent_queue_entry_set_tag(struct tevent_queue_entry *qe, uint64_t tag);
+
+/**
+ * @brief Get custom queue entry tag.
+ */
+uint64_t tevent_queue_entry_get_tag(const struct tevent_queue_entry *qe);
+
+typedef void (*tevent_trace_queue_callback_t)(struct tevent_queue_entry *qe,
+					      enum tevent_event_trace_point,
+					      void *private_data);
+
+/**
+ * Register a callback to be called at certain trace points of queue.
+ *
+ * @param[in] ev             Event context
+ * @param[in] cb             Trace callback
+ * @param[in] private_data   Data to be passed to callback
+ *
+ * @note The callback will be called at trace points defined by
+ * tevent_event_trace_point. Call with NULL to reset.
+ */
+void tevent_set_trace_queue_callback(struct tevent_context *ev,
+				     tevent_trace_queue_callback_t cb,
+				     void *private_data);
+
+/**
+ * Retrieve the current trace callback of queue.
+ *
+ * @param[in] ev             Event context
+ * @param[out] cb            Registered trace callback
+ * @param[out] p_private_data  Registered data to be passed to callback
+ *
+ * @note This can be used to allow one component that wants to
+ * register a callback to respect the callback that another component
+ * has already registered.
+ */
+void tevent_get_trace_queue_callback(struct tevent_context *ev,
+				     tevent_trace_queue_callback_t *cb,
+				     void *p_private_data);
 
 #ifdef DOXYGEN
 /**
@@ -1994,6 +2317,16 @@ bool tevent_queue_add(struct tevent_queue *queue,
 		      tevent_queue_trigger_fn_t trigger,
 		      void *private_data);
 
+bool _tevent_queue_add(struct tevent_queue *queue,
+		      struct tevent_context *ev,
+		      struct tevent_req *req,
+		      tevent_queue_trigger_fn_t trigger,
+		      const char* trigger_name,
+		      void *private_data);
+
+#define tevent_queue_add(queue, ev, req, trigger, private_data) \
+     _tevent_queue_add(queue, ev, req, trigger, #trigger, private_data)
+
 /**
  * @brief Add a tevent request to the queue.
  *
@@ -2026,6 +2359,17 @@ struct tevent_queue_entry *tevent_queue_add_entry(
 					struct tevent_req *req,
 					tevent_queue_trigger_fn_t trigger,
 					void *private_data);
+
+struct tevent_queue_entry *_tevent_queue_add_entry(
+					struct tevent_queue *queue,
+					struct tevent_context *ev,
+					struct tevent_req *req,
+					tevent_queue_trigger_fn_t trigger,
+					const char* trigger_name,
+					void *private_data);
+
+#define tevent_queue_add_entry(queue, ev, req, trigger, private_data) \
+	_tevent_queue_add_entry(queue, ev, req, trigger, #trigger, private_data);
 
 /**
  * @brief Add a tevent request to the queue using a possible optimization.
@@ -2069,6 +2413,17 @@ struct tevent_queue_entry *tevent_queue_add_optimize_empty(
 					struct tevent_req *req,
 					tevent_queue_trigger_fn_t trigger,
 					void *private_data);
+
+struct tevent_queue_entry *_tevent_queue_add_optimize_empty(
+					struct tevent_queue *queue,
+					struct tevent_context *ev,
+					struct tevent_req *req,
+					tevent_queue_trigger_fn_t trigger,
+					const char* trigger_name,
+					void *private_data);
+
+#define tevent_queue_add_optimize_empty(queue, ev, req, trigger, private_data) \
+	_tevent_queue_add_optimize_empty(queue, ev, req, trigger, #trigger, private_data)
 
 /**
  * @brief Untrigger an already triggered queue entry.
@@ -2294,13 +2649,6 @@ void _tevent_threaded_schedule_immediate(struct tevent_threaded_context *tctx,
 #endif
 
 #ifdef TEVENT_DEPRECATED
-#ifndef _DEPRECATED_
-#if __has_attribute(deprecated) || (__GNUC__ >= 3)
-#define _DEPRECATED_ __attribute__ ((deprecated))
-#else
-#define _DEPRECATED_
-#endif
-#endif
 void tevent_loop_allow_nesting(struct tevent_context *ev) _DEPRECATED_;
 void tevent_loop_set_nesting_hook(struct tevent_context *ev,
 				  tevent_nesting_hook hook,
@@ -2376,6 +2724,7 @@ struct tevent_ops {
 };
 
 bool tevent_register_backend(const char *name, const struct tevent_ops *ops);
+const struct tevent_ops *tevent_find_ops_byname(const char *name);
 
 /* @} */
 
@@ -2590,7 +2939,7 @@ bool _tevent_context_push_use(struct tevent_context *ev,
  *
  * The wrapper event context might undo something like impersonation.
  *
- * This must be called after a succesful tevent_context_push_use().
+ * This must be called after a successful tevent_context_push_use().
  * Any ordering violation results in calling
  * the abort handler of the given tevent context.
  *
@@ -2642,7 +2991,7 @@ bool tevent_context_same_loop(struct tevent_context *ev1,
  * @defgroup tevent_compat The tevent compatibility functions
  * @ingroup tevent
  *
- * The following definitions are usueful only for compatibility with the
+ * The following definitions are useful only for compatibility with the
  * implementation originally developed within the samba4 code and will be
  * soon removed. Please NEVER use in new code.
  *

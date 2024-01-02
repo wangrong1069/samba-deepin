@@ -31,7 +31,7 @@ interface rpc_host_msg
 		/**
 		 * @brief Auth info inherited from SMB
 		 */
-		named_pipe_auth_req_info5 *npa_info5;
+		named_pipe_auth_req_info7 *npa_info7;
 
 		/**
 		 * @brief Raw bind PDU
@@ -66,7 +66,7 @@ interface rpc_host_msg
 		/**
 		 * @brief Which of the processes of a helper prog is this from
 		 */
-		uint8 worker_index;
+		uint32 worker_index;
 
 		/**
 		 * @brief How many clients this process serves right now

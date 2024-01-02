@@ -357,7 +357,7 @@ int sys_acl_valid(SMB_ACL_T acl_d)
 /*
  * acl_get_file, acl_get_fd, acl_set_file, acl_set_fd and
  * sys_acl_delete_def_fd are to be redirected to the default
- * statically-bound acl vfs module, but they are replacable.
+ * statically-bound acl vfs module, but they are replaceable.
  */
 
 #if defined(HAVE_POSIX_ACLS)
@@ -391,7 +391,7 @@ SMB_ACL_T sys_acl_get_fd(vfs_handle_struct *handle,
 			 SMB_ACL_TYPE_T type,
 			 TALLOC_CTX *mem_ctx)
 {
-	return aixacl_sys_acl_get_fd(handle, fsp, mem_ctx);
+	return aixacl_sys_acl_get_fd(handle, fsp, type, mem_ctx);
 }
 
 int sys_acl_set_fd(vfs_handle_struct *handle,

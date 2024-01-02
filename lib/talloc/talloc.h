@@ -56,7 +56,7 @@ extern "C" {
  */
 
 #define TALLOC_VERSION_MAJOR 2
-#define TALLOC_VERSION_MINOR 3
+#define TALLOC_VERSION_MINOR 4
 
 _PUBLIC_ int talloc_version_major(void);
 _PUBLIC_ int talloc_version_minor(void);
@@ -666,6 +666,19 @@ _PUBLIC_ void *talloc_parent(const void *ptr);
 _PUBLIC_ const char *talloc_parent_name(const void *ptr);
 
 /**
+ * @brief Get the size of a talloc chunk.
+ *
+ * This function lets you know the amount of memory allocated so far by
+ * this context. It does NOT account for subcontext memory.
+ * This can be used to calculate the size of an array.
+ *
+ * @param[in]  ctx      The talloc chunk.
+ *
+ * @return              The size of the talloc chunk.
+ */
+_PUBLIC_ size_t talloc_get_size(const void *ctx);
+
+/**
  * @brief Get the total size of a talloc chunk including its children.
  *
  * The function returns the total size in bytes used by this pointer and all
@@ -1069,19 +1082,6 @@ _PUBLIC_ int talloc_unlink(const void *context, void *ptr);
  * @return              A talloc context, NULL on error.
  */
 _PUBLIC_ void *talloc_autofree_context(void) _DEPRECATED_;
-
-/**
- * @brief Get the size of a talloc chunk.
- *
- * This function lets you know the amount of memory allocated so far by
- * this context. It does NOT account for subcontext memory.
- * This can be used to calculate the size of an array.
- *
- * @param[in]  ctx      The talloc chunk.
- *
- * @return              The size of the talloc chunk.
- */
-_PUBLIC_ size_t talloc_get_size(const void *ctx);
 
 /**
  * @brief Show the parentage of a context.
@@ -1577,6 +1577,20 @@ _PUBLIC_ char *talloc_vasprintf_append(char *s, const char *fmt, va_list ap) PRI
  * @see talloc_vasprintf()
  */
 _PUBLIC_ char *talloc_vasprintf_append_buffer(char *s, const char *fmt, va_list ap) PRINTF_ATTRIBUTE(2,0);
+
+/**
+ * @brief Build up a string buffer, handle allocation failure
+ *
+ * @param[in] ps Pointer to the talloc'ed string to be extended
+ * @param[in] fmt The format string
+ * @param[in] ... The parameters used to fill fmt.
+ *
+ * This does nothing if *ps is NULL and sets *ps to NULL if the
+ * intermediate reallocation fails. Useful when building up a string
+ * step by step, no intermediate NULL checks are required.
+ */
+_PUBLIC_ void talloc_asprintf_addbuf(char **ps, const char *fmt, ...) \
+	PRINTF_ATTRIBUTE(2,3);
 
 /**
  * @brief Format a string.

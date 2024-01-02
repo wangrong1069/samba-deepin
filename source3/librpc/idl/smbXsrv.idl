@@ -459,7 +459,6 @@ interface smbXsrv
 	} smbXsrv_open_flags;
 
 	typedef struct {
-		[ignore] db_record 			*db_rec;
 		server_id				server_id;
 		uint32					open_global_id;
 		hyper					open_persistent_id;
@@ -514,7 +513,6 @@ interface smbXsrv
 	 */
 	typedef struct {
 		[ignore] smbXsrv_open_table		*table;
-		[ignore] db_record 			*db_rec;
 		uint32					local_id;
 		[ref] smbXsrv_open_global0		*global;
 		NTSTATUS				status;

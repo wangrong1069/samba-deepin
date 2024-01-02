@@ -21,6 +21,7 @@
 #include "auth/gensec/gensec.h"
 #include "libcli/smb/smb_util.h"
 #include "cmdline_private.h"
+#include "lib/util/util_process.h"
 
 #include <samba/version.h>
 
@@ -134,8 +135,9 @@ void samba_cmdline_set_machine_account_fn(
 	cli_credentials_set_machine_account_fn = fn;
 }
 
-void samba_cmdline_burn(int argc, char *argv[])
+bool samba_cmdline_burn(int argc, char *argv[])
 {
+	bool burnt = false;
 	bool found = false;
 	bool is_user = false;
 	char *p = NULL;
@@ -145,9 +147,13 @@ void samba_cmdline_burn(int argc, char *argv[])
 	for (i = 0; i < argc; i++) {
 		p = argv[i];
 		if (p == NULL) {
-			return;
+			return false;
 		}
 
+		/*
+		 * Take care that this list must be in longest-match
+		 * first order
+		 */
 		if (strncmp(p, "-U", 2) == 0) {
 			ulen = 2;
 			found = true;
@@ -156,8 +162,14 @@ void samba_cmdline_burn(int argc, char *argv[])
 			ulen = 6;
 			found = true;
 			is_user = true;
+		} else if (strncmp(p, "--password2", 11) == 0) {
+			ulen = 11;
+			found = true;
 		} else if (strncmp(p, "--password", 10) == 0) {
 			ulen = 10;
+			found = true;
+		} else if (strncmp(p, "--newpassword", 13) == 0) {
+			ulen = 13;
 			found = true;
 		}
 
@@ -180,8 +192,10 @@ void samba_cmdline_burn(int argc, char *argv[])
 			memset_s(p, strlen(p), '\0', strlen(p));
 			found = false;
 			is_user = false;
+			burnt = true;
 		}
 	}
+	return burnt;
 }
 
 static bool is_popt_table_end(const struct poptOption *o)
@@ -296,6 +310,7 @@ poptContext samba_popt_get_context(const char * name,
 		return NULL;
 	}
 #endif
+	process_save_binary_name(name);
 	return poptGetContext(name, argc, argv, options, flags);
 }
 
@@ -779,7 +794,7 @@ static void popt_common_credentials_callback(poptContext popt_ctx,
 		 * This calls cli_credentials_set_conf() to get the defaults
 		 * form smb.conf and set the winbind separator.
 		 *
-		 * Just warn that we can't read the smb.conf. The might not be
+		 * Just warn that we can't read the smb.conf. There might not be
 		 * one available or we want to ignore it.
 		 */
 		ok = cli_credentials_guess(creds, lp_ctx);
@@ -904,57 +919,73 @@ static void popt_common_credentials_callback(poptContext popt_ctx,
 			}
 		}
 		break;
-	case OPT_USE_KERBEROS:
-		if (arg != NULL) {
-			int32_t use_kerberos =
-				lpcfg_parse_enum_vals("client use kerberos", arg);
+	case OPT_USE_KERBEROS: {
+		int32_t use_kerberos = INT_MIN;
+		if (arg == NULL) {
+			fprintf(stderr,
+				"Failed to parse "
+				"--use-kerberos=desired|required|off: "
+				"Missing argument\n");
+			exit(1);
+		}
 
-			if (use_kerberos == INT_MIN) {
-				fprintf(stderr, "Failed to parse --use-kerberos\n");
-				exit(1);
-			}
+		use_kerberos = lpcfg_parse_enum_vals("client use kerberos",
+						     arg);
+		if (use_kerberos == INT_MIN) {
+			fprintf(stderr,
+				"Failed to parse "
+				"--use-kerberos=desired|required|off: "
+				"Invalid argument\n");
+			exit(1);
+		}
 
-			ok = cli_credentials_set_kerberos_state(creds,
-								use_kerberos,
-								CRED_SPECIFIED);
-			if (!ok) {
-				fprintf(stderr,
-					"Failed to set Kerberos state to %s!\n", arg);
-				exit(1);
-			}
+		ok = cli_credentials_set_kerberos_state(creds,
+							use_kerberos,
+							CRED_SPECIFIED);
+		if (!ok) {
+			fprintf(stderr,
+				"Failed to set Kerberos state to %s!\n", arg);
+			exit(1);
 		}
 		break;
-	case OPT_USE_KERBEROS_CCACHE:
-		if (arg != NULL) {
-			const char *error_string = NULL;
-			int rc;
+	}
+	case OPT_USE_KERBEROS_CCACHE: {
+		const char *error_string = NULL;
+		int rc;
 
-			ok = cli_credentials_set_kerberos_state(creds,
-								CRED_USE_KERBEROS_REQUIRED,
-								CRED_SPECIFIED);
-			if (!ok) {
-				fprintf(stderr,
-					"Failed to set Kerberos state to %s!\n", arg);
-				exit(1);
-			}
-
-			rc = cli_credentials_set_ccache(creds,
-							lp_ctx,
-							arg,
-							CRED_SPECIFIED,
-							&error_string);
-			if (rc != 0) {
-				fprintf(stderr,
-					"Error reading krb5 credentials cache: '%s'"
-					" - %s\n",
-					arg,
-					error_string);
-				exit(1);
-			}
-
-			skip_password_callback = true;
+		if (arg == NULL) {
+			fprintf(stderr,
+				"Failed to parse --use-krb5-ccache=CCACHE: "
+				"Missing argument\n");
+			exit(1);
 		}
+
+		ok = cli_credentials_set_kerberos_state(creds,
+							CRED_USE_KERBEROS_REQUIRED,
+							CRED_SPECIFIED);
+		if (!ok) {
+			fprintf(stderr,
+				"Failed to set Kerberos state to %s!\n", arg);
+			exit(1);
+		}
+
+		rc = cli_credentials_set_ccache(creds,
+						lp_ctx,
+						arg,
+						CRED_SPECIFIED,
+						&error_string);
+		if (rc != 0) {
+			fprintf(stderr,
+				"Error reading krb5 credentials cache: '%s'"
+				" - %s\n",
+				arg,
+				error_string);
+			exit(1);
+		}
+
+		skip_password_callback = true;
 		break;
+	}
 	case OPT_USE_WINBIND_CCACHE:
 	{
 		uint32_t gensec_features;
@@ -974,68 +1005,75 @@ static void popt_common_credentials_callback(poptContext popt_ctx,
 		skip_password_callback = true;
 		break;
 	}
-	case OPT_CLIENT_PROTECTION:
-		if (arg != NULL) {
-			uint32_t gensec_features;
-			enum smb_signing_setting signing_state =
-				SMB_SIGNING_OFF;
-			enum smb_encryption_setting encryption_state =
-				SMB_ENCRYPTION_OFF;
+	case OPT_CLIENT_PROTECTION: {
+		uint32_t gensec_features;
+		enum smb_signing_setting signing_state =
+			SMB_SIGNING_OFF;
+		enum smb_encryption_setting encryption_state =
+			SMB_ENCRYPTION_OFF;
 
-			gensec_features =
-				cli_credentials_get_gensec_features(
-						creds);
+		if (arg == NULL) {
+			fprintf(stderr,
+				"Failed to parse "
+				"--client-protection=sign|encrypt|off: "
+				"Missing argument\n");
+			exit(1);
+		}
 
-			if (strequal(arg, "off")) {
-				gensec_features &=
-					~(GENSEC_FEATURE_SIGN|GENSEC_FEATURE_SEAL);
+		gensec_features =
+			cli_credentials_get_gensec_features(
+					creds);
 
-				signing_state = SMB_SIGNING_OFF;
-				encryption_state = SMB_ENCRYPTION_OFF;
-			} else if (strequal(arg, "sign")) {
-				gensec_features |= GENSEC_FEATURE_SIGN;
+		if (strequal(arg, "off")) {
+			gensec_features &=
+				~(GENSEC_FEATURE_SIGN|GENSEC_FEATURE_SEAL);
 
-				signing_state = SMB_SIGNING_REQUIRED;
-				encryption_state = SMB_ENCRYPTION_OFF;
-			} else if (strequal(arg, "encrypt")) {
-				gensec_features |= GENSEC_FEATURE_SEAL;
+			signing_state = SMB_SIGNING_OFF;
+			encryption_state = SMB_ENCRYPTION_OFF;
+		} else if (strequal(arg, "sign")) {
+			gensec_features |= GENSEC_FEATURE_SIGN;
 
-				signing_state = SMB_SIGNING_REQUIRED;
-				encryption_state = SMB_ENCRYPTION_REQUIRED;
-			} else {
-				fprintf(stderr,
-					"Failed to parse --client-protection\n");
-				exit(1);
-			}
+			signing_state = SMB_SIGNING_REQUIRED;
+			encryption_state = SMB_ENCRYPTION_OFF;
+		} else if (strequal(arg, "encrypt")) {
+			gensec_features |= GENSEC_FEATURE_SEAL;
 
-			ok = cli_credentials_set_gensec_features(creds,
-								 gensec_features,
-								 CRED_SPECIFIED);
-			if (!ok) {
-				fprintf(stderr,
-					"Failed to set gensec feature!\n");
-				exit(1);
-			}
+			signing_state = SMB_SIGNING_REQUIRED;
+			encryption_state = SMB_ENCRYPTION_REQUIRED;
+		} else {
+			fprintf(stderr,
+				"Failed to parse --client-protection\n");
+			exit(1);
+		}
 
-			ok = cli_credentials_set_smb_signing(creds,
-							     signing_state,
-							     CRED_SPECIFIED);
-			if (!ok) {
-				fprintf(stderr,
-					"Failed to set smb signing!\n");
-				exit(1);
-			}
-
-			ok = cli_credentials_set_smb_encryption(creds,
-								encryption_state,
+		ok = cli_credentials_set_gensec_features(creds,
+								gensec_features,
 								CRED_SPECIFIED);
-			if (!ok) {
-				fprintf(stderr,
-					"Failed to set smb encryption!\n");
-				exit(1);
-			}
+		if (!ok) {
+			fprintf(stderr,
+				"Failed to set gensec feature!\n");
+			exit(1);
+		}
+
+		ok = cli_credentials_set_smb_signing(creds,
+							signing_state,
+							CRED_SPECIFIED);
+		if (!ok) {
+			fprintf(stderr,
+				"Failed to set smb signing!\n");
+			exit(1);
+		}
+
+		ok = cli_credentials_set_smb_encryption(creds,
+							encryption_state,
+							CRED_SPECIFIED);
+		if (!ok) {
+			fprintf(stderr,
+				"Failed to set smb encryption!\n");
+			exit(1);
 		}
 		break;
+	}
 	} /* switch */
 }
 

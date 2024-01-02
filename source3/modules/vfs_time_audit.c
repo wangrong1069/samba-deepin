@@ -489,56 +489,19 @@ static DIR *smb_time_audit_fdopendir(vfs_handle_struct *handle,
 
 static struct dirent *smb_time_audit_readdir(vfs_handle_struct *handle,
 					     struct files_struct *dirfsp,
-					     DIR *dirp,
-					     SMB_STRUCT_STAT *sbuf)
+					     DIR *dirp)
 {
 	struct dirent *result;
 	struct timespec ts1,ts2;
 	double timediff;
 
 	clock_gettime_mono(&ts1);
-	result = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirp, sbuf);
+	result = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirp);
 	clock_gettime_mono(&ts2);
 	timediff = nsec_time_diff(&ts2,&ts1)*1.0e-9;
 
 	if (timediff > audit_timeout) {
 		smb_time_audit_log("readdir", timediff);
-	}
-
-	return result;
-}
-
-static void smb_time_audit_seekdir(vfs_handle_struct *handle,
-				   DIR *dirp, long offset)
-{
-	struct timespec ts1,ts2;
-	double timediff;
-
-	clock_gettime_mono(&ts1);
-	SMB_VFS_NEXT_SEEKDIR(handle, dirp, offset);
-	clock_gettime_mono(&ts2);
-	timediff = nsec_time_diff(&ts2,&ts1)*1.0e-9;
-
-	if (timediff > audit_timeout) {
-		smb_time_audit_log("seekdir", timediff);
-	}
-
-}
-
-static long smb_time_audit_telldir(vfs_handle_struct *handle,
-				   DIR *dirp)
-{
-	long result;
-	struct timespec ts1,ts2;
-	double timediff;
-
-	clock_gettime_mono(&ts1);
-	result = SMB_VFS_NEXT_TELLDIR(handle, dirp);
-	clock_gettime_mono(&ts2);
-	timediff = nsec_time_diff(&ts2,&ts1)*1.0e-9;
-
-	if (timediff > audit_timeout) {
-		smb_time_audit_log("telldir", timediff);
 	}
 
 	return result;
@@ -621,8 +584,7 @@ static int smb_time_audit_openat(vfs_handle_struct *handle,
 				 const struct files_struct *dirfsp,
 				 const struct smb_filename *smb_fname,
 				 struct files_struct *fsp,
-				 int flags,
-				 mode_t mode)
+				 const struct vfs_open_how *how)
 {
 	int result;
 	struct timespec ts1,ts2;
@@ -633,8 +595,7 @@ static int smb_time_audit_openat(vfs_handle_struct *handle,
 				     dirfsp,
 				     smb_fname,
 				     fsp,
-				     flags,
-				     mode);
+				     how);
 	clock_gettime_mono(&ts2);
 	timediff = nsec_time_diff(&ts2,&ts1)*1.0e-9;
 
@@ -647,6 +608,7 @@ static int smb_time_audit_openat(vfs_handle_struct *handle,
 
 static NTSTATUS smb_time_audit_create_file(vfs_handle_struct *handle,
 					   struct smb_request *req,
+					   struct files_struct *dirfsp,
 					   struct smb_filename *fname,
 					   uint32_t access_mask,
 					   uint32_t share_access,
@@ -672,6 +634,7 @@ static NTSTATUS smb_time_audit_create_file(vfs_handle_struct *handle,
 	result = SMB_VFS_NEXT_CREATE_FILE(
 		handle,					/* handle */
 		req,					/* req */
+		dirfsp,					/* dirfsp */
 		fname,					/* fname */
 		access_mask,				/* access_mask */
 		share_access,				/* share_access */
@@ -1102,6 +1065,29 @@ static int smb_time_audit_lstat(vfs_handle_struct *handle,
 
 	if (timediff > audit_timeout) {
 		smb_time_audit_log_smb_fname("lstat", timediff, path);
+	}
+
+	return result;
+}
+
+static int smb_time_audit_fstatat(
+	struct vfs_handle_struct *handle,
+	const struct files_struct *dirfsp,
+	const struct smb_filename *smb_fname,
+	SMB_STRUCT_STAT *sbuf,
+	int flags)
+{
+	int result;
+	struct timespec ts1,ts2;
+	double timediff;
+
+	clock_gettime_mono(&ts1);
+	result = SMB_VFS_NEXT_FSTATAT(handle, dirfsp, smb_fname, sbuf, flags);
+	clock_gettime_mono(&ts2);
+	timediff = nsec_time_diff(&ts2,&ts1)*1.0e-9;
+
+	if (timediff > audit_timeout) {
+		smb_time_audit_log_smb_fname("fstatat", timediff, smb_fname);
 	}
 
 	return result;
@@ -1694,39 +1680,43 @@ static NTSTATUS smb_time_audit_fstreaminfo(vfs_handle_struct *handle,
 	return result;
 }
 
-static int smb_time_audit_get_real_filename(struct vfs_handle_struct *handle,
-					    const struct smb_filename *path,
-					    const char *name,
-					    TALLOC_CTX *mem_ctx,
-					    char **found_name)
+static NTSTATUS smb_time_audit_get_real_filename_at(
+	struct vfs_handle_struct *handle,
+	struct files_struct *dirfsp,
+	const char *name,
+	TALLOC_CTX *mem_ctx,
+	char **found_name)
 {
-	int result;
+	NTSTATUS result;
 	struct timespec ts1,ts2;
 	double timediff;
 
 	clock_gettime_mono(&ts1);
-	result = SMB_VFS_NEXT_GET_REAL_FILENAME(handle, path, name, mem_ctx,
-						found_name);
+	result = SMB_VFS_NEXT_GET_REAL_FILENAME_AT(
+		handle, dirfsp, name, mem_ctx, found_name);
 	clock_gettime_mono(&ts2);
 	timediff = nsec_time_diff(&ts2,&ts1)*1.0e-9;
 
 	if (timediff > audit_timeout) {
-		smb_time_audit_log_fname("get_real_filename",
-					 timediff, path->base_name);
+		smb_time_audit_log_fname("get_real_filename_at",
+					 timediff,
+					 fsp_str_dbg(dirfsp));
 	}
 
 	return result;
 }
 
-static const char *smb_time_audit_connectpath(vfs_handle_struct *handle,
-					const struct smb_filename *smb_fname)
+static const char *smb_time_audit_connectpath(
+	vfs_handle_struct *handle,
+	const struct files_struct *dirfsp,
+	const struct smb_filename *smb_fname)
 {
 	const char *result;
 	struct timespec ts1,ts2;
 	double timediff;
 
 	clock_gettime_mono(&ts1);
-	result = SMB_VFS_NEXT_CONNECTPATH(handle, smb_fname);
+	result = SMB_VFS_NEXT_CONNECTPATH(handle, dirfsp, smb_fname);
 	clock_gettime_mono(&ts2);
 	timediff = nsec_time_diff(&ts2,&ts1)*1.0e-9;
 
@@ -2722,8 +2712,6 @@ static struct vfs_fn_pointers vfs_time_audit_fns = {
 	.read_dfs_pathat_fn = smb_time_audit_read_dfs_pathat,
 	.fdopendir_fn = smb_time_audit_fdopendir,
 	.readdir_fn = smb_time_audit_readdir,
-	.seekdir_fn = smb_time_audit_seekdir,
-	.telldir_fn = smb_time_audit_telldir,
 	.rewind_dir_fn = smb_time_audit_rewinddir,
 	.mkdirat_fn = smb_time_audit_mkdirat,
 	.closedir_fn = smb_time_audit_closedir,
@@ -2745,6 +2733,7 @@ static struct vfs_fn_pointers vfs_time_audit_fns = {
 	.stat_fn = smb_time_audit_stat,
 	.fstat_fn = smb_time_audit_fstat,
 	.lstat_fn = smb_time_audit_lstat,
+	.fstatat_fn = smb_time_audit_fstatat,
 	.get_alloc_size_fn = smb_time_audit_get_alloc_size,
 	.unlinkat_fn = smb_time_audit_unlinkat,
 	.fchmod_fn = smb_time_audit_fchmod,
@@ -2778,7 +2767,7 @@ static struct vfs_fn_pointers vfs_time_audit_fns = {
 	.snap_create_fn = smb_time_audit_snap_create,
 	.snap_delete_fn = smb_time_audit_snap_delete,
 	.fstreaminfo_fn = smb_time_audit_fstreaminfo,
-	.get_real_filename_fn = smb_time_audit_get_real_filename,
+	.get_real_filename_at_fn = smb_time_audit_get_real_filename_at,
 	.connectpath_fn = smb_time_audit_connectpath,
 	.brl_lock_windows_fn = smb_time_audit_brl_lock_windows,
 	.brl_unlock_windows_fn = smb_time_audit_brl_unlock_windows,

@@ -15,7 +15,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 from samba import provision, param
-import tarfile
 import os
 import shutil
 from samba.tests import (env_loadparm, create_test_ou, BlackboxProcessError,
@@ -28,6 +27,7 @@ from samba.netcmd.fsmo import get_fsmo_roleowner
 import re
 from samba import sites
 from samba.dsdb import _dsdb_load_udv_v2
+from samba import safe_tarfile as tarfile
 
 
 def get_prim_dom(secrets_path, lp):
@@ -273,9 +273,9 @@ class DomainBackupBase(BlackboxTestCase):
 
         bkp_pd = get_prim_dom(paths.secrets, bkp_lp)
         self.assertEqual(len(bkp_pd), 1)
-        acn = bkp_pd[0].get('samAccountName')
-        self.assertIsNotNone(acn)
-        self.assertEqual(str(acn[0]), self.new_server + '$')
+        account = bkp_pd[0].get('samAccountName')
+        self.assertIsNotNone(account)
+        self.assertEqual(str(account[0]), self.new_server + '$')
         self.assertIsNotNone(bkp_pd[0].get('secret'))
 
         samdb = SamDB(url=paths.samdb, session_info=system_session(),
@@ -367,7 +367,10 @@ class DomainBackupBase(BlackboxTestCase):
     def cleanup_tempdir(self):
         for filename in os.listdir(self.tempdir):
             filepath = os.path.join(self.tempdir, filename)
-            shutil.rmtree(filepath)
+            if os.path.isfile(filepath):
+                os.remove(filepath)
+            elif os.path.isdir(filepath):
+                shutil.rmtree(filepath)
 
     def run_cmd(self, args):
         """Executes a samba-tool backup/restore command"""

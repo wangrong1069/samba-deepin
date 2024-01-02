@@ -79,9 +79,6 @@ extern int sec_ctx_stack_ndx;
 extern bool become_uid_done;
 extern bool become_gid_done;
 
-extern connection_struct *last_conn;
-extern uint16_t last_flags;
-
 extern uint32_t global_client_caps;
 
 extern uint16_t fnf_handle;
@@ -129,8 +126,6 @@ NTSTATUS smbd_do_qfilepathinfo(connection_struct *conn,
 			       bool delete_pending,
 			       struct timespec write_time_ts,
 			       struct ea_list *ea_list,
-			       int lock_data_count,
-			       char *lock_data,
 			       uint16_t flags2,
 			       unsigned int max_data_bytes,
 			       size_t *fixed_portion,
@@ -179,15 +174,20 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 			   bool (*mode_fn)(TALLOC_CTX *ctx,
 					   void *private_data,
 					   struct files_struct *dirfsp,
-					   struct smb_filename *atname,
 					   struct smb_filename *smb_fname,
 					   bool get_dosmode,
 					   uint32_t *_mode),
 			   void *private_data,
 			   char **_fname,
 			   struct smb_filename **_smb_fname,
-			   uint32_t *_mode,
-			   long *_prev_offset);
+			   uint32_t *_mode);
+void smbd_dirptr_push_overflow(struct dptr_struct *dirptr,
+			       char **_fname,
+			       struct smb_filename **_smb_fname,
+			       uint32_t mode);
+void smbd_dirptr_set_last_name_sent(struct dptr_struct *dirptr,
+				    char **_fname);
+char *smbd_dirptr_get_last_name_sent(struct dptr_struct *dirptr);
 
 NTSTATUS smbd_dirptr_lanman2_entry(TALLOC_CTX *ctx,
 			       connection_struct *conn,
@@ -207,7 +207,6 @@ NTSTATUS smbd_dirptr_lanman2_entry(TALLOC_CTX *ctx,
 			       char *end_data,
 			       int space_remaining,
 			       struct smb_filename **smb_fname,
-			       bool *got_exact_match,
 			       int *_last_entry_off,
 			       struct ea_list *name_list,
 			       struct file_id *file_id);
@@ -248,6 +247,7 @@ NTSTATUS reply_smb20ff(struct smb_request *req, uint16_t choice);
 NTSTATUS smbd_smb2_process_negprot(struct smbXsrv_connection *xconn,
 			       uint64_t expected_seq_low,
 			       const uint8_t *inpdu, size_t size);
+NTSTATUS smb2_multi_protocol_reply_negprot(struct smb_request *req);
 
 DATA_BLOB smbd_smb2_generate_outbody(struct smbd_smb2_request *req, size_t size);
 
@@ -255,10 +255,11 @@ bool smbXsrv_server_multi_channel_enabled(void);
 
 NTSTATUS smbd_smb2_request_error_ex(struct smbd_smb2_request *req,
 				    NTSTATUS status,
+				    uint8_t error_context_count,
 				    DATA_BLOB *info,
 				    const char *location);
 #define smbd_smb2_request_error(req, status) \
-	smbd_smb2_request_error_ex(req, status, NULL, __location__)
+	smbd_smb2_request_error_ex(req, status, 0, NULL, __location__)
 NTSTATUS smbd_smb2_request_done_ex(struct smbd_smb2_request *req,
 				   NTSTATUS status,
 				   DATA_BLOB body, DATA_BLOB *dyn,
@@ -280,7 +281,8 @@ NTSTATUS smbd_smb2_request_pending_queue(struct smbd_smb2_request *req,
 					 struct tevent_req *subreq,
 					 uint32_t defer_time);
 
-struct smb_request *smbd_smb2_fake_smb_request(struct smbd_smb2_request *req);
+struct smb_request *smbd_smb2_fake_smb_request(struct smbd_smb2_request *req,
+					       struct files_struct *fsp);
 size_t smbd_smb2_unread_bytes(struct smbd_smb2_request *req);
 void remove_smb2_chained_fsp(files_struct *fsp);
 
@@ -386,6 +388,7 @@ struct smbXsrv_connection {
 		struct smbd_smb2_send_queue *queue;
 	} ack;
 
+#if defined(WITH_SMB1SERVER)
 	struct {
 		struct {
 			/*
@@ -440,7 +443,7 @@ struct smbXsrv_connection {
 			 */
 			int max_send;
 		} sessions;
-		struct smb_signing_state *signing_state;
+		struct smb1_signing_state *signing_state;
 
 		struct {
 			uint16_t client_major;
@@ -451,6 +454,7 @@ struct smbXsrv_connection {
 
 		struct msg_state *msg_state;
 	} smb1;
+#endif
 	struct {
 		struct smbd_smb2_request_read_state {
 			struct smbd_smb2_request *req;
@@ -491,7 +495,7 @@ struct smbXsrv_connection {
 			 *
 			 * This gets incremented when new credits are
 			 * granted and gets decremented when any credit
-			 * is comsumed.
+			 * is consumed.
 			 *
 			 * Note: the decrementing is different compared
 			 *       to seq_range.
@@ -533,6 +537,7 @@ struct smbXsrv_connection {
 			uint32_t max_write;
 			uint16_t sign_algo;
 			uint16_t cipher;
+			bool posix_extensions_negotiated;
 		} server;
 
 		struct smbXsrv_preauth preauth;
@@ -542,6 +547,8 @@ struct smbXsrv_connection {
 		struct {
 			uint8_t read_body_padding;
 		} smbtorture;
+
+		bool signing_mandatory;
 	} smb2;
 };
 
@@ -642,6 +649,8 @@ NTSTATUS smbXsrv_tcon_update(struct smbXsrv_tcon *tcon);
 NTSTATUS smbXsrv_tcon_disconnect(struct smbXsrv_tcon *tcon, uint64_t vuid);
 NTSTATUS smb1srv_tcon_table_init(struct smbXsrv_connection *conn);
 NTSTATUS smb1srv_tcon_create(struct smbXsrv_connection *conn,
+			     uint32_t session_global_id,
+			     const char *share_name,
 			     NTTIME now,
 			     struct smbXsrv_tcon **_tcon);
 NTSTATUS smb1srv_tcon_lookup(struct smbXsrv_connection *conn,
@@ -650,6 +659,9 @@ NTSTATUS smb1srv_tcon_lookup(struct smbXsrv_connection *conn,
 NTSTATUS smb1srv_tcon_disconnect_all(struct smbXsrv_client *client);
 NTSTATUS smb2srv_tcon_table_init(struct smbXsrv_session *session);
 NTSTATUS smb2srv_tcon_create(struct smbXsrv_session *session,
+			     uint32_t session_global_id,
+			     uint8_t encryption_flags,
+			     const char *share_name,
 			     NTTIME now,
 			     struct smbXsrv_tcon **_tcon);
 NTSTATUS smb2srv_tcon_lookup(struct smbXsrv_session *session,
@@ -897,9 +909,7 @@ struct smbd_server_connection {
 		struct kernel_oplocks *kernel_ops;
 	} oplocks;
 
-	struct {
-		struct notify_mid_map *notify_mid_maps;
-	} smb1;
+	struct notify_mid_map *notify_mid_maps;
 
 	struct pthreadpool_tevent *pool;
 
@@ -909,5 +919,19 @@ struct smbd_server_connection {
 extern struct smbXsrv_client *global_smbXsrv_client;
 
 void smbd_init_globals(void);
+
+/****************************************************************************
+ The buffer we keep around whilst an aio request is in process.
+*****************************************************************************/
+
+struct aio_extra {
+	files_struct *fsp;
+	struct smb_request *smbreq;
+	DATA_BLOB outbuf;
+	struct lock_struct lock;
+	size_t nbyte;
+	off_t offset;
+	bool write_through;
+};
 
 #endif /* _SOURCE3_SMBD_GLOBALS_H_ */

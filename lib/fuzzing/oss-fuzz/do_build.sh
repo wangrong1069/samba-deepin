@@ -56,13 +56,13 @@ export PYTHON
 # correctly
 
 case "$SANITIZER" in
-    address)
+address)
 	SANITIZER_ARG='--address-sanitizer'
 	;;
-    undefined)
+undefined)
 	SANITIZER_ARG='--undefined-sanitizer'
 	;;
-    coverage)
+coverage)
 	# Thankfully clang operating as ld has no objection to the
 	# cc style options, so we can just set ADDITIONAL_LDFLAGS
 	# to ensure the coverage build is done, despite waf splitting
@@ -71,7 +71,7 @@ case "$SANITIZER" in
 	export ADDITIONAL_LDFLAGS
 
 	SANITIZER_ARG=''
-       ;;
+	;;
 esac
 
 # $LIB_FUZZING_ENGINE is provided by the oss-fuzz "compile" command
@@ -81,14 +81,14 @@ esac
 # header instead of RUNPATH header. Modern linkers use RUNPATH by
 # default.
 ./configure -C --without-gettext --enable-debug --enable-developer \
-            --enable-libfuzzer \
-	    $SANITIZER_ARG \
-	    --disable-warnings-as-errors \
-	    --abi-check-disable \
-	    "--fuzz-target-ldflags=-Wl,--disable-new-dtags $LIB_FUZZING_ENGINE" \
-	    --nonshared-binary=ALL \
-	    "$@" \
-	    LINK_CC="$CXX"
+	--enable-libfuzzer \
+	$SANITIZER_ARG \
+	--disable-warnings-as-errors \
+	--abi-check-disable \
+	"--fuzz-target-ldflags=-Wl,--disable-new-dtags $LIB_FUZZING_ENGINE" \
+	--nonshared-binary=ALL \
+	"$@" \
+	LINK_CC="$CXX"
 
 make -j
 
@@ -109,7 +109,7 @@ mkdir -p $OUT/lib
 # but not for our hack.
 #
 # If we use RUNPATH, we can get an error like this:
-# Step #6: Error occured while running fuzz_nmblib_parse_packet:
+# Step #6: Error occurred while running fuzz_nmblib_parse_packet:
 # Step #6: /workspace/out/coverage/fuzz_nmblib_parse_packet: error while loading shared libraries: libavahi-common.so.3: cannot open shared object file: No such file or directory
 #
 # This is because the full contents of $OUT are copied to yet another
@@ -236,37 +236,36 @@ mkdir -p $OUT/lib
 # See how the runtime linker seems to honour the RPATH for
 # dependencies of dependencies in this case.  This helps us us lot.
 
-for x in bin/fuzz_*
-do
-    # Copy any system libraries needed by this fuzzer to $OUT/lib.
+for x in bin/fuzz_*; do
+	# Copy any system libraries needed by this fuzzer to $OUT/lib.
 
-    # We run ldd on $x, the fuzz_binary in bin/ which has not yet had
-    # the RPATH altered.  This is clearer for debugging in local
-    # development builds as $OUT is not cleaned between runs.
-    #
-    # Otherwise trying to re-run this can see cp can fail with:
-    # cp: '/out/lib/libgcc_s.so.1' and '/out/lib/libgcc_s.so.1' are the same file
-    # which is really confusing!
+	# We run ldd on $x, the fuzz_binary in bin/ which has not yet had
+	# the RPATH altered.  This is clearer for debugging in local
+	# development builds as $OUT is not cleaned between runs.
+	#
+	# Otherwise trying to re-run this can see cp can fail with:
+	# cp: '/out/lib/libgcc_s.so.1' and '/out/lib/libgcc_s.so.1' are the same file
+	# which is really confusing!
 
-    # The cut for ( and ' ' removes the special case references to:
-    # 	linux-vdso.so.1 =>  (0x00007ffe8f2b2000)
-    #   /lib64/ld-linux-x86-64.so.2 (0x00007fc63ea6f000)
+	# The cut for ( and ' ' removes the special case references to:
+	# 	linux-vdso.so.1 =>  (0x00007ffe8f2b2000)
+	#   /lib64/ld-linux-x86-64.so.2 (0x00007fc63ea6f000)
 
-    ldd $x | cut -f 2 -d '>' | cut -f 1 -d \( | cut -f 2 -d  ' ' | xargs -i cp \{\} $OUT/lib/
+	ldd $x | cut -f 2 -d '>' | cut -f 1 -d \( | cut -f 2 -d ' ' | xargs -i cp \{\} $OUT/lib/
 
-    cp $x $OUT/
-    bin=`basename $x`
+	cp $x $OUT/
+	bin=$(basename $x)
 
-    # This means the copied libraries are found on the runner.
-    #
-    # The binaries should we built with RPATH, not RUNPATH, to allow
-    # libraries used by libraries to be found. This command retains the
-    # RPATH/RUNPATH header and only changes the path. We later verify this
-    # in the check_build.sh script.
-    chrpath -r '$ORIGIN/lib' $OUT/$bin
+	# This means the copied libraries are found on the runner.
+	#
+	# The binaries should we built with RPATH, not RUNPATH, to allow
+	# libraries used by libraries to be found. This command retains the
+	# RPATH/RUNPATH header and only changes the path. We later verify this
+	# in the check_build.sh script.
+	chrpath -r '$ORIGIN/lib' $OUT/$bin
 
-    # Truncate the original binary to save space
-    echo -n > $x
+	# Truncate the original binary to save space
+	echo -n >$x
 
 done
 
@@ -275,11 +274,11 @@ done
 # will cause the dynamic linker to search in the runpath, and not in $OUT/lib,
 # and there's no way it will be found in the fuzzing env.
 #
-# So how is the indirect depedency found in $OUT/lib? Well, suppose the fuzzer binary
+# So how is the indirect dependency found in $OUT/lib? Well, suppose the fuzzer binary
 # links library A which links library B. During linking, both A and B as listed in the
 # executable file's runtime dependencies (This was pioneered in Fedora 13 in 2010, but
 # is common behavior now). So we have the fuzzer binary with RPATH set to $OUT/lib, and
-# a dependency on library B, and it will therefor find library B in $OUT/lib. On the
+# a dependency on library B, and it will therefore find library B in $OUT/lib. On the
 # hand, if we keep the RUNPATH in library A, and load A first, it will try loading
 # library B as a dependency of A from the wrong place.
 chrpath -d $OUT/lib/*
@@ -288,8 +287,8 @@ chrpath -d $OUT/lib/*
 # beside their executables.
 
 wget https://gitlab.com/samba-team/samba-fuzz-seeds/-/jobs/artifacts/master/download?job=zips \
-     -O seeds.zip
+	-O seeds.zip
 
 # We might not have unzip, but we do have python
-$PYTHON -mzipfile -e seeds.zip  $OUT
+$PYTHON -mzipfile -e seeds.zip $OUT
 rm -f seeds.zip

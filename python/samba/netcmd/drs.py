@@ -106,19 +106,17 @@ class cmd_drs_showrepl(Command):
                                   "from this server"),
                dest='format', action='store_const', const='summary'),
         Option("--pull-summary", help=("Have we successfully replicated "
-                                       "from all relevent servers?"),
+                                       "from all relevant servers?"),
                dest='format', action='store_const', const='pull_summary'),
         Option("--notify-summary", action='store_const',
                const='notify_summary', dest='format',
-               help=("Have we successfully notified all relevent servers of "
+               help=("Have we successfully notified all relevant servers of "
                      "local changes, and did they say they successfully "
                      "replicated?")),
         Option("--classic", help="print local replication details",
                dest='format', action='store_const', const='classic',
                default=DEFAULT_SHOWREPL_FORMAT),
         Option("-v", "--verbose", help="Be verbose", action="store_true"),
-        Option("--color", help="Use colour output (yes|no|auto)",
-               default='no'),
     ]
 
     takes_args = ["DC?"]
@@ -184,8 +182,7 @@ class cmd_drs_showrepl(Command):
     def run(self, DC=None, sambaopts=None,
             credopts=None, versionopts=None,
             format=DEFAULT_SHOWREPL_FORMAT,
-            verbose=False, color='no'):
-        self.apply_colour_choice(color)
+            verbose=False):
         self.lp = sambaopts.get_loadparm()
         if DC is None:
             DC = common.netcmd_dnsname(self.lp)

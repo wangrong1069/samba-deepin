@@ -124,46 +124,11 @@ struct debug_class {
 	ino_t ino;
 };
 
-static const char *default_classname_table[] = {
-	[DBGC_ALL] =			"all",
-	[DBGC_TDB] =			"tdb",
-	[DBGC_PRINTDRIVERS] =		"printdrivers",
-	[DBGC_LANMAN] =			"lanman",
-	[DBGC_SMB] =			"smb",
-	[DBGC_RPC_PARSE] =		"rpc_parse",
-	[DBGC_RPC_SRV] =		"rpc_srv",
-	[DBGC_RPC_CLI] =		"rpc_cli",
-	[DBGC_PASSDB] =			"passdb",
-	[DBGC_SAM] =			"sam",
-	[DBGC_AUTH] =			"auth",
-	[DBGC_WINBIND] =		"winbind",
-	[DBGC_VFS] =			"vfs",
-	[DBGC_IDMAP] =			"idmap",
-	[DBGC_QUOTA] =			"quota",
-	[DBGC_ACLS] =			"acls",
-	[DBGC_LOCKING] =		"locking",
-	[DBGC_MSDFS] =			"msdfs",
-	[DBGC_DMAPI] =			"dmapi",
-	[DBGC_REGISTRY] =		"registry",
-	[DBGC_SCAVENGER] =		"scavenger",
-	[DBGC_DNS] =			"dns",
-	[DBGC_LDB] =			"ldb",
-	[DBGC_TEVENT] =			"tevent",
-	[DBGC_AUTH_AUDIT] =		"auth_audit",
-	[DBGC_AUTH_AUDIT_JSON] =	"auth_json_audit",
-	[DBGC_KERBEROS] =       	"kerberos",
-	[DBGC_DRS_REPL] =       	"drs_repl",
-	[DBGC_SMB2] =           	"smb2",
-	[DBGC_SMB2_CREDITS] =   	"smb2_credits",
-	[DBGC_DSDB_AUDIT] =		"dsdb_audit",
-	[DBGC_DSDB_AUDIT_JSON] =	"dsdb_json_audit",
-	[DBGC_DSDB_PWD_AUDIT]  =	"dsdb_password_audit",
-	[DBGC_DSDB_PWD_AUDIT_JSON] =	"dsdb_password_json_audit",
-	[DBGC_DSDB_TXN_AUDIT]  =	"dsdb_transaction_audit",
-	[DBGC_DSDB_TXN_AUDIT_JSON] =	"dsdb_transaction_json_audit",
-	[DBGC_DSDB_GROUP_AUDIT] =	"dsdb_group_audit",
-	[DBGC_DSDB_GROUP_AUDIT_JSON] =	"dsdb_group_json_audit",
-};
+/*
+ * default_classname_table[] is read in from debug-classname-table.c
+ * so that test_logging.c can use it too.
+ */
+#include "lib/util/debug-classes/debug-classname-table.c"
 
 /*
  * This is to allow reading of dbgc_config before the debug
@@ -178,6 +143,72 @@ static struct debug_class *dbgc_config = debug_class_list_initial;
 
 static int current_msg_level = 0;
 static int current_msg_class = 0;
+
+/*
+ * DBG_DEV(): when and how to user it.
+ *
+ * As a developer, you sometimes want verbose logging between point A and
+ * point B, where the relationship between these points is not easily defined
+ * in terms of the call stack.
+ *
+ * For example, you might be interested in what is going on in functions in
+ * lib/util/util_str.c in an ldap worker process after a particular query. If
+ * you use gdb, something will time out and you won't get the full
+ * conversation. If you add fprintf() or DBG_ERR()s to util_str.c, you'll get
+ * a massive flood, and there's a chance one will accidentally slip into a
+ * release and the whole world will flood. DBG_DEV is a solution.
+ *
+ * On start-up, DBG_DEV() is switched OFF. Nothing is printed.
+ *
+ * 1. Add `DBG_DEV("formatted msg %d, etc\n", i);` where needed.
+ *
+ * 2. At each point you want to start debugging, add `debug_developer_enable()`.
+ *
+ * 3. At each point you want debugging to stop, add `debug_developer_disable()`.
+ *
+ * In DEVELOPER builds, the message will be printed at level 0, as with
+ * DBG_ERR(). In production builds, the macro resolves to nothing.
+ *
+ * The messages are printed with a "<function_name>:DEV:<pid>:" prefix.
+ */
+
+static bool debug_developer_is_enabled = false;
+
+bool debug_developer_enabled(void)
+{
+	return debug_developer_is_enabled;
+}
+
+/*
+ * debug_developer_disable() will turn DBG_DEV() on in the current
+ * process and children.
+ */
+void debug_developer_enable(void)
+{
+	debug_developer_is_enabled = true;
+}
+
+/*
+ * debug_developer_disable() will make DBG_DEV() do nothing in the current
+ * process (and children).
+ */
+void debug_developer_disable(void)
+{
+	debug_developer_is_enabled = false;
+}
+
+/*
+ * Within debug.c, DBG_DEV() always writes to stderr, because some functions
+ * here will attempt infinite recursion with normal DEBUG macros.
+ */
+#ifdef DEVELOPER
+#undef DBG_DEV
+#define DBG_DEV(fmt, ...)						\
+	(void)((debug_developer_enabled())				\
+	       && (fprintf(stderr, "%s:DEV:%d: " fmt "%s",		\
+			   __func__, getpid(), ##__VA_ARGS__, "")) )
+#endif
+
 
 #if defined(WITH_SYSLOG) || defined(HAVE_LIBSYSTEMD_JOURNAL) || defined(HAVE_LIBSYSTEMD)
 static int debug_level_to_priority(int level)
@@ -375,7 +406,9 @@ static void debug_lttng_log(int msg_level, const char *msg, size_t msg_len)
 static void debug_gpfs_reload(bool enabled, bool previously_enabled,
 			      const char *prog_name, char *option)
 {
-	gpfswrap_init();
+	if (enabled) {
+		gpfswrap_init();
+	}
 
 	if (enabled && !previously_enabled) {
 		gpfswrap_init_trace();
@@ -764,18 +797,15 @@ utility lists registered debug class names's
 
 char *debug_list_class_names_and_levels(void)
 {
-	char *buf = NULL;
+	char *buf = talloc_strdup(NULL, "");
 	size_t i;
 	/* prepare strings */
 	for (i = 0; i < debug_num_classes; i++) {
-		buf = talloc_asprintf_append(buf,
-					     "%s:%d%s",
-					     classname_table[i],
-					     dbgc_config[i].loglevel,
-					     i == (debug_num_classes - 1) ? "\n" : " ");
-		if (buf == NULL) {
-			return NULL;
-		}
+		talloc_asprintf_addbuf(&buf,
+				       "%s:%d%s",
+				       classname_table[i],
+				       dbgc_config[i].loglevel,
+				       i == (debug_num_classes - 1) ? "\n" : " ");
 	}
 	return buf;
 }
@@ -1104,15 +1134,24 @@ void debug_set_hostname(const char *name)
 }
 
 /**
-  control the name of the logfile and whether logging will be to stdout, stderr
-  or a file, and set up syslog
-
-  new_log indicates the destination for the debug log (an enum in
-  order of precedence - once set to DEBUG_FILE, it is not possible to
-  reset to DEBUG_STDOUT for example.  This makes it easy to override
-  for debug to stderr on the command line, as the smb.conf cannot
-  reset it back to file-based logging
-*/
+ * Ensure debug logs are initialised.
+ *
+ * setup_logging() is called to direct logging to the correct outputs, whether
+ * those be stderr, stdout, files, or syslog, and set the program name used in
+ * the logs. It can be called multiple times.
+ *
+ * There is an order of precedence to the log type. Once set to DEBUG_FILE, it
+ * cannot be reset DEFAULT_DEBUG_STDERR, but can be set to DEBUG_STDERR, after
+ * which DEBUG_FILE is unavailable). This makes it possible to override for
+ * debug to stderr on the command line, as the smb.conf cannot reset it back
+ * to file-based logging. See enum debug_logtype.
+ *
+ * @param prog_name the program name. Directory path component will be
+ *                  ignored.
+ *
+ * @param new_logtype the requested destination for the debug log,
+ *                    as an enum debug_logtype.
+ */
 void setup_logging(const char *prog_name, enum debug_logtype new_logtype)
 {
 	debug_init();
@@ -1460,21 +1499,13 @@ void check_log_size( void )
 {
 	off_t maxlog;
 
-	/*
-	 *  We need to be root to check/change log-file, skip this and let the main
-	 *  loop check do a new check as root.
-	 */
-
-#if _SAMBA_BUILD_ == 3
-	if (geteuid() != sec_initial_uid())
-#else
-	if( geteuid() != 0)
-#endif
-	{
-		/* We don't check sec_initial_uid() here as it isn't
-		 * available in common code and we don't generally
-		 * want to rotate and the possibly lose logs in
-		 * make test or the build farm */
+	if (geteuid() != 0) {
+		/*
+		 * We need to be root to change the log file (tests use a fake
+		 * geteuid() from third_party/uid_wrapper). Otherwise we skip
+		 * this and let the main smbd loop or some other process do
+		 * the work.
+		 */
 		return;
 	}
 
@@ -1539,13 +1570,18 @@ static void Debug1(const char *msg, size_t msg_len)
 	case DEBUG_STDERR:
 	case DEBUG_DEFAULT_STDOUT:
 	case DEBUG_DEFAULT_STDERR:
-		if (dbgc_config[DBGC_ALL].fd > 0) {
-			ssize_t ret;
-			do {
-				ret = write(dbgc_config[DBGC_ALL].fd,
-					    msg,
-					    msg_len);
-			} while (ret == -1 && errno == EINTR);
+		if (state.settings.debug_syslog_format ==
+		    DEBUG_SYSLOG_FORMAT_ALWAYS) {
+			debug_file_log(current_msg_level, msg, msg_len);
+		} else {
+			if (dbgc_config[DBGC_ALL].fd > 0) {
+				ssize_t ret;
+				do {
+					ret = write(dbgc_config[DBGC_ALL].fd,
+						    msg,
+						    msg_len);
+				} while (ret == -1 && errno == EINTR);
+			}
 		}
 		break;
 	case DEBUG_FILE:
@@ -1567,6 +1603,17 @@ static void bufr_print( void )
 	format_bufr[format_pos] = '\0';
 	(void)Debug1(format_bufr, format_pos);
 	format_pos = 0;
+}
+
+/*
+ * If set (by tevent_thread_call_depth_set()) to value > 0, debug code will use
+ * it for the trace indentation.
+ */
+static size_t debug_call_depth = 0;
+
+size_t *debug_call_depth_addr(void)
+{
+	return &debug_call_depth;
 }
 
 /***************************************************************************
@@ -1595,8 +1642,21 @@ static void format_debug_text( const char *msg )
 	for( i = 0; msg[i]; i++ ) {
 		/* Indent two spaces at each new line. */
 		if(timestamp && 0 == format_pos) {
+			/* Limit the maximum indentation to 20 levels */
+			size_t depth = MIN(20, debug_call_depth);
 			format_bufr[0] = format_bufr[1] = ' ';
 			format_pos = 2;
+			/*
+			 * Indent by four spaces for each depth level,
+			 * but only if the current debug level is >= 8.
+			 */
+			if (depth > 0 && debuglevel_get() >= 8 &&
+			    format_pos + 4 * depth < FORMAT_BUFR_SIZE) {
+				memset(&format_bufr[format_pos],
+				       ' ',
+				       4 * depth);
+				format_pos += 4 * depth;
+			}
 		}
 
 		/* If there's room, copy the character to the format buffer. */
@@ -1696,23 +1756,31 @@ bool dbghdrclass(int level, int cls, const char *location, const char *func)
 
 	dbgsetclass(level, cls);
 
-	/* Don't print a header if we're logging to stdout. */
-	if ( state.logtype != DEBUG_FILE ) {
-		return( true );
+	/*
+	 * Don't print a header if we're logging to stdout,
+	 * unless 'debug syslog format = always'
+	 */
+	if (state.logtype != DEBUG_FILE &&
+	    state.settings.debug_syslog_format != DEBUG_SYSLOG_FORMAT_ALWAYS)
+	{
+		return true;
 	}
 
-	/* Print the header if timestamps are turned on.  If parameters are
-	 * not yet loaded, then default to timestamps on.
+	/*
+	 * Print the header if timestamps (or debug syslog format) is
+	 * turned on.  If parameters are not yet loaded, then default
+	 * to timestamps on.
 	 */
 	if (!(state.settings.timestamp_logs ||
 	      state.settings.debug_prefix_timestamp ||
-	      state.settings.debug_syslog_format)) {
+	      state.settings.debug_syslog_format != DEBUG_SYSLOG_FORMAT_NO))
+	{
 		return true;
 	}
 
 	GetTimeOfDay(&tv);
 
-	if (state.settings.debug_syslog_format) {
+	if (state.settings.debug_syslog_format != DEBUG_SYSLOG_FORMAT_NO) {
 		if (state.settings.debug_hires_timestamp) {
 			timeval_str_buf(&tv, true, true, &tvbuf);
 		} else {
@@ -1742,8 +1810,9 @@ bool dbghdrclass(int level, int cls, const char *location, const char *func)
 		ensure_hostname();
 		state.hs_len = snprintf(state.header_str,
 					sizeof(state.header_str),
-					"%s %s %s[%u]: ",
+					"%s %.*s %s[%u]: ",
 					tvbuf.buf,
+					(int)(sizeof(state.hostname) - 1),
 					state.hostname,
 					state.prog_name,
 					(unsigned int) getpid());
@@ -1796,11 +1865,31 @@ bool dbghdrclass(int level, int cls, const char *location, const char *func)
 					 sizeof(state.header_str) - state.hs_len,
 					 ", class=%s",
 					 classname_table[cls]);
+		if (state.hs_len >= sizeof(state.header_str) - 1) {
+			goto full;
+		}
 	}
 
-	if (state.hs_len >= sizeof(state.header_str) - 1) {
-		goto full;
+	if (debug_traceid_get() != 0) {
+		state.hs_len += snprintf(state.header_str + state.hs_len,
+					 sizeof(state.header_str) - state.hs_len,
+					 ", traceid=%" PRIu64,
+					 debug_traceid_get());
+		if (state.hs_len >= sizeof(state.header_str) - 1) {
+			goto full;
+		}
 	}
+
+	if (debug_call_depth > 0) {
+		state.hs_len += snprintf(state.header_str + state.hs_len,
+					 sizeof(state.header_str) - state.hs_len,
+					 ", depth=%zu",
+					 debug_call_depth);
+		if (state.hs_len >= sizeof(state.header_str) - 1) {
+			goto full;
+		}
+	}
+
 	state.header_str[state.hs_len] = ']';
 	state.hs_len++;
 	if (state.hs_len < sizeof(state.header_str) - 1) {
@@ -1883,4 +1972,18 @@ bool dbgtext(const char *format_str, ... )
 	va_end(ap);
 
 	return ret;
+}
+
+static uint64_t debug_traceid = 0;
+
+uint64_t debug_traceid_set(uint64_t id)
+{
+	uint64_t old_id = debug_traceid;
+	debug_traceid = id;
+	return old_id;
+}
+
+uint64_t debug_traceid_get(void)
+{
+	return debug_traceid;
 }

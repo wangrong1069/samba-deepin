@@ -44,9 +44,21 @@
 
 #include "config.h"
 
+/*
+ * Make sure we do not redirect (f)open(at)() or fcntl() to their 64bit
+ * variants
+ */
+#undef _FILE_OFFSET_BITS
+
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#ifdef HAVE_SYS_SYSCALL_H
+#include <sys/syscall.h>
+#endif
+#ifdef HAVE_SYSCALL_H
+#include <syscall.h>
+#endif
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #ifdef HAVE_SYS_FILIO_H
@@ -87,6 +99,10 @@
 #include <pthread.h>
 
 #include "socket_wrapper.h"
+
+#ifdef __USE_FILE_OFFSET64
+#error -D_FILE_OFFSET_BITS=64 should not be set for socket_wrapper!
+#endif
 
 enum swrap_dbglvl_e {
 	SWRAP_LOG_ERROR = 0,
@@ -501,6 +517,9 @@ typedef int (*__libc_connect)(int sockfd,
 typedef int (*__libc_dup)(int fd);
 typedef int (*__libc_dup2)(int oldfd, int newfd);
 typedef int (*__libc_fcntl)(int fd, int cmd, ...);
+#ifdef HAVE_FCNTL64
+typedef int (*__libc_fcntl64)(int fd, int cmd, ...);
+#endif
 typedef FILE *(*__libc_fopen)(const char *name, const char *mode);
 #ifdef HAVE_FOPEN64
 typedef FILE *(*__libc_fopen64)(const char *name, const char *mode);
@@ -525,6 +544,9 @@ typedef int (*__libc_open)(const char *pathname, int flags, ...);
 #ifdef HAVE_OPEN64
 typedef int (*__libc_open64)(const char *pathname, int flags, ...);
 #endif /* HAVE_OPEN64 */
+#ifdef HAVE_OPENAT64
+typedef int (*__libc_openat64)(int dirfd, const char *pathname, int flags, ...);
+#endif /* HAVE_OPENAT64 */
 typedef int (*__libc_openat)(int dirfd, const char *path, int flags, ...);
 typedef int (*__libc_pipe)(int pipefd[2]);
 typedef int (*__libc_read)(int fd, void *buf, size_t count);
@@ -537,8 +559,29 @@ typedef int (*__libc_recvfrom)(int sockfd,
 			     struct sockaddr *src_addr,
 			     socklen_t *addrlen);
 typedef int (*__libc_recvmsg)(int sockfd, const struct msghdr *msg, int flags);
+#ifdef HAVE_RECVMMSG
+#if defined(HAVE_RECVMMSG_SSIZE_T_CONST_TIMEOUT)
+/* FreeBSD */
+typedef ssize_t (*__libc_recvmmsg)(int sockfd, struct mmsghdr *msgvec, size_t vlen, int flags, const struct timespec *timeout);
+#elif defined(HAVE_RECVMMSG_CONST_TIMEOUT)
+/* Linux legacy glibc < 2.21 */
+typedef int (*__libc_recvmmsg)(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags, const struct timespec *timeout);
+#else
+/* Linux glibc >= 2.21 */
+typedef int (*__libc_recvmmsg)(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags, struct timespec *timeout);
+#endif
+#endif /* HAVE_RECVMMSG */
 typedef int (*__libc_send)(int sockfd, const void *buf, size_t len, int flags);
 typedef int (*__libc_sendmsg)(int sockfd, const struct msghdr *msg, int flags);
+#ifdef HAVE_SENDMMSG
+#if defined(HAVE_SENDMMSG_SSIZE_T)
+/* FreeBSD */
+typedef ssize_t (*__libc_sendmmsg)(int sockfd, struct mmsghdr *msgvec, size_t vlen, int flags);
+#else
+/* Linux */
+typedef int (*__libc_sendmmsg)(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags);
+#endif
+#endif /* HAVE_SENDMMSG */
 typedef int (*__libc_sendto)(int sockfd,
 			   const void *buf,
 			   size_t len,
@@ -560,6 +603,9 @@ typedef int (*__libc_timerfd_create)(int clockid, int flags);
 #endif
 typedef ssize_t (*__libc_write)(int fd, const void *buf, size_t count);
 typedef ssize_t (*__libc_writev)(int fd, const struct iovec *iov, int iovcnt);
+#ifdef HAVE_SYSCALL
+typedef long int (*__libc_syscall)(long int sysno, ...);
+#endif
 
 #define SWRAP_SYMBOL_ENTRY(i) \
 	union { \
@@ -582,6 +628,9 @@ struct swrap_libc_symbols {
 	SWRAP_SYMBOL_ENTRY(dup);
 	SWRAP_SYMBOL_ENTRY(dup2);
 	SWRAP_SYMBOL_ENTRY(fcntl);
+#ifdef HAVE_FCNTL64
+	SWRAP_SYMBOL_ENTRY(fcntl64);
+#endif
 	SWRAP_SYMBOL_ENTRY(fopen);
 #ifdef HAVE_FOPEN64
 	SWRAP_SYMBOL_ENTRY(fopen64);
@@ -598,6 +647,9 @@ struct swrap_libc_symbols {
 #ifdef HAVE_OPEN64
 	SWRAP_SYMBOL_ENTRY(open64);
 #endif
+#ifdef HAVE_OPENAT64
+	SWRAP_SYMBOL_ENTRY(openat64);
+#endif
 	SWRAP_SYMBOL_ENTRY(openat);
 	SWRAP_SYMBOL_ENTRY(pipe);
 	SWRAP_SYMBOL_ENTRY(read);
@@ -605,8 +657,14 @@ struct swrap_libc_symbols {
 	SWRAP_SYMBOL_ENTRY(recv);
 	SWRAP_SYMBOL_ENTRY(recvfrom);
 	SWRAP_SYMBOL_ENTRY(recvmsg);
+#ifdef HAVE_RECVMMSG
+	SWRAP_SYMBOL_ENTRY(recvmmsg);
+#endif
 	SWRAP_SYMBOL_ENTRY(send);
 	SWRAP_SYMBOL_ENTRY(sendmsg);
+#ifdef HAVE_SENDMMSG
+	SWRAP_SYMBOL_ENTRY(sendmmsg);
+#endif
 	SWRAP_SYMBOL_ENTRY(sendto);
 	SWRAP_SYMBOL_ENTRY(setsockopt);
 #ifdef HAVE_SIGNALFD
@@ -619,7 +677,32 @@ struct swrap_libc_symbols {
 #endif
 	SWRAP_SYMBOL_ENTRY(write);
 	SWRAP_SYMBOL_ENTRY(writev);
+#ifdef HAVE_SYSCALL
+	SWRAP_SYMBOL_ENTRY(syscall);
+#endif
 };
+#undef SWRAP_SYMBOL_ENTRY
+
+#define SWRAP_SYMBOL_ENTRY(i) \
+	union { \
+		__rtld_default_##i f; \
+		void *obj; \
+	} _rtld_default_##i
+
+#ifdef HAVE_SYSCALL
+typedef bool (*__rtld_default_uid_wrapper_syscall_valid)(long int sysno);
+typedef long int (*__rtld_default_uid_wrapper_syscall_va)(long int sysno, va_list va);
+#endif
+
+struct swrap_rtld_default_symbols {
+#ifdef HAVE_SYSCALL
+	SWRAP_SYMBOL_ENTRY(uid_wrapper_syscall_valid);
+	SWRAP_SYMBOL_ENTRY(uid_wrapper_syscall_va);
+#else
+	uint8_t dummy;
+#endif
+};
+#undef SWRAP_SYMBOL_ENTRY
 
 struct swrap {
 	struct {
@@ -627,6 +710,10 @@ struct swrap {
 		void *socket_handle;
 		struct swrap_libc_symbols symbols;
 	} libc;
+
+	struct {
+		struct swrap_rtld_default_symbols symbols;
+	} rtld_default;
 };
 
 static struct swrap swrap;
@@ -807,6 +894,11 @@ static void _swrap_mutex_unlock(pthread_mutex_t *mutex, const char *name, const 
 #define swrap_bind_symbol_libsocket(sym_name) \
 	_swrap_bind_symbol_generic(SWRAP_LIBSOCKET, sym_name)
 
+#define swrap_bind_symbol_rtld_default_optional(sym_name) do { \
+	swrap.rtld_default.symbols._rtld_default_##sym_name.obj = \
+		dlsym(RTLD_DEFAULT, #sym_name); \
+} while(0);
+
 static void swrap_bind_symbol_all(void);
 
 /****************************************************************************
@@ -913,6 +1005,23 @@ static int libc_vfcntl(int fd, int cmd, va_list ap)
 	return rc;
 }
 
+#ifdef HAVE_FCNTL64
+DO_NOT_SANITIZE_ADDRESS_ATTRIBUTE
+static int libc_vfcntl64(int fd, int cmd, va_list ap)
+{
+	void *arg;
+	int rc;
+
+	swrap_bind_symbol_all();
+
+	arg = va_arg(ap, void *);
+
+	rc = swrap.libc.symbols._libc_fcntl64.f(fd, cmd, arg);
+
+	return rc;
+}
+#endif
+
 static int libc_getpeername(int sockfd,
 			    struct sockaddr *addr,
 			    socklen_t *addrlen)
@@ -984,12 +1093,27 @@ static FILE *libc_fopen64(const char *name, const char *mode)
 }
 #endif /* HAVE_FOPEN64 */
 
+static void swrap_inject_o_largefile(int *flags)
+{
+	(void)*flags; /* maybe unused */
+#if SIZE_MAX == 0xffffffffUL && defined(O_LARGEFILE)
+#ifdef O_PATH
+	if (((*flags) & O_PATH) == 0)
+#endif
+	{
+		*flags |= O_LARGEFILE;
+	}
+#endif
+}
+
 static int libc_vopen(const char *pathname, int flags, va_list ap)
 {
 	int mode = 0;
 	int fd;
 
 	swrap_bind_symbol_all();
+
+	swrap_inject_o_largefile(&flags);
 
 	if (flags & O_CREAT) {
 		mode = va_arg(ap, int);
@@ -1019,6 +1143,8 @@ static int libc_vopen64(const char *pathname, int flags, va_list ap)
 
 	swrap_bind_symbol_all();
 
+	swrap_inject_o_largefile(&flags);
+
 	if (flags & O_CREAT) {
 		mode = va_arg(ap, int);
 	}
@@ -1028,12 +1154,37 @@ static int libc_vopen64(const char *pathname, int flags, va_list ap)
 }
 #endif /* HAVE_OPEN64 */
 
+#ifdef HAVE_OPENAT64
+static int
+libc_vopenat64(int dirfd, const char *pathname, int flags, va_list ap)
+{
+	int mode = 0;
+	int fd;
+
+	swrap_bind_symbol_all();
+
+	swrap_inject_o_largefile(&flags);
+
+	if (flags & O_CREAT) {
+		mode = va_arg(ap, int);
+	}
+	fd = swrap.libc.symbols._libc_openat64.f(dirfd,
+						 pathname,
+						 flags,
+						 (mode_t)mode);
+
+	return fd;
+}
+#endif /* HAVE_OPENAT64 */
+
 static int libc_vopenat(int dirfd, const char *path, int flags, va_list ap)
 {
 	int mode = 0;
 	int fd;
 
 	swrap_bind_symbol_all();
+
+	swrap_inject_o_largefile(&flags);
 
 	if (flags & O_CREAT) {
 		mode = va_arg(ap, int);
@@ -1112,6 +1263,24 @@ static int libc_recvmsg(int sockfd, struct msghdr *msg, int flags)
 	return swrap.libc.symbols._libc_recvmsg.f(sockfd, msg, flags);
 }
 
+#ifdef HAVE_RECVMMSG
+#if defined(HAVE_RECVMMSG_SSIZE_T_CONST_TIMEOUT)
+/* FreeBSD */
+static ssize_t libc_recvmmsg(int sockfd, struct mmsghdr *msgvec, size_t vlen, int flags, const struct timespec *timeout)
+#elif defined(HAVE_RECVMMSG_CONST_TIMEOUT)
+/* Linux legacy glibc < 2.21 */
+static int libc_recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags, const struct timespec *timeout)
+#else
+/* Linux glibc >= 2.21 */
+static int libc_recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags, struct timespec *timeout)
+#endif
+{
+	swrap_bind_symbol_all();
+
+	return swrap.libc.symbols._libc_recvmmsg.f(sockfd, msgvec, vlen, flags, timeout);
+}
+#endif
+
 static int libc_send(int sockfd, const void *buf, size_t len, int flags)
 {
 	swrap_bind_symbol_all();
@@ -1125,6 +1294,21 @@ static int libc_sendmsg(int sockfd, const struct msghdr *msg, int flags)
 
 	return swrap.libc.symbols._libc_sendmsg.f(sockfd, msg, flags);
 }
+
+#ifdef HAVE_SENDMMSG
+#if defined(HAVE_SENDMMSG_SSIZE_T)
+/* FreeBSD */
+static ssize_t libc_sendmmsg(int sockfd, struct mmsghdr *msgvec, size_t vlen, int flags)
+#else
+/* Linux */
+static int libc_sendmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags)
+#endif
+{
+	swrap_bind_symbol_all();
+
+	return swrap.libc.symbols._libc_sendmmsg.f(sockfd, msgvec, vlen, flags);
+}
+#endif
 
 static int libc_sendto(int sockfd,
 		       const void *buf,
@@ -1204,6 +1388,64 @@ static ssize_t libc_writev(int fd, const struct iovec *iov, int iovcnt)
 	return swrap.libc.symbols._libc_writev.f(fd, iov, iovcnt);
 }
 
+#ifdef HAVE_SYSCALL
+DO_NOT_SANITIZE_ADDRESS_ATTRIBUTE
+static long int libc_vsyscall(long int sysno, va_list va)
+{
+	long int args[8];
+	long int rc;
+	int i;
+
+	swrap_bind_symbol_all();
+
+	for (i = 0; i < 8; i++) {
+		args[i] = va_arg(va, long int);
+	}
+
+	rc = swrap.libc.symbols._libc_syscall.f(sysno,
+						args[0],
+						args[1],
+						args[2],
+						args[3],
+						args[4],
+						args[5],
+						args[6],
+						args[7]);
+
+	return rc;
+}
+
+static bool swrap_uwrap_syscall_valid(long int sysno)
+{
+	swrap_bind_symbol_all();
+
+	if (swrap.rtld_default.symbols._rtld_default_uid_wrapper_syscall_valid.f == NULL) {
+		return false;
+	}
+
+	return swrap.rtld_default.symbols._rtld_default_uid_wrapper_syscall_valid.f(
+						sysno);
+}
+
+DO_NOT_SANITIZE_ADDRESS_ATTRIBUTE
+static long int swrap_uwrap_syscall_va(long int sysno, va_list va)
+{
+	swrap_bind_symbol_all();
+
+	if (swrap.rtld_default.symbols._rtld_default_uid_wrapper_syscall_va.f == NULL) {
+		/*
+		 * Fallback to libc, if uid_wrapper_syscall_va is not
+		 * available.
+		 */
+		return libc_vsyscall(sysno, va);
+	}
+
+	return swrap.rtld_default.symbols._rtld_default_uid_wrapper_syscall_va.f(
+						sysno,
+						va);
+}
+#endif /* HAVE_SYSCALL */
+
 /* DO NOT call this function during library initialization! */
 static void __swrap_bind_symbol_all_once(void)
 {
@@ -1221,6 +1463,9 @@ static void __swrap_bind_symbol_all_once(void)
 	swrap_bind_symbol_libc(dup);
 	swrap_bind_symbol_libc(dup2);
 	swrap_bind_symbol_libc(fcntl);
+#ifdef HAVE_FCNTL64
+	swrap_bind_symbol_libc(fcntl64);
+#endif
 	swrap_bind_symbol_libc(fopen);
 #ifdef HAVE_FOPEN64
 	swrap_bind_symbol_libc(fopen64);
@@ -1237,6 +1482,9 @@ static void __swrap_bind_symbol_all_once(void)
 #ifdef HAVE_OPEN64
 	swrap_bind_symbol_libc(open64);
 #endif
+#ifdef HAVE_OPENAT64
+	swrap_bind_symbol_libc(openat64);
+#endif
 	swrap_bind_symbol_libc(openat);
 	swrap_bind_symbol_libsocket(pipe);
 	swrap_bind_symbol_libc(read);
@@ -1244,8 +1492,14 @@ static void __swrap_bind_symbol_all_once(void)
 	swrap_bind_symbol_libsocket(recv);
 	swrap_bind_symbol_libsocket(recvfrom);
 	swrap_bind_symbol_libsocket(recvmsg);
+#ifdef HAVE_RECVMMSG
+	swrap_bind_symbol_libsocket(recvmmsg);
+#endif
 	swrap_bind_symbol_libsocket(send);
 	swrap_bind_symbol_libsocket(sendmsg);
+#ifdef HAVE_SENDMMSG
+	swrap_bind_symbol_libsocket(sendmmsg);
+#endif
 	swrap_bind_symbol_libsocket(sendto);
 	swrap_bind_symbol_libsocket(setsockopt);
 #ifdef HAVE_SIGNALFD
@@ -1258,6 +1512,11 @@ static void __swrap_bind_symbol_all_once(void)
 #endif
 	swrap_bind_symbol_libc(write);
 	swrap_bind_symbol_libsocket(writev);
+#ifdef HAVE_SYSCALL
+	swrap_bind_symbol_libc(syscall);
+	swrap_bind_symbol_rtld_default_optional(uid_wrapper_syscall_valid);
+	swrap_bind_symbol_rtld_default_optional(uid_wrapper_syscall_va);
+#endif
 }
 
 static void swrap_bind_symbol_all(void)
@@ -1408,6 +1667,55 @@ static size_t socket_length(int family)
 #endif
 	}
 	return 0;
+}
+
+struct swrap_sockaddr_buf {
+	char str[128];
+};
+
+static const char *swrap_sockaddr_string(struct swrap_sockaddr_buf *buf,
+					 const struct sockaddr *saddr)
+{
+	unsigned int port = 0;
+	char addr[64] = {0,};
+
+	switch (saddr->sa_family) {
+	case AF_INET: {
+		const struct sockaddr_in *in =
+		    (const struct sockaddr_in *)(const void *)saddr;
+
+		port = ntohs(in->sin_port);
+
+		inet_ntop(saddr->sa_family,
+			  &in->sin_addr,
+			  addr, sizeof(addr));
+		break;
+	}
+#ifdef HAVE_IPV6
+	case AF_INET6: {
+		const struct sockaddr_in6 *in6 =
+		    (const struct sockaddr_in6 *)(const void *)saddr;
+
+		port = ntohs(in6->sin6_port);
+
+		inet_ntop(saddr->sa_family,
+			  &in6->sin6_addr,
+			  addr, sizeof(addr));
+		break;
+	}
+#endif
+	default:
+		snprintf(addr, sizeof(addr),
+			 "<Unknown address family %u>",
+			 saddr->sa_family);
+		break;
+	}
+
+	snprintf(buf->str, sizeof(buf->str),
+		 "addr[%s]/port[%u]",
+		 addr, port);
+
+	return buf->str;
 }
 
 static struct socket_info *swrap_get_socket_info(int si_index)
@@ -2045,13 +2353,10 @@ static int convert_in_un_remote(struct socket_info *si, const struct sockaddr *i
 			type = u_type;
 			iface = (addr & 0x000000FF);
 		} else {
-			char str[256] = {0,};
-			inet_ntop(inaddr->sa_family,
-				  &in->sin_addr,
-				  str, sizeof(str));
+			struct swrap_sockaddr_buf buf = {};
 			SWRAP_LOG(SWRAP_LOG_WARN,
-				  "str[%s] prt[%u]",
-				  str, (unsigned)prt);
+				  "%s",
+				  swrap_sockaddr_string(&buf, inaddr));
 			errno = ENETUNREACH;
 			return -1;
 		}
@@ -2087,13 +2392,10 @@ static int convert_in_un_remote(struct socket_info *si, const struct sockaddr *i
 		if (IN6_ARE_ADDR_EQUAL(&cmp1, &cmp2)) {
 			iface = in->sin6_addr.s6_addr[15];
 		} else {
-			char str[256] = {0,};
-			inet_ntop(inaddr->sa_family,
-				  &in->sin6_addr,
-				  str, sizeof(str));
+			struct swrap_sockaddr_buf buf = {};
 			SWRAP_LOG(SWRAP_LOG_WARN,
-				  "str[%s] prt[%u]",
-				  str, (unsigned)prt);
+				  "%s",
+				  swrap_sockaddr_string(&buf, inaddr));
 			errno = ENETUNREACH;
 			return -1;
 		}
@@ -3965,6 +4267,7 @@ static int swrap_connect(int s, const struct sockaddr *serv_addr,
 		.sa_socklen = sizeof(struct sockaddr_un),
 	};
 	struct socket_info *si = find_socket_info(s);
+	struct swrap_sockaddr_buf buf = {};
 	int bcast = 0;
 
 	if (!si) {
@@ -4013,7 +4316,8 @@ static int swrap_connect(int s, const struct sockaddr *serv_addr,
 	}
 
 	SWRAP_LOG(SWRAP_LOG_TRACE,
-		  "connect() path=%s, fd=%d",
+		  "connect(%s) path=%s, fd=%d",
+		  swrap_sockaddr_string(&buf, serv_addr),
 		  un_addr.sa.un.sun_path, s);
 
 
@@ -4079,6 +4383,8 @@ static int swrap_bind(int s, const struct sockaddr *myaddr, socklen_t addrlen)
 		.sa_socklen = sizeof(struct sockaddr_un),
 	};
 	struct socket_info *si = find_socket_info(s);
+	struct swrap_sockaddr_buf buf = {};
+	int ret_errno = errno;
 	int bind_error = 0;
 #if 0 /* FIXME */
 	bool in_use;
@@ -4136,7 +4442,7 @@ static int swrap_bind(int s, const struct sockaddr *myaddr, socklen_t addrlen)
 	}
 
 	if (bind_error != 0) {
-		errno = bind_error;
+		ret_errno = bind_error;
 		ret = -1;
 		goto out;
 	}
@@ -4160,16 +4466,21 @@ static int swrap_bind(int s, const struct sockaddr *myaddr, socklen_t addrlen)
 				     1,
 				     &si->bcast);
 	if (ret == -1) {
+		ret_errno = errno;
 		goto out;
 	}
 
 	unlink(un_addr.sa.un.sun_path);
 
 	ret = libc_bind(s, &un_addr.sa.s, un_addr.sa_socklen);
+	if (ret == -1) {
+		ret_errno = errno;
+	}
 
 	SWRAP_LOG(SWRAP_LOG_TRACE,
-		  "bind() path=%s, fd=%d",
-		  un_addr.sa.un.sun_path, s);
+		  "bind(%s) path=%s, fd=%d ret=%d ret_errno=%d",
+		  swrap_sockaddr_string(&buf, myaddr),
+		  un_addr.sa.un.sun_path, s, ret, ret_errno);
 
 	if (ret == 0) {
 		si->bound = 1;
@@ -4177,7 +4488,7 @@ static int swrap_bind(int s, const struct sockaddr *myaddr, socklen_t addrlen)
 
 out:
 	SWRAP_UNLOCK_SI(si);
-
+	errno = ret_errno;
 	return ret;
 }
 
@@ -4325,6 +4636,7 @@ static FILE *swrap_fopen(const char *name, const char *mode)
 	return fp;
 }
 
+#undef fopen /* Needed for LFS handling */
 FILE *fopen(const char *name, const char *mode)
 {
 	return swrap_fopen(name, mode);
@@ -4376,6 +4688,7 @@ static int swrap_vopen(const char *pathname, int flags, va_list ap)
 	return ret;
 }
 
+#undef open /* Needed for LFS handling */
 int open(const char *pathname, int flags, ...)
 {
 	va_list ap;
@@ -4424,6 +4737,42 @@ int open64(const char *pathname, int flags, ...)
 #endif /* HAVE_OPEN64 */
 
 /****************************************************************************
+ *   OPENAT64
+ ***************************************************************************/
+
+#ifdef HAVE_OPENAT64
+static int
+swrap_vopenat64(int dirfd, const char *pathname, int flags, va_list ap)
+{
+	int ret;
+
+	ret = libc_vopenat64(dirfd, pathname, flags, ap);
+	if (ret != -1) {
+		/*
+		 * There are methods for closing descriptors (libc-internal code
+		 * paths, direct syscalls) which close descriptors in ways that
+		 * we can't intercept, so try to recover when we notice that
+		 * that's happened
+		 */
+		swrap_remove_stale(ret);
+	}
+	return ret;
+}
+
+int openat64(int dirfd, const char *pathname, int flags, ...)
+{
+	va_list ap;
+	int fd;
+
+	va_start(ap, flags);
+	fd = swrap_vopenat64(dirfd, pathname, flags, ap);
+	va_end(ap);
+
+	return fd;
+}
+#endif /* HAVE_OPENAT64 */
+
+/****************************************************************************
  *   OPENAT
  ***************************************************************************/
 
@@ -4445,6 +4794,7 @@ static int swrap_vopenat(int dirfd, const char *path, int flags, va_list ap)
 	return ret;
 }
 
+#undef openat /* Needed for LFS handling */
 int openat(int dirfd, const char *path, int flags, ...)
 {
 	va_list ap;
@@ -5325,7 +5675,7 @@ union __swrap_cmsghdr {
 	struct cmsghdr *cmsg;
 };
 
-static int swrap_sendmsg_unix_scm_rights(const struct cmsghdr *cmsg,
+static int swrap_sendmsg_unix_scm_rights(struct cmsghdr *cmsg,
 					 uint8_t **cm_data,
 					 size_t *cm_data_space,
 					 int *scm_rights_pipe_fd)
@@ -5557,7 +5907,7 @@ static int swrap_sendmsg_unix_scm_rights(const struct cmsghdr *cmsg,
 	return 0;
 }
 
-static int swrap_sendmsg_unix_sol_socket(const struct cmsghdr *cmsg,
+static int swrap_sendmsg_unix_sol_socket(struct cmsghdr *cmsg,
 					 uint8_t **cm_data,
 					 size_t *cm_data_space,
 					 int *scm_rights_pipe_fd)
@@ -5581,7 +5931,7 @@ static int swrap_sendmsg_unix_sol_socket(const struct cmsghdr *cmsg,
 	return rc;
 }
 
-static int swrap_recvmsg_unix_scm_rights(const struct cmsghdr *cmsg,
+static int swrap_recvmsg_unix_scm_rights(struct cmsghdr *cmsg,
 					 uint8_t **cm_data,
 					 size_t *cm_data_space)
 {
@@ -5860,7 +6210,7 @@ static int swrap_recvmsg_unix_scm_rights(const struct cmsghdr *cmsg,
 	return 0;
 }
 
-static int swrap_recvmsg_unix_sol_socket(const struct cmsghdr *cmsg,
+static int swrap_recvmsg_unix_sol_socket(struct cmsghdr *cmsg,
 					 uint8_t **cm_data,
 					 size_t *cm_data_space)
 {
@@ -6101,6 +6451,7 @@ static ssize_t swrap_sendmsg_before(int fd,
 {
 	size_t i, len = 0;
 	ssize_t ret = -1;
+	struct swrap_sockaddr_buf buf = {};
 
 	if (to_un) {
 		*to_un = NULL;
@@ -6162,6 +6513,10 @@ static ssize_t swrap_sendmsg_before(int fd,
 				msg->msg_name = NULL;
 				msg->msg_namelen = 0;
 			}
+			SWRAP_LOG(SWRAP_LOG_TRACE,
+				  "connected(%s) fd=%d",
+				  swrap_sockaddr_string(&buf, &si->peername.sa.s),
+				  fd);
 		} else {
 			const struct sockaddr *msg_name;
 			msg_name = (const struct sockaddr *)msg->msg_name;
@@ -6215,6 +6570,11 @@ static ssize_t swrap_sendmsg_before(int fd,
 		if (ret == -1) {
 			goto out;
 		}
+
+		SWRAP_LOG(SWRAP_LOG_TRACE,
+			  "deferred connect(%s) path=%s, fd=%d",
+			  swrap_sockaddr_string(&buf, &si->peername.sa.s),
+			  tmp_un->sun_path, fd);
 
 		ret = libc_connect(fd,
 				   (struct sockaddr *)(void *)tmp_un,
@@ -7117,6 +7477,219 @@ ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags)
 }
 
 /****************************************************************************
+ *   RECVMMSG
+ ***************************************************************************/
+
+#ifdef HAVE_RECVMMSG
+#if defined(HAVE_RECVMMSG_SSIZE_T_CONST_TIMEOUT)
+/* FreeBSD */
+static ssize_t swrap_recvmmsg(int s, struct mmsghdr *omsgvec, size_t _vlen, int flags, const struct timespec *timeout)
+#elif defined(HAVE_RECVMMSG_CONST_TIMEOUT)
+/* Linux legacy glibc < 2.21 */
+static int swrap_recvmmsg(int s, struct mmsghdr *omsgvec, unsigned int _vlen, int flags, const struct timespec *timeout)
+#else
+/* Linux glibc >= 2.21 */
+static int swrap_recvmmsg(int s, struct mmsghdr *omsgvec, unsigned int _vlen, int flags, struct timespec *timeout)
+#endif
+{
+	struct socket_info *si = find_socket_info(s);
+#define __SWRAP_RECVMMSG_MAX_VLEN 16
+	struct mmsghdr msgvec[__SWRAP_RECVMMSG_MAX_VLEN] = {};
+	struct {
+		struct iovec iov;
+		struct swrap_address from_addr;
+		struct swrap_address convert_addr;
+#ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
+		size_t msg_ctrllen_filled;
+		size_t msg_ctrllen_left;
+#endif
+	} tmp[__SWRAP_RECVMMSG_MAX_VLEN] = {};
+	int vlen;
+	int i;
+	int ret;
+	int rc;
+	int saved_errno;
+
+	if (_vlen > __SWRAP_RECVMMSG_MAX_VLEN) {
+		vlen = __SWRAP_RECVMMSG_MAX_VLEN;
+	} else {
+		vlen = _vlen;
+	}
+
+	if (si == NULL) {
+		uint8_t *tmp_control[__SWRAP_RECVMMSG_MAX_VLEN] = { NULL, };
+
+		for (i = 0; i < vlen; i++) {
+			struct msghdr *omsg = &omsgvec[i].msg_hdr;
+			struct msghdr *msg = &msgvec[i].msg_hdr;
+
+			rc = swrap_recvmsg_before_unix(omsg, msg,
+						       &tmp_control[i]);
+			if (rc < 0) {
+				ret = rc;
+				goto fail_libc;
+			}
+		}
+
+		ret = libc_recvmmsg(s, msgvec, vlen, flags, timeout);
+		if (ret < 0) {
+			goto fail_libc;
+		}
+
+		for (i = 0; i < ret; i++) {
+			omsgvec[i].msg_len = msgvec[i].msg_len;
+		}
+
+fail_libc:
+		saved_errno = errno;
+		for (i = 0; i < vlen; i++) {
+			struct msghdr *omsg = &omsgvec[i].msg_hdr;
+			struct msghdr *msg = &msgvec[i].msg_hdr;
+
+			if (i == 0 || i < ret) {
+				swrap_recvmsg_after_unix(msg, &tmp_control[i], omsg, ret);
+			}
+			SAFE_FREE(tmp_control[i]);
+		}
+		errno = saved_errno;
+
+		return ret;
+	}
+
+	for (i = 0; i < vlen; i++) {
+		struct msghdr *omsg = &omsgvec[i].msg_hdr;
+		struct msghdr *msg = &msgvec[i].msg_hdr;
+
+		tmp[i].from_addr.sa_socklen = sizeof(struct sockaddr_un);
+		tmp[i].convert_addr.sa_socklen = sizeof(struct sockaddr_storage);
+
+		msg->msg_name = &tmp[i].from_addr.sa;              /* optional address */
+		msg->msg_namelen = tmp[i].from_addr.sa_socklen;    /* size of address */
+		msg->msg_iov = omsg->msg_iov;               /* scatter/gather array */
+		msg->msg_iovlen = omsg->msg_iovlen;         /* # elements in msg_iov */
+#ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
+		tmp[i].msg_ctrllen_filled = 0;
+		tmp[i].msg_ctrllen_left = omsg->msg_controllen;
+
+		msg->msg_control = omsg->msg_control;       /* ancillary data, see below */
+		msg->msg_controllen = omsg->msg_controllen; /* ancillary data buffer len */
+		msg->msg_flags = omsg->msg_flags;           /* flags on received message */
+#endif
+
+		rc = swrap_recvmsg_before(s, si, msg, &tmp[i].iov);
+		if (rc < 0) {
+			ret = rc;
+			goto fail_swrap;
+		}
+	}
+
+	ret = libc_recvmmsg(s, msgvec, vlen, flags, timeout);
+	if (ret < 0) {
+		goto fail_swrap;
+	}
+
+	for (i = 0; i < ret; i++) {
+		omsgvec[i].msg_len = msgvec[i].msg_len;
+	}
+
+fail_swrap:
+
+	saved_errno = errno;
+	for (i = 0; i < vlen; i++) {
+		struct msghdr *omsg = &omsgvec[i].msg_hdr;
+		struct msghdr *msg = &msgvec[i].msg_hdr;
+
+		if (!(i == 0 || i < ret)) {
+			break;
+		}
+
+#ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
+		tmp[i].msg_ctrllen_filled += msg->msg_controllen;
+		tmp[i].msg_ctrllen_left -= msg->msg_controllen;
+
+		if (omsg->msg_control != NULL) {
+			uint8_t *p;
+
+			p = omsg->msg_control;
+			p += tmp[i].msg_ctrllen_filled;
+
+			msg->msg_control = p;
+			msg->msg_controllen = tmp[i].msg_ctrllen_left;
+		} else {
+			msg->msg_control = NULL;
+			msg->msg_controllen = 0;
+		}
+#endif
+
+		/*
+		 * We convert the unix address to a IP address so we need a buffer
+		 * which can store the address in case of SOCK_DGRAM, see below.
+		 */
+		msg->msg_name = &tmp[i].convert_addr.sa;
+		msg->msg_namelen = tmp[i].convert_addr.sa_socklen;
+
+		swrap_recvmsg_after(s, si, msg,
+				    &tmp[i].from_addr.sa.un,
+				    tmp[i].from_addr.sa_socklen,
+				    ret);
+
+#ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
+		if (omsg->msg_control != NULL) {
+			/* msg->msg_controllen = space left */
+			tmp[i].msg_ctrllen_left = msg->msg_controllen;
+			tmp[i].msg_ctrllen_filled = omsg->msg_controllen - tmp[i].msg_ctrllen_left;
+		}
+
+		/* Update the original message length */
+		omsg->msg_controllen = tmp[i].msg_ctrllen_filled;
+		omsg->msg_flags = msg->msg_flags;
+#endif
+		omsg->msg_iovlen = msg->msg_iovlen;
+
+		SWRAP_LOCK_SI(si);
+
+		/*
+		 * From the manpage:
+		 *
+		 * The  msg_name  field  points  to a caller-allocated buffer that is
+		 * used to return the source address if the socket is unconnected.  The
+		 * caller should set msg_namelen to the size of this buffer before this
+		 * call; upon return from a successful call, msg_name will contain the
+		 * length of the returned address.  If the application  does  not  need
+		 * to know the source address, msg_name can be specified as NULL.
+		 */
+		if (si->type == SOCK_STREAM) {
+			omsg->msg_namelen = 0;
+		} else if (omsg->msg_name != NULL &&
+		           omsg->msg_namelen != 0 &&
+		           omsg->msg_namelen >= msg->msg_namelen) {
+			memcpy(omsg->msg_name, msg->msg_name, msg->msg_namelen);
+			omsg->msg_namelen = msg->msg_namelen;
+		}
+
+		SWRAP_UNLOCK_SI(si);
+	}
+	errno = saved_errno;
+
+	return ret;
+}
+
+#if defined(HAVE_RECVMMSG_SSIZE_T_CONST_TIMEOUT)
+/* FreeBSD */
+ssize_t recvmmsg(int sockfd, struct mmsghdr *msgvec, size_t vlen, int flags, const struct timespec *timeout)
+#elif defined(HAVE_RECVMMSG_CONST_TIMEOUT)
+/* Linux legacy glibc < 2.21 */
+int recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags, const struct timespec *timeout)
+#else
+/* Linux glibc >= 2.21 */
+int recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags, struct timespec *timeout)
+#endif
+{
+	return swrap_recvmmsg(sockfd, msgvec, vlen, flags, timeout);
+}
+#endif /* HAVE_RECVMMSG */
+
+/****************************************************************************
  *   SENDMSG
  ***************************************************************************/
 
@@ -7286,6 +7859,249 @@ ssize_t sendmsg(int s, const struct msghdr *omsg, int flags)
 {
 	return swrap_sendmsg(s, omsg, flags);
 }
+
+/****************************************************************************
+ *   SENDMMSG
+ ***************************************************************************/
+
+#ifdef HAVE_SENDMMSG
+#if defined(HAVE_SENDMMSG_SSIZE_T)
+/* FreeBSD */
+static ssize_t swrap_sendmmsg(int s, struct mmsghdr *omsgvec, size_t _vlen, int flags)
+#else
+/* Linux */
+static int swrap_sendmmsg(int s, struct mmsghdr *omsgvec, unsigned int _vlen, int flags)
+#endif
+{
+	struct socket_info *si = find_socket_info(s);
+#define __SWRAP_SENDMMSG_MAX_VLEN 16
+	struct mmsghdr msgvec[__SWRAP_SENDMMSG_MAX_VLEN] = {};
+	struct {
+		struct iovec iov;
+		struct sockaddr_un un_addr;
+		const struct sockaddr_un *to_un;
+		const struct sockaddr *to;
+		int bcast;
+	} tmp[__SWRAP_SENDMMSG_MAX_VLEN] = {};
+	int vlen;
+	int i;
+	char *swrap_dir = NULL;
+	int connected = 0;
+	int found_bcast = 0;
+	int ret;
+	int rc;
+	int saved_errno;
+
+	if (_vlen > __SWRAP_SENDMMSG_MAX_VLEN) {
+		vlen = __SWRAP_SENDMMSG_MAX_VLEN;
+	} else {
+		vlen = _vlen;
+	}
+
+	if (!si) {
+		int scm_rights_pipe_fd[__SWRAP_SENDMMSG_MAX_VLEN];
+
+		for (i = 0; i < __SWRAP_SENDMMSG_MAX_VLEN; i++) {
+			scm_rights_pipe_fd[i] = -1;
+		}
+
+		for (i = 0; i < vlen; i++) {
+			struct msghdr *omsg = &omsgvec[i].msg_hdr;
+			struct msghdr *msg = &msgvec[i].msg_hdr;
+
+			rc = swrap_sendmsg_before_unix(omsg, msg,
+						       &scm_rights_pipe_fd[i]);
+			if (rc < 0) {
+				ret = rc;
+				goto fail_libc;
+			}
+		}
+
+		ret = libc_sendmmsg(s, msgvec, vlen, flags);
+		if (ret < 0) {
+			goto fail_libc;
+		}
+
+		for (i = 0; i < ret; i++) {
+			omsgvec[i].msg_len = msgvec[i].msg_len;
+		}
+
+fail_libc:
+		saved_errno = errno;
+		for (i = 0; i < vlen; i++) {
+			struct msghdr *msg = &msgvec[i].msg_hdr;
+
+			swrap_sendmsg_after_unix(msg, ret,
+						 scm_rights_pipe_fd[i]);
+		}
+		errno = saved_errno;
+
+		return ret;
+	}
+
+	SWRAP_LOCK_SI(si);
+	connected = si->connected;
+	SWRAP_UNLOCK_SI(si);
+
+	for (i = 0; i < vlen; i++) {
+		struct msghdr *omsg = &omsgvec[i].msg_hdr;
+		struct msghdr *msg = &msgvec[i].msg_hdr;
+
+		if (connected == 0) {
+			msg->msg_name = omsg->msg_name;             /* optional address */
+			msg->msg_namelen = omsg->msg_namelen;       /* size of address */
+		}
+		msg->msg_iov = omsg->msg_iov;               /* scatter/gather array */
+		msg->msg_iovlen = omsg->msg_iovlen;         /* # elements in msg_iov */
+
+#ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
+		if (omsg->msg_controllen > 0 && omsg->msg_control != NULL) {
+			uint8_t *cmbuf = NULL;
+			size_t cmlen = 0;
+
+			rc = swrap_sendmsg_filter_cmsghdr(omsg, &cmbuf, &cmlen);
+			if (rc < 0) {
+				ret = rc;
+				goto fail_swrap;
+			}
+
+			if (cmlen != 0) {
+				msg->msg_control = cmbuf;
+				msg->msg_controllen = cmlen;
+			}
+		}
+		msg->msg_flags = omsg->msg_flags;           /* flags on received message */
+#endif
+
+		rc = swrap_sendmsg_before(s, si, msg,
+					  &tmp[i].iov,
+					  &tmp[i].un_addr,
+					  &tmp[i].to_un,
+					  &tmp[i].to,
+					  &tmp[i].bcast);
+		if (rc < 0) {
+			ret = rc;
+			goto fail_swrap;
+		}
+
+		if (tmp[i].bcast) {
+			found_bcast = 1;
+		}
+	}
+
+	if (found_bcast) {
+
+		swrap_dir = socket_wrapper_dir();
+		if (swrap_dir == NULL) {
+			ret = -1;
+			goto fail_swrap;
+		}
+
+		for (i = 0; i < vlen; i++) {
+			struct msghdr *msg = &msgvec[i].msg_hdr;
+			struct sockaddr_un *un_addr = &tmp[i].un_addr;
+			const struct sockaddr *to = tmp[i].to;
+			struct stat st;
+			unsigned int iface;
+			unsigned int prt = ntohs(((const struct sockaddr_in *)(const void *)to)->sin_port);
+			char type;
+			size_t l, len = 0;
+			uint8_t *buf;
+			off_t ofs = 0;
+			size_t avail = 0;
+			size_t remain;
+
+			for (l = 0; l < (size_t)msg->msg_iovlen; l++) {
+				avail += msg->msg_iov[l].iov_len;
+			}
+
+			len = avail;
+			remain = avail;
+
+			/* we capture it as one single packet */
+			buf = (uint8_t *)malloc(remain);
+			if (!buf) {
+				ret = -1;
+				goto fail_swrap;
+			}
+
+			for (l = 0; l < (size_t)msg->msg_iovlen; l++) {
+				size_t this_time = MIN(remain, (size_t)msg->msg_iov[l].iov_len);
+				memcpy(buf + ofs,
+				       msg->msg_iov[l].iov_base,
+				       this_time);
+				ofs += this_time;
+				remain -= this_time;
+			}
+
+			type = SOCKET_TYPE_CHAR_UDP;
+
+			for(iface=0; iface <= MAX_WRAPPED_INTERFACES; iface++) {
+				swrap_un_path(un_addr, swrap_dir, type, iface, prt);
+				if (stat(un_addr->sun_path, &st) != 0) continue;
+
+				msg->msg_name = un_addr;             /* optional address */
+				msg->msg_namelen = sizeof(*un_addr); /* size of address */
+
+				/*
+				 * ignore the any errors in broadcast sends and
+				 * do a single sendmsg instead of sendmmsg
+				 */
+				libc_sendmsg(s, msg, flags);
+			}
+
+			SWRAP_LOCK_SI(si);
+			swrap_pcap_dump_packet(si, to, SWRAP_SENDTO, buf, len);
+			SWRAP_UNLOCK_SI(si);
+
+			SAFE_FREE(buf);
+
+			msgvec[i].msg_len = len;
+		}
+
+		ret = vlen;
+		goto bcast_done;
+	}
+
+	ret = libc_sendmmsg(s, msgvec, vlen, flags);
+	if (ret < 0) {
+		goto fail_swrap;
+	}
+
+bcast_done:
+	for (i = 0; i < ret; i++) {
+		omsgvec[i].msg_len = msgvec[i].msg_len;
+	}
+
+fail_swrap:
+	saved_errno = errno;
+	for (i = 0; i < vlen; i++) {
+		struct msghdr *msg = &msgvec[i].msg_hdr;
+
+		if (i == 0 || i < ret) {
+			swrap_sendmsg_after(s, si, msg, tmp[i].to, ret);
+		}
+#ifdef HAVE_STRUCT_MSGHDR_MSG_CONTROL
+		SAFE_FREE(msg->msg_control);
+#endif
+	}
+	SAFE_FREE(swrap_dir);
+	errno = saved_errno;
+
+	return ret;
+}
+
+#if defined(HAVE_SENDMMSG_SSIZE_T)
+/* FreeBSD */
+ssize_t sendmmsg(int s, struct mmsghdr *msgvec, size_t vlen, int flags)
+#else
+/* Linux */
+int sendmmsg(int s, struct mmsghdr *msgvec, unsigned int vlen, int flags)
+#endif
+{
+	return swrap_sendmmsg(s, msgvec, vlen, flags);
+}
+#endif /* HAVE_SENDMMSG */
 
 /****************************************************************************
  *   READV
@@ -7703,6 +8519,7 @@ static int swrap_vfcntl(int fd, int cmd, va_list va)
 	return rc;
 }
 
+#undef fcntl /* Needed for LFS handling */
 int fcntl(int fd, int cmd, ...)
 {
 	va_list va;
@@ -7716,6 +8533,80 @@ int fcntl(int fd, int cmd, ...)
 
 	return rc;
 }
+
+/****************************
+ * FCNTL64
+ ***************************/
+
+#ifdef HAVE_FCNTL64
+static int swrap_vfcntl64(int fd, int cmd, va_list va)
+{
+	struct socket_info *si;
+	int rc, dup_fd, idx;
+
+	idx = find_socket_info_index(fd);
+	if (idx == -1) {
+		return libc_vfcntl64(fd, cmd, va);
+	}
+
+	si = swrap_get_socket_info(idx);
+
+	switch (cmd) {
+	case F_DUPFD:
+		dup_fd = libc_vfcntl64(fd, cmd, va);
+		if (dup_fd == -1) {
+			int saved_errno = errno;
+			errno = saved_errno;
+			return -1;
+		}
+
+		/* Make sure we don't have an entry for the fd */
+		swrap_remove_stale(dup_fd);
+
+		if ((size_t)dup_fd >= socket_fds_max) {
+			SWRAP_LOG(SWRAP_LOG_ERROR,
+			  "The max socket index limit of %zu has been reached, "
+			  "trying to add %d",
+			  socket_fds_max,
+			  dup_fd);
+			libc_close(dup_fd);
+			errno = EMFILE;
+			return -1;
+		}
+
+		SWRAP_LOCK_SI(si);
+
+		swrap_inc_refcount(si);
+
+		SWRAP_UNLOCK_SI(si);
+
+
+		set_socket_info_index(dup_fd, idx);
+
+		rc = dup_fd;
+		break;
+	default:
+		rc = libc_vfcntl64(fd, cmd, va);
+		break;
+	}
+
+	return rc;
+}
+
+int fcntl64(int fd, int cmd, ...)
+{
+	va_list va;
+	int rc;
+
+	va_start(va, cmd);
+
+	rc = swrap_vfcntl64(fd, cmd, va);
+
+	va_end(va);
+
+	return rc;
+}
+#endif
 
 /****************************
  * EVENTFD
@@ -7753,6 +8644,169 @@ int pledge(const char *promises, const char *paths[])
 	return 0;
 }
 #endif /* HAVE_PLEDGE */
+
+#ifdef HAVE_SYSCALL
+static bool swrap_is_swrap_related_syscall(long int sysno)
+{
+	switch (sysno) {
+#ifdef SYS_close
+	case SYS_close:
+		return true;
+#endif /* SYS_close */
+
+#ifdef SYS_recvmmsg
+	case SYS_recvmmsg:
+		return true;
+#endif /* SYS_recvmmsg */
+
+#ifdef SYS_sendmmsg
+	case SYS_sendmmsg:
+		return true;
+#endif /* SYS_sendmmsg */
+
+	default:
+		return false;
+	}
+}
+
+static long int swrap_syscall(long int sysno, va_list vp)
+{
+	long int rc;
+
+	switch (sysno) {
+#ifdef SYS_close
+	case SYS_close:
+		{
+			int fd = (int)va_arg(vp, int);
+
+			SWRAP_LOG(SWRAP_LOG_TRACE,
+				  "calling swrap_close syscall %lu",
+				  sysno);
+			rc = swrap_close(fd);
+		}
+		break;
+#endif /* SYS_close */
+
+#ifdef SYS_recvmmsg
+	case SYS_recvmmsg:
+		{
+			int fd = (int)va_arg(vp, int);
+			struct mmsghdr *msgvec = va_arg(vp, struct mmsghdr *);
+			unsigned int vlen = va_arg(vp, unsigned int);
+			int flags = va_arg(vp, int);
+			struct timespec *timeout = va_arg(vp, struct timespec *);
+
+			SWRAP_LOG(SWRAP_LOG_TRACE,
+				  "calling swrap_recvmmsg syscall %lu",
+				  sysno);
+			rc = swrap_recvmmsg(fd, msgvec, vlen, flags, timeout);
+		}
+		break;
+#endif /* SYS_recvmmsg */
+
+#ifdef SYS_sendmmsg
+	case SYS_sendmmsg:
+		{
+			int fd = (int)va_arg(vp, int);
+			struct mmsghdr *msgvec = va_arg(vp, struct mmsghdr *);
+			unsigned int vlen = va_arg(vp, unsigned int);
+			int flags = va_arg(vp, int);
+
+			SWRAP_LOG(SWRAP_LOG_TRACE,
+				  "calling swrap_sendmmsg syscall %lu",
+				  sysno);
+			rc = swrap_sendmmsg(fd, msgvec, vlen, flags);
+		}
+		break;
+#endif /* SYS_sendmmsg */
+
+	default:
+		rc = -1;
+		errno = ENOSYS;
+		break;
+	}
+
+	return rc;
+}
+
+#ifdef HAVE_SYSCALL_INT
+int syscall(int sysno, ...)
+#else
+long int syscall(long int sysno, ...)
+#endif
+{
+#ifdef HAVE_SYSCALL_INT
+	int rc;
+#else
+	long int rc;
+#endif
+	va_list va;
+
+	va_start(va, sysno);
+
+	/*
+	 * We should only handle the syscall numbers
+	 * we care about...
+	 */
+	if (!swrap_is_swrap_related_syscall(sysno)) {
+		/*
+		 * We need to give socket_wrapper a
+		 * chance to take over...
+		 */
+		if (swrap_uwrap_syscall_valid(sysno)) {
+			rc = swrap_uwrap_syscall_va(sysno, va);
+			va_end(va);
+			return rc;
+		}
+
+		rc = libc_vsyscall(sysno, va);
+		va_end(va);
+		return rc;
+	}
+
+	if (!socket_wrapper_enabled()) {
+		rc = libc_vsyscall(sysno, va);
+		va_end(va);
+		return rc;
+	}
+
+	rc = swrap_syscall(sysno, va);
+	va_end(va);
+
+	return rc;
+}
+
+/* used by uid_wrapper */
+bool socket_wrapper_syscall_valid(long int sysno);
+bool socket_wrapper_syscall_valid(long int sysno)
+{
+	if (!swrap_is_swrap_related_syscall(sysno)) {
+		return false;
+	}
+
+	if (!socket_wrapper_enabled()) {
+		return false;
+	}
+
+	return true;
+}
+
+/* used by uid_wrapper */
+long int socket_wrapper_syscall_va(long int sysno, va_list va);
+long int socket_wrapper_syscall_va(long int sysno, va_list va)
+{
+	if (!swrap_is_swrap_related_syscall(sysno)) {
+		errno = ENOSYS;
+		return -1;
+	}
+
+	if (!socket_wrapper_enabled()) {
+		return libc_vsyscall(sysno, va);
+	}
+
+	return swrap_syscall(sysno, va);
+}
+#endif /* HAVE_SYSCALL */
 
 static void swrap_thread_prepare(void)
 {
@@ -7831,10 +8885,18 @@ void swrap_destructor(void)
 
 	SAFE_FREE(sockets);
 
-	if (swrap.libc.handle != NULL) {
+	if (swrap.libc.handle != NULL
+#ifdef RTLD_NEXT
+	    && swrap.libc.handle != RTLD_NEXT
+#endif
+			) {
 		dlclose(swrap.libc.handle);
 	}
-	if (swrap.libc.socket_handle) {
+	if (swrap.libc.socket_handle
+#ifdef RTLD_NEXT
+	    && swrap.libc.socket_handle != RTLD_NEXT
+#endif
+			) {
 		dlclose(swrap.libc.socket_handle);
 	}
 }

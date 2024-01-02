@@ -33,7 +33,10 @@ from samba import dsdb
 from ldb import SCOPE_SUBTREE, SCOPE_ONELEVEL
 
 
-def get_schema_descriptor(domain_sid, name_map={}):
+def get_schema_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "O:SAG:SAD:AI(OA;;CR;e12b56b6-0a95-11d1-adbb-00c04fd8d5cd;;SA)" \
            "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
            "(OA;;CR;1131f6ab-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
@@ -48,9 +51,9 @@ def get_schema_descriptor(domain_sid, name_map={}):
            "(OA;;CR;89e95b76-444d-4c62-991a-0facbeda640c;;ED)" \
            "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
            "(OA;;CR;89e95b76-444d-4c62-991a-0facbeda640c;;BA)" \
-           "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;ER)" \
-           "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;ER)" \
-           "(OA;;CR;89e95b76-444d-4c62-991a-0facbeda640c;;ER)" \
+           "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;RO)" \
+           "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;RO)" \
+           "(OA;;CR;89e95b76-444d-4c62-991a-0facbeda640c;;RO)" \
            "S:(AU;SA;WPCCDCWOWDSDDTSW;;;WD)" \
            "(AU;CISA;WP;;;WD)" \
            "(AU;SA;CR;;;BA)" \
@@ -71,12 +74,18 @@ class Schema(object):
        "2008_R2": ("Attributes_for_AD_DS__Windows_Server_2008_R2.ldf",
                    "Classes_for_AD_DS__Windows_Server_2008_R2.ldf",
                    47),
-       "2012": ("AD_DS_Attributes__Windows_Server_2012.ldf",
-                "AD_DS_Classes__Windows_Server_2012.ldf",
+       "2012": ("Attributes_for_AD_DS__Windows_Server_2012.ldf",
+                "Classes_for_AD_DS__Windows_Server_2012.ldf",
                 56),
        "2012_R2": ("AD_DS_Attributes__Windows_Server_2012_R2.ldf",
                    "AD_DS_Classes__Windows_Server_2012_R2.ldf",
                    69),
+       "2016": ("AD_DS_Attributes__Windows_Server_v1803.ldf",
+                "AD_DS_Classes__Windows_Server_v1803.ldf",
+                87),
+       "2019": ("AD_DS_Attributes_Windows_Server_v1903.ldf",
+                "AD_DS_Classes_Windows_Server_v1903.ldf",
+                88),
     }
 
     def __init__(self, domain_sid, invocationid=None, schemadn=None,
@@ -218,7 +227,7 @@ def get_linked_attributes(schemadn, schemaldb):
                                      attribute="lDAPDisplayName",
                                      scope=SCOPE_SUBTREE)
         if target is not None:
-            attributes[str(res[i]["lDAPDisplayName"])] = str(target)
+            attributes[str(res[i]["lDAPDisplayName"])] = target.decode('utf-8')
 
     return attributes
 

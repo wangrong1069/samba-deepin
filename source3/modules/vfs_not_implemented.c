@@ -168,24 +168,10 @@ DIR *vfs_not_implemented_fdopendir(vfs_handle_struct *handle, files_struct *fsp,
 _PUBLIC_
 struct dirent *vfs_not_implemented_readdir(vfs_handle_struct *handle,
 					   struct files_struct *dirfsp,
-					   DIR *dirp,
-					   SMB_STRUCT_STAT *sbuf)
+					   DIR *dirp)
 {
 	errno = ENOSYS;
 	return NULL;
-}
-
-_PUBLIC_
-void vfs_not_implemented_seekdir(vfs_handle_struct *handle, DIR *dirp, long offset)
-{
-	;
-}
-
-_PUBLIC_
-long vfs_not_implemented_telldir(vfs_handle_struct *handle, DIR *dirp)
-{
-	errno = ENOSYS;
-	return (long)-1;
 }
 
 _PUBLIC_
@@ -216,8 +202,7 @@ int vfs_not_implemented_openat(vfs_handle_struct *handle,
 			       const struct files_struct *dirfsp,
 			       const struct smb_filename *smb_fname,
 			       struct files_struct *fsp,
-			       int flags,
-			       mode_t mode)
+			       const struct vfs_open_how *how)
 {
 	errno = ENOSYS;
 	return -1;
@@ -226,6 +211,7 @@ int vfs_not_implemented_openat(vfs_handle_struct *handle,
 _PUBLIC_
 NTSTATUS vfs_not_implemented_create_file(struct vfs_handle_struct *handle,
 				struct smb_request *req,
+				struct files_struct *dirsp,
 				struct smb_filename *smb_fname,
 				uint32_t access_mask,
 				uint32_t share_access,
@@ -376,6 +362,18 @@ int vfs_not_implemented_fstat(vfs_handle_struct *handle, files_struct *fsp,
 _PUBLIC_
 int vfs_not_implemented_lstat(vfs_handle_struct *handle,
 			      struct smb_filename *smb_fname)
+{
+	errno = ENOSYS;
+	return -1;
+}
+
+_PUBLIC_
+int vfs_not_implemented_fstatat(
+	struct vfs_handle_struct *handle,
+	const struct files_struct *dirfsp,
+	const struct smb_filename *smb_fname,
+	SMB_STRUCT_STAT *sbuf,
+	int flags)
 {
 	errno = ENOSYS;
 	return -1;
@@ -591,7 +589,6 @@ uint64_t vfs_not_implemented_fs_file_id(vfs_handle_struct *handle,
 	return 0;
 }
 
-_PUBLIC_
 struct vfs_not_implemented_offload_read_state {
 	bool dummy;
 };
@@ -639,7 +636,6 @@ NTSTATUS vfs_not_implemented_offload_read_recv(struct tevent_req *req,
 	return NT_STATUS_OK;
 }
 
-_PUBLIC_
 struct vfs_not_implemented_offload_write_state {
 	uint64_t unused;
 };
@@ -714,19 +710,21 @@ NTSTATUS vfs_not_implemented_fstreaminfo(struct vfs_handle_struct *handle,
 }
 
 _PUBLIC_
-int vfs_not_implemented_get_real_filename(struct vfs_handle_struct *handle,
-					  const struct smb_filename *path,
-					  const char *name,
-					  TALLOC_CTX *mem_ctx,
-					  char **found_name)
+NTSTATUS vfs_not_implemented_get_real_filename_at(
+	struct vfs_handle_struct *handle,
+	struct files_struct *dirfsp,
+	const char *name,
+	TALLOC_CTX *mem_ctx,
+	char **found_name)
 {
-	errno = ENOSYS;
-	return -1;
+	return NT_STATUS_NOT_IMPLEMENTED;
 }
 
 _PUBLIC_
-const char *vfs_not_implemented_connectpath(struct vfs_handle_struct *handle,
-					    const struct smb_filename *smb_fname)
+const char *vfs_not_implemented_connectpath(
+	struct vfs_handle_struct *handle,
+	const struct files_struct *dirfsp,
+	const struct smb_filename *smb_fname)
 {
 	errno = ENOSYS;
 	return NULL;
@@ -1080,8 +1078,6 @@ static struct vfs_fn_pointers vfs_not_implemented_fns = {
 
 	.fdopendir_fn = vfs_not_implemented_fdopendir,
 	.readdir_fn = vfs_not_implemented_readdir,
-	.seekdir_fn = vfs_not_implemented_seekdir,
-	.telldir_fn = vfs_not_implemented_telldir,
 	.rewind_dir_fn = vfs_not_implemented_rewind_dir,
 	.mkdirat_fn = vfs_not_implemented_mkdirat,
 	.closedir_fn = vfs_not_implemented_closedir,
@@ -1106,6 +1102,7 @@ static struct vfs_fn_pointers vfs_not_implemented_fns = {
 	.stat_fn = vfs_not_implemented_stat,
 	.fstat_fn = vfs_not_implemented_fstat,
 	.lstat_fn = vfs_not_implemented_lstat,
+	.fstatat_fn = vfs_not_implemented_fstatat,
 	.get_alloc_size_fn = vfs_not_implemented_get_alloc_size,
 	.unlinkat_fn = vfs_not_implemented_unlinkat,
 	.fchmod_fn = vfs_not_implemented_fchmod,
@@ -1137,7 +1134,7 @@ static struct vfs_fn_pointers vfs_not_implemented_fns = {
 	.set_compression_fn = vfs_not_implemented_set_compression,
 
 	.fstreaminfo_fn = vfs_not_implemented_fstreaminfo,
-	.get_real_filename_fn = vfs_not_implemented_get_real_filename,
+	.get_real_filename_at_fn = vfs_not_implemented_get_real_filename_at,
 	.connectpath_fn = vfs_not_implemented_connectpath,
 	.brl_lock_windows_fn = vfs_not_implemented_brl_lock_windows,
 	.brl_unlock_windows_fn = vfs_not_implemented_brl_unlock_windows,

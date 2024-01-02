@@ -11,7 +11,7 @@ import "misc.idl";
    just a dom sid, but with the sub_auths represented as a conformant
    array. As with all in-structure conformant arrays, the array length
    is placed before the start of the structure. That's what gives rise
-   to the extra num_auths elemenent. We don't want the Samba code to
+   to the extra num_auths element. We don't want the Samba code to
    have to bother with such esoteric NDR details, so its easier to just
    define it as a dom_sid and use pidl magic to make it all work. It
    just means you need to mark a sid as a "dom_sid2" in the IDL when you
@@ -206,6 +206,15 @@ interface security
 		 SEC_ADS_GENERIC_READ           |
 		 SEC_ADS_GENERIC_ALL_DS);
 
+	/*
+	 * Rights implicitly granted to a user who is an owner of the security
+	 * descriptor being processed.
+	 */
+	typedef enum {
+		IMPLICIT_OWNER_READ_CONTROL_RIGHTS,
+		IMPLICIT_OWNER_READ_CONTROL_AND_WRITE_DAC_RIGHTS
+	} implicit_owner_rights;
+
 	/***************************************************************/
 	/* WELL KNOWN SIDS */
 
@@ -274,9 +283,20 @@ interface security
 	const string SID_BUILTIN_AUTH_ACCESS 		= "S-1-5-32-560";
 	const string SID_BUILTIN_TS_LICENSE_SERVERS	= "S-1-5-32-561";
 	const string SID_BUILTIN_DISTRIBUTED_COM_USERS	= "S-1-5-32-562";
+	const string SID_BUILTIN_IUSERS		= "S-1-5-32-568";
 	const string SID_BUILTIN_CRYPTO_OPERATORS	= "S-1-5-32-569";
 	const string SID_BUILTIN_EVENT_LOG_READERS	= "S-1-5-32-573";
 	const string SID_BUILTIN_CERT_SERV_DCOM_ACCESS	= "S-1-5-32-574";
+	const string SID_BUILTIN_RDS_REMOTE_ACCESS_SERVERS	= "S-1-5-32-575";
+	const string SID_BUILTIN_RDS_ENDPOINT_SERVERS	= "S-1-5-32-576";
+	const string SID_BUILTIN_RDS_MANAGEMENT_SERVERS	= "S-1-5-32-577";
+	const string SID_BUILTIN_HYPER_V_ADMINS	= "S-1-5-32-578";
+	const string SID_BUILTIN_ACCESS_CONTROL_ASSISTANCE_OPS	= "S-1-5-32-579";
+	const string SID_BUILTIN_REMOTE_MANAGEMENT_USERS	= "S-1-5-32-580";
+	const string SID_BUILTIN_SYSTEM_MANAGED_ACCOUNTS_GRP	= "S-1-5-32-581";
+	const string SID_BUILTIN_STORAGE_REPLICA_ADMINISTRATORS	= "S-1-5-32-582";
+
+	const string SID_SECURITY_RESTRICTED_CODE = "S-1-5-33";
 
 	/* UID/GID mapping Samba style */
 	const string SID_SAMBA_UNIX_USER_OWNER		= "S-1-22-1";
@@ -289,11 +309,32 @@ interface security
 	const string SID_NT_TRUSTED_INSTALLER =
 		"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
+	/*
+	 * This is added during the AS-REQ/AS-REP exchange after
+	 * pre-authentication was successful.
+	 */
 	const string SID_AUTHENTICATION_AUTHORITY_ASSERTED_IDENTITY = "S-1-18-1";
+	/*
+	 * This is added during S4U2Self PAC creation.
+	 *
+	 * It won't replace a possible
+	 * SID_AUTHENTICATION_AUTHORITY_ASSERTED_IDENTITY
+	 * during S4U2Proxy.
+	 */
 	const string SID_SERVICE_ASSERTED_IDENTITY = "S-1-18-2";
 
 	const string SID_COMPOUNDED_AUTHENTICATION = "S-1-5-21-0-0-0-496";
 	const string SID_CLAIMS_VALID = "S-1-5-21-0-0-0-497";
+
+	const string SID_USER_MODE_DRIVERS = "S-1-5-84-0-0-0-0-0";
+
+	const string SID_SECURITY_BUILTIN_PACKAGE_ANY_PACKAGE = "S-1-15-2-1";
+
+	const string SID_SECURITY_MANDATORY_LOW = "S-1-16-4096";
+	const string SID_SECURITY_MANDATORY_MEDIUM = "S-1-16-8192";
+	const string SID_SECURITY_MANDATORY_MEDIUM_PLUS = "S-1-16-8448";
+	const string SID_SECURITY_MANDATORY_HIGH = "S-1-16-12288";
+	const string SID_SECURITY_MANDATORY_SYSTEM = "S-1-16-16384";
 
 	/*
 	 * http://technet.microsoft.com/en-us/library/hh509017(v=ws.10).aspx
@@ -320,6 +361,10 @@ interface security
 	const int DOMAIN_RID_ENTERPRISE_ADMINS       = 519;
 	const int DOMAIN_RID_POLICY_ADMINS           = 520;
 	const int DOMAIN_RID_READONLY_DCS            = 521;
+	const int DOMAIN_RID_CLONEABLE_CONTROLLERS   = 522;
+	const int DOMAIN_RID_PROTECTED_USERS         = 525;
+	const int DOMAIN_RID_KEY_ADMINS              = 526;
+	const int DOMAIN_RID_ENTERPRISE_KEY_ADMINS   = 527;
 	const int DOMAIN_RID_RAS_SERVERS             = 553;
 	const int DOMAIN_RID_RODC_ALLOW              = 571;
 	const int DOMAIN_RID_RODC_DENY               = 572;
@@ -344,9 +389,16 @@ interface security
 	const int BUILTIN_RID_AUTH_ACCESS		= 560;
 	const int BUILTIN_RID_TS_LICENSE_SERVERS	= 561;
 	const int BUILTIN_RID_DISTRIBUTED_COM_USERS	= 562;
+	const int BUILTIN_RID_IUSERS			= 568;
 	const int BUILTIN_RID_CRYPTO_OPERATORS		= 569;
 	const int BUILTIN_RID_EVENT_LOG_READERS		= 573;
 	const int BUILTIN_RID_CERT_SERV_DCOM_ACCESS	= 574;
+	const int BUILTIN_RID_RDS_REMOTE_ACCESS_SERVERS	= 575;
+	const int BUILTIN_RID_RDS_ENDPOINT_SERVERS	= 576;
+	const int BUILTIN_RID_RDS_MANAGEMENT_SERVERS	= 577;
+	const int BUILTIN_RID_HYPER_V_ADMINS	= 578;
+	const int BUILTIN_RID_ACCESS_CONTROL_ASSISTANCE_OPS	= 579;
+	const int BUILTIN_RID_REMOTE_MANAGEMENT_USERS	= 580;
 
 /********************************************************************
  This is a list of privileges reported by a WIndows 2008 R2 DC
@@ -428,8 +480,8 @@ interface security
 
 
 	/* Bitmap of privilege values for internal use only.  We need
-	 * our own bitmap here as privilages.tdb records these values
-	 * as a bitmap (privilages.ldb uses the string forms).
+	 * our own bitmap here as privileges.tdb records these values
+	 * as a bitmap (privileges.ldb uses the string forms).
 	 */
 	typedef [bitmap64bit] bitmap {
 		SEC_PRIV_MACHINE_ACCOUNT_BIT		= 0x00000010,
@@ -443,7 +495,7 @@ interface security
 		SEC_PRIV_BACKUP_BIT			= 0x00000200,
 		SEC_PRIV_RESTORE_BIT			= 0x00000400,
 		SEC_PRIV_TAKE_OWNERSHIP_BIT		= 0x00000800,
-		/* End of privilages implemented before merge to common code */
+		/* End of privileges implemented before merge to common code */
 
 		SEC_PRIV_INCREASE_QUOTA_BIT               = 0x00001000,
 		SEC_PRIV_SECURITY_BIT                     = 0x00002000,
@@ -613,6 +665,11 @@ interface security
 		SE_GROUP_LOGON_ID		= 0xC0000000
 	} security_GroupAttrs;
 
+	const uint32 SE_GROUP_DEFAULT_FLAGS =
+		SE_GROUP_MANDATORY |
+		SE_GROUP_ENABLED_BY_DEFAULT |
+		SE_GROUP_ENABLED;
+
 	/* This is not yet sent over the network, but is simply defined in IDL */
 	typedef [public] struct {
 		uint32 num_sids;
@@ -620,6 +677,12 @@ interface security
 		se_privilege privilege_mask;
 		lsa_SystemAccessModeFlags rights_mask;
 	} security_token;
+
+        typedef [public] struct {
+                security_token token;
+                security_descriptor sd;
+                uint32 access_desired;
+        } security_token_descriptor_fuzzing_pair;
 
 	/* This is not yet sent over the network, but is simply defined in IDL */
 	typedef [public] struct {

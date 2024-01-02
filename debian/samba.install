@@ -1,8 +1,8 @@
-#!/usr/bin/dh-exec --with-scripts=filter-arch
+#!/usr/bin/dh-exec --with-scripts=filter-arch,filter-build-profiles
 etc/ufw/applications.d/samba
-[linux-any] lib/systemd/system/nmbd.service
-[linux-any] lib/systemd/system/samba-ad-dc.service
-[linux-any] lib/systemd/system/smbd.service
+[linux-any] lib/systemd/system/nmb*.service
+[linux-any] lib/systemd/system/samba*.service
+[linux-any] lib/systemd/system/smb*.service
 usr/bin/dumpmscat
 usr/bin/mvxattr
 usr/bin/oLschema2ldif
@@ -11,12 +11,12 @@ usr/bin/profiles
 usr/bin/sharesec
 usr/bin/smbcontrol
 usr/bin/smbstatus
-usr/lib/*/samba/libHDB-SAMBA4-samba4.so.0
-usr/lib/*/samba/libgss-preauth-samba4.so.0
-usr/lib/*/samba/libhdb-samba4.so.0
-usr/lib/*/samba/libkdc-samba4.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libHDB-SAMBA4-samba4.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libgss-preauth-samba4.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libhdb-samba4.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libkdc-samba4.so.0
+<pkg.samba.mitkrb5> usr/lib/*/krb5/plugins/kdb/samba.so
 usr/lib/*/samba/libmscat-samba4.so.0
-usr/lib/*/samba/libpac-samba4.so.0
 usr/libexec/samba/samba-bgqd
 usr/lib/*/samba/service/*.so
 usr/sbin/eventlogadm
@@ -45,5 +45,4 @@ usr/share/man/man8/samba.8
 usr/share/man/man8/smbd.8
 usr/share/samba/admx/
 usr/share/samba/mdssvc/elasticsearch_mappings.json
-usr/share/samba/setup
 usr/share/samba/update-apparmor-samba-profile

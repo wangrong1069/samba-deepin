@@ -1261,14 +1261,6 @@ class SearchTests(LdbBaseTest):
     def test_subtree_unique_elsewhere2(self):
         """Testing a search"""
 
-        res11 = self.l.search(base="DC=EXAMPLE,DC=COM",
-                              scope=ldb.SCOPE_SUBTREE,
-                              expression="(ou=ou10)")
-        self.assertEqual(len(res11), 0)
-
-    def test_subtree_unique_elsewhere2(self):
-        """Testing a search"""
-
         res11 = self.l.search(base="DC=EXAMPLE,DC=NET",
                               scope=ldb.SCOPE_SUBTREE,
                               expression="(ou=unique)")
@@ -1306,20 +1298,20 @@ class SearchTests(LdbBaseTest):
                               expression="(ou=unique)")
         self.assertEqual(len(res11), 0)
 
+    def test_subtree_unique_elsewhere7(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=EXAMPLE,DC=COM",
+                              scope=ldb.SCOPE_SUBTREE,
+                              expression="(ou=ou10)")
+        self.assertEqual(len(res11), 0)
+
     def test_subtree_unique_here(self):
         """Testing a search"""
 
         res11 = self.l.search(base="OU=UNIQUE,DC=EXAMPLE,DC=NET",
                               scope=ldb.SCOPE_SUBTREE,
                               expression="(ou=unique)")
-        self.assertEqual(len(res11), 1)
-
-    def test_subtree_unique(self):
-        """Testing a search"""
-
-        res11 = self.l.search(base="DC=SAMBA,DC=ORG",
-                              scope=ldb.SCOPE_SUBTREE,
-                              expression="(ou=ou10)")
         self.assertEqual(len(res11), 1)
 
     def test_subtree_and_none(self):
@@ -1454,14 +1446,6 @@ class SearchTests(LdbBaseTest):
         self.assertEqual(len(res11), 0)
 
     def test_onelevel_unique_elsewhere2(self):
-        """Testing a search"""
-
-        res11 = self.l.search(base="DC=EXAMPLE,DC=COM",
-                              scope=ldb.SCOPE_ONELEVEL,
-                              expression="(ou=ou10)")
-        self.assertEqual(len(res11), 0)
-
-    def test_onelevel_unique_elsewhere2(self):
         """Testing a search (showing that onelevel is not subtree)"""
 
         res11 = self.l.search(base="DC=EXAMPLE,DC=NET",
@@ -1491,6 +1475,14 @@ class SearchTests(LdbBaseTest):
         res11 = self.l.search(base="DC=EXAMPLE,DC=COM",
                               scope=ldb.SCOPE_ONELEVEL,
                               expression="(ou=unique)")
+        self.assertEqual(len(res11), 0)
+
+    def test_onelevel_unique_elsewhere6(self):
+        """Testing a search"""
+
+        res11 = self.l.search(base="DC=EXAMPLE,DC=COM",
+                              scope=ldb.SCOPE_ONELEVEL,
+                              expression="(ou=ou10)")
         self.assertEqual(len(res11), 0)
 
     def test_onelevel_unique_here(self):
@@ -2118,7 +2110,7 @@ class AddModifyTests(LdbBaseTest):
                         "name": b"Admins",
                         "x": "z", "y": "a",
                         "objectUUID": b"0123456789abcde2"})
-            self.fail("Should have failed adding dupliate entry")
+            self.fail("Should have failed adding duplicate entry")
         except ldb.LdbError as err:
             enum = err.args[0]
             self.assertEqual(enum, ldb.ERR_ENTRY_ALREADY_EXISTS)
@@ -2312,7 +2304,7 @@ class IndexedAddModifyTests(AddModifyTests):
                         "name": b"Admins",
                         "x": "z", "y": "a",
                         "objectUUID": b"0123456789abcdef"})
-            self.fail("Should have failed adding dupliate GUID")
+            self.fail("Should have failed adding duplicate GUID")
         except ldb.LdbError as err:
             enum = err.args[0]
             self.assertEqual(enum, ldb.ERR_CONSTRAINT_VIOLATION)
@@ -2327,7 +2319,7 @@ class IndexedAddModifyTests(AddModifyTests):
                         "name": b"Admins",
                         "x": "z", "y": "a",
                         "objectUUID": b"a123456789abcdef"})
-            self.fail("Should have failed adding dupliate GUID")
+            self.fail("Should have failed adding duplicate GUID")
         except ldb.LdbError as err:
             enum = err.args[0]
             self.assertEqual(enum, ldb.ERR_ENTRY_ALREADY_EXISTS)
@@ -2342,7 +2334,7 @@ class IndexedAddModifyTests(AddModifyTests):
                         "name": b"Admins",
                         "x": "z", "y": "a",
                         "objectUUID": b"aaa3456789abcdef"})
-            self.fail("Should have failed adding dupliate DN")
+            self.fail("Should have failed adding duplicate DN")
         except ldb.LdbError as err:
             enum = err.args[0]
             self.assertEqual(enum, ldb.ERR_ENTRY_ALREADY_EXISTS)

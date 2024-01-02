@@ -70,7 +70,7 @@ static int net_usershare_add_usage(struct net_context *c, int argc, const char *
 {
 	char chr = *lp_winbind_separator();
 	d_printf(_(
-		"net usershare add [-l|--long] <sharename> <path> [<comment>] [<acl>] [<guest_ok=[y|n]>]\n"
+		"net usershare add [--long] <sharename> <path> [<comment>] [<acl>] [<guest_ok=[y|n]>]\n"
 		"\tAdds the specified share name for this user.\n"
 		"\t<sharename> is the new share name.\n"
 		"\t<path> is the path on the filesystem to export.\n"
@@ -82,7 +82,7 @@ static int net_usershare_add_usage(struct net_context *c, int argc, const char *
 		"\t\tname may be a domain user or group. For local users use the local server name "
 		"instead of \"DOMAIN\"\n"
 		"\t\tThe default acl is \"Everyone:r\" which allows everyone read-only access.\n"
-		"\tAdd -l or --long to print the info on the newly added share.\n"),
+		"\tAdd --long to print the info on the newly added share.\n"),
 		chr, chr );
 	return -1;
 }
@@ -98,10 +98,10 @@ static int net_usershare_delete_usage(struct net_context *c, int argc, const cha
 static int net_usershare_info_usage(struct net_context *c, int argc, const char **argv)
 {
 	d_printf(_(
-		"net usershare info [-l|--long] [wildcard sharename]\n"
+		"net usershare info [--long] [wildcard sharename]\n"
 		"\tPrints out the path, comment and acl elements of shares that match the wildcard.\n"
 		"\tBy default only gives info on shares owned by the current user\n"
-		"\tAdd -l or --long to apply this to all shares\n"
+		"\tAdd --long to apply this to all shares\n"
 		"\tOmit the sharename or use a wildcard of '*' to see all shares\n"));
 	return -1;
 }
@@ -109,10 +109,10 @@ static int net_usershare_info_usage(struct net_context *c, int argc, const char 
 static int net_usershare_list_usage(struct net_context *c, int argc, const char **argv)
 {
 	d_printf(_(
-		"net usershare list [-l|--long] [wildcard sharename]\n"
+		"net usershare list [--long] [wildcard sharename]\n"
 		"\tLists the names of all shares that match the wildcard.\n"
 		"\tBy default only lists shares owned by the current user\n"
-		"\tAdd -l or --long to apply this to all shares\n"
+		"\tAdd --long to apply this to all shares\n"
 		"\tOmit the sharename or use a wildcard of '*' to see all shares\n"));
 	return -1;
 }
@@ -122,8 +122,8 @@ int net_usershare_usage(struct net_context *c, int argc, const char **argv)
 	d_printf(_("net usershare add <sharename> <path> [<comment>] [<acl>] [<guest_ok=[y|n]>] to "
 				"add or change a user defined share.\n"
 		"net usershare delete <sharename> to delete a user defined share.\n"
-		"net usershare info [-l|--long] [wildcard sharename] to print info about a user defined share.\n"
-		"net usershare list [-l|--long] [wildcard sharename] to list user defined shares.\n"
+		"net usershare info [--long] [wildcard sharename] to print info about a user defined share.\n"
+		"net usershare list [--long] [wildcard sharename] to list user defined shares.\n"
 		"net usershare help\n"
 		"\nType \"net usershare help <option>\" to get more information on that option\n\n"));
 
@@ -891,6 +891,12 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 			"%s:%c,",
 			dom_sid_str_buf(&sid, &buf),
 			pcolon[1]);
+		if (us_acl == NULL) {
+			d_fprintf(stderr,
+				  _("net usershare add: talloc_asprintf_append() failed\n"));
+			TALLOC_FREE(ctx);
+			return -1;
+		}
 
 		/* Move to the next ACL entry. */
 		if (pcolon[2] == ',') {
@@ -955,7 +961,7 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 	if (fchmod(tmpfd, 0644) == -1) {
 		d_fprintf(stderr,
 			  _("net usershare add: failed to fchmod tmp file %s "
-			    "to 0644n"),
+			    "to 0644\n"),
 			  full_path_tmp );
 		TALLOC_FREE(ctx);
 		close(tmpfd);
@@ -964,6 +970,13 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 
 	/* Create the in-memory image of the file. */
 	file_img = talloc_strdup(ctx, "#VERSION 2\npath=");
+	if (file_img == NULL) {
+		d_fprintf(stderr,
+			  _("net usershare add: talloc_strdup() failed\n"));
+		TALLOC_FREE(ctx);
+		close(tmpfd);
+		return -1;
+	}
 	file_img = talloc_asprintf_append(file_img,
 			"%s\ncomment=%s\nusershare_acl=%s\n"
 			"guest_ok=%c\nsharename=%s\n",
@@ -972,6 +985,13 @@ static int net_usershare_add(struct net_context *c, int argc, const char **argv)
 			us_acl,
 			guest_ok ? 'y' : 'n',
 			cp_sharename);
+	if (file_img == NULL) {
+		d_fprintf(stderr,
+			  _("net usershare add: talloc_asprintf_append() failed\n"));
+		TALLOC_FREE(ctx);
+		close(tmpfd);
+		return -1;
+	}
 
 	to_write = strlen(file_img);
 

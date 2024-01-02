@@ -17,37 +17,39 @@
 import os, grp, pwd
 import errno
 from samba import gpo, tests
-from samba.gpclass import register_gp_extension, list_gp_extensions, \
-    unregister_gp_extension, GPOStorage
+from samba.gp.gpclass import register_gp_extension, list_gp_extensions, \
+    unregister_gp_extension, GPOStorage, get_gpo_list
 from samba.param import LoadParm
-from samba.gpclass import check_refresh_gpo_list, check_safe_path, \
+from samba.gp.gpclass import check_refresh_gpo_list, check_safe_path, \
     check_guid, parse_gpext_conf, atomic_write_conf, get_deleted_gpos_list
 from subprocess import Popen, PIPE
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from samba import gpclass
+from samba.gp import gpclass
 # Disable privilege dropping for testing
 gpclass.drop_privileges = lambda _, func, *args : func(*args)
-from samba.gp_sec_ext import gp_krb_ext, gp_access_ext
-from samba.gp_scripts_ext import gp_scripts_ext, gp_user_scripts_ext
-from samba.gp_sudoers_ext import gp_sudoers_ext
-from samba.vgp_sudoers_ext import vgp_sudoers_ext
-from samba.vgp_symlink_ext import vgp_symlink_ext
-from samba.gpclass import gp_inf_ext
-from samba.gp_smb_conf_ext import gp_smb_conf_ext
-from samba.vgp_files_ext import vgp_files_ext
-from samba.vgp_openssh_ext import vgp_openssh_ext
-from samba.vgp_startup_scripts_ext import vgp_startup_scripts_ext
-from samba.vgp_motd_ext import vgp_motd_ext
-from samba.vgp_issue_ext import vgp_issue_ext
-from samba.vgp_access_ext import vgp_access_ext
-from samba.gp_gnome_settings_ext import gp_gnome_settings_ext
-from samba.gp_cert_auto_enroll_ext import gp_cert_auto_enroll_ext
-from samba.gp_firefox_ext import gp_firefox_ext
-from samba.gp_chromium_ext import gp_chromium_ext
-from samba.gp_firewalld_ext import gp_firewalld_ext
-import logging
+from samba.gp.gp_sec_ext import gp_krb_ext, gp_access_ext
+from samba.gp.gp_scripts_ext import gp_scripts_ext, gp_user_scripts_ext
+from samba.gp.gp_sudoers_ext import gp_sudoers_ext
+from samba.gp.vgp_sudoers_ext import vgp_sudoers_ext
+from samba.gp.vgp_symlink_ext import vgp_symlink_ext
+from samba.gp.gpclass import gp_inf_ext
+from samba.gp.gp_smb_conf_ext import gp_smb_conf_ext
+from samba.gp.vgp_files_ext import vgp_files_ext
+from samba.gp.vgp_openssh_ext import vgp_openssh_ext
+from samba.gp.vgp_startup_scripts_ext import vgp_startup_scripts_ext
+from samba.gp.vgp_motd_ext import vgp_motd_ext
+from samba.gp.vgp_issue_ext import vgp_issue_ext
+from samba.gp.vgp_access_ext import vgp_access_ext
+from samba.gp.gp_gnome_settings_ext import gp_gnome_settings_ext
+from samba.gp import gp_cert_auto_enroll_ext as cae
+from samba.gp.gp_firefox_ext import gp_firefox_ext
+from samba.gp.gp_chromium_ext import gp_chromium_ext
+from samba.gp.gp_firewalld_ext import gp_firewalld_ext
 from samba.credentials import Credentials
-from samba.gp_msgs_ext import gp_msgs_ext
+from samba.gp.gp_msgs_ext import gp_msgs_ext
+from samba.gp.gp_centrify_sudoers_ext import gp_centrify_sudoers_ext
+from samba.gp.gp_centrify_crontab_ext import gp_centrify_crontab_ext, \
+                                             gp_user_centrify_crontab_ext
 from samba.common import get_bytes
 from samba.dcerpc import preg
 from samba.ndr import ndr_pack
@@ -58,11 +60,58 @@ import hashlib
 from samba.gp_parse.gp_pol import GPPolParser
 from glob import glob
 from configparser import ConfigParser
-from samba.gpclass import get_dc_hostname
+from samba.gp.gpclass import get_dc_hostname
 from samba import Ldb
+import ldb as _ldb
 from samba.auth import system_session
 import json
 from shutil import which
+import requests
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import Encoding
+from datetime import datetime, timedelta
+from samba.samba3 import param as s3param
+
+def dummy_certificate():
+    name = x509.Name([
+        x509.NameAttribute(x509.NameOID.COMMON_NAME,
+                           os.environ.get('SERVER'))
+    ])
+    cons = x509.BasicConstraints(ca=True, path_length=0)
+    now = datetime.utcnow()
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048,
+                                   backend=default_backend())
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1000)
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(seconds=300))
+        .add_extension(cons, False)
+        .sign(key, hashes.SHA256(), default_backend())
+    )
+
+    return cert.public_bytes(encoding=Encoding.DER)
+
+# Dummy requests structure for Certificate Auto Enrollment
+class dummy_requests(object):
+    @staticmethod
+    def get(url=None, params=None):
+        dummy = requests.Response()
+        dummy._content = dummy_certificate()
+        dummy.headers = {'Content-Type': 'application/x-x509-ca-cert'}
+        return dummy
+
+    class exceptions(object):
+        ConnectionError = Exception
+cae.requests = dummy_requests
 
 realm = os.environ.get('REALM')
 policies = realm + '/POLICIES'
@@ -229,6 +278,163 @@ b"""
                 <ValueName>OfflineExpirationStoreNames</ValueName>
                 <Value>MY</Value>
         </Entry>
+</PolFile>
+"""
+
+advanced_enroll_reg_pol = \
+b"""
+<?xml version="1.0" encoding="utf-8"?>
+<PolFile num_entries="30" signature="PReg" version="1">
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography</Key>
+        <ValueName>**DeleteKeys</ValueName>
+        <Value>Software\Policies\Microsoft\Cryptography\PolicyServers</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\AutoEnrollment</Key>
+        <ValueName>AEPolicy</ValueName>
+        <Value>7</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\AutoEnrollment</Key>
+        <ValueName>OfflineExpirationPercent</ValueName>
+        <Value>25</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\AutoEnrollment</Key>
+        <ValueName>OfflineExpirationStoreNames</ValueName>
+        <Value>MY</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers</Key>
+        <ValueName/>
+        <Value>{5AD0BE6D-3393-4940-BFC3-6E19555A8919}</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers</Key>
+        <ValueName>Flags</ValueName>
+        <Value>0</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\37c9dc30f207f27f61a2f7c3aed598a6e2920b54</Key>
+        <ValueName>URL</ValueName>
+        <Value>LDAP:</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\37c9dc30f207f27f61a2f7c3aed598a6e2920b54</Key>
+        <ValueName>PolicyID</ValueName>
+        <Value>%s</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\37c9dc30f207f27f61a2f7c3aed598a6e2920b54</Key>
+        <ValueName>FriendlyName</ValueName>
+        <Value>Example</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\37c9dc30f207f27f61a2f7c3aed598a6e2920b54</Key>
+        <ValueName>Flags</ValueName>
+        <Value>16</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\37c9dc30f207f27f61a2f7c3aed598a6e2920b54</Key>
+        <ValueName>AuthFlags</ValueName>
+        <Value>2</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\37c9dc30f207f27f61a2f7c3aed598a6e2920b54</Key>
+        <ValueName>Cost</ValueName>
+        <Value>2147483645</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\144bdbb8e4717c26e408f3c9a0cb8d6cfacbcbbe</Key>
+        <ValueName>URL</ValueName>
+        <Value>https://example2.com/ADPolicyProvider_CEP_Certificate/service.svc/CEP</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\144bdbb8e4717c26e408f3c9a0cb8d6cfacbcbbe</Key>
+        <ValueName>PolicyID</ValueName>
+        <Value>%s</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\144bdbb8e4717c26e408f3c9a0cb8d6cfacbcbbe</Key>
+        <ValueName>FriendlyName</ValueName>
+        <Value>Example2</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\144bdbb8e4717c26e408f3c9a0cb8d6cfacbcbbe</Key>
+        <ValueName>Flags</ValueName>
+        <Value>16</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\144bdbb8e4717c26e408f3c9a0cb8d6cfacbcbbe</Key>
+        <ValueName>AuthFlags</ValueName>
+        <Value>8</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\144bdbb8e4717c26e408f3c9a0cb8d6cfacbcbbe</Key>
+        <ValueName>Cost</ValueName>
+        <Value>10</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\20d46e856e9b9746c0b1265c328f126a7b3283a9</Key>
+        <ValueName>URL</ValueName>
+        <Value>https://example0.com/ADPolicyProvider_CEP_Kerberos/service.svc/CEP</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\20d46e856e9b9746c0b1265c328f126a7b3283a9</Key>
+        <ValueName>PolicyID</ValueName>
+        <Value>%s</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\20d46e856e9b9746c0b1265c328f126a7b3283a9</Key>
+        <ValueName>FriendlyName</ValueName>
+        <Value>Example0</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\20d46e856e9b9746c0b1265c328f126a7b3283a9</Key>
+        <ValueName>Flags</ValueName>
+        <Value>16</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\20d46e856e9b9746c0b1265c328f126a7b3283a9</Key>
+        <ValueName>AuthFlags</ValueName>
+        <Value>2</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\20d46e856e9b9746c0b1265c328f126a7b3283a9</Key>
+        <ValueName>Cost</ValueName>
+        <Value>1</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\855b5246433a48402ac4f5c3427566df26ccc9ac</Key>
+        <ValueName>URL</ValueName>
+        <Value>https://example1.com/ADPolicyProvider_CEP_Kerberos/service.svc/CEP</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\855b5246433a48402ac4f5c3427566df26ccc9ac</Key>
+        <ValueName>PolicyID</ValueName>
+        <Value>%s</Value>
+    </Entry>
+    <Entry type="1" type_name="REG_SZ">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\855b5246433a48402ac4f5c3427566df26ccc9ac</Key>
+        <ValueName>FriendlyName</ValueName>
+        <Value>Example1</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\855b5246433a48402ac4f5c3427566df26ccc9ac</Key>
+        <ValueName>Flags</ValueName>
+        <Value>16</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\855b5246433a48402ac4f5c3427566df26ccc9ac</Key>
+        <ValueName>AuthFlags</ValueName>
+        <Value>2</Value>
+    </Entry>
+    <Entry type="4" type_name="REG_DWORD">
+        <Key>Software\Policies\Microsoft\Cryptography\PolicyServers\\855b5246433a48402ac4f5c3427566df26ccc9ac</Key>
+        <ValueName>Cost</ValueName>
+        <Value>1</Value>
+    </Entry>
 </PolFile>
 """
 
@@ -1890,2097 +2096,7 @@ firefox_json_expected = \
 chromium_reg_pol = \
 b"""
 <?xml version="1.0" encoding="utf-8"?>
-<PolFile num_entries="836" signature="PReg" version="1">
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AbusiveExperienceInterventionEnforce</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AccessibilityImageLabelsEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AdditionalDnsQueryTypesEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AdsSettingForIntrusiveAdsSites</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AdvancedProtectionAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AllowCrossOriginAuthPrompt</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AllowDeletingBrowserHistory</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AllowDinosaurEasterEgg</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AllowFileSelectionDialogs</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AllowSyncXHRInPageDismissal</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AllowedDomainsForApps</ValueName>
-        <Value>managedchrome.com,example.com</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AlternateErrorPagesEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AlternativeBrowserPath</ValueName>
-        <Value>${ie}</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AlwaysOpenPdfExternally</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AmbientAuthenticationInPrivateModesEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AppCacheForceEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ApplicationLocaleValue</ValueName>
-        <Value>en</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AudioCaptureAllowed</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AudioProcessHighPriorityEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AudioSandboxEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AuthNegotiateDelegateAllowlist</ValueName>
-        <Value>foobar.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AuthSchemes</ValueName>
-        <Value>basic,digest,ntlm,negotiate</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AuthServerAllowlist</ValueName>
-        <Value>*.example.com,example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AutoLaunchProtocolsFromOrigins</ValueName>
-        <Value>[{&quot;allowed_origins&quot;: [&quot;example.com&quot;, &quot;http://www.example.com:8080&quot;], &quot;protocol&quot;: &quot;spotify&quot;}, {&quot;allowed_origins&quot;: [&quot;https://example.com&quot;, &quot;https://.mail.example.com&quot;], &quot;protocol&quot;: &quot;teams&quot;}, {&quot;allowed_origins&quot;: [&quot;*&quot;], &quot;protocol&quot;: &quot;outlook&quot;}]</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AutofillAddressEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AutofillCreditCardEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>AutoplayAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BackgroundModeEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BasicAuthOverHttpEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BlockExternalExtensions</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BlockThirdPartyCookies</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BookmarkBarEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserAddPersonEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserGuestModeEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserGuestModeEnforced</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserLabsEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserNetworkTimeQueriesEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSignin</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSwitcherChromePath</ValueName>
-        <Value>${chrome}</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSwitcherDelay</ValueName>
-        <Value>10000</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSwitcherEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSwitcherExternalGreylistUrl</ValueName>
-        <Value>http://example.com/greylist.xml</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSwitcherExternalSitelistUrl</ValueName>
-        <Value>http://example.com/sitelist.xml</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSwitcherKeepLastChromeTab</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserSwitcherUseIeSitelist</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowserThemeColor</ValueName>
-        <Value>#FFFFFF</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BrowsingDataLifetime</ValueName>
-        <Value>[{&quot;data_types&quot;: [&quot;browsing_history&quot;], &quot;time_to_live_in_hours&quot;: 24}, {&quot;data_types&quot;: [&quot;password_signin&quot;, &quot;autofill&quot;], &quot;time_to_live_in_hours&quot;: 12}]</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>BuiltInDnsClientEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CECPQ2Enabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ChromeCleanupEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ChromeCleanupReportingEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ChromeVariations</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ClickToCallEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CloudManagementEnrollmentMandatory</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CloudManagementEnrollmentToken</ValueName>
-        <Value>37185d02-e055-11e7-80c1-9a214cf093ae</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CloudPolicyOverridesPlatformPolicy</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CloudPrintProxyEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CloudPrintSubmitEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CloudUserPolicyMerge</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>CommandLineFlagSecurityWarningsEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ComponentUpdatesEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DNSInterceptionChecksEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultBrowserSettingEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultCookiesSetting</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultFileHandlingGuardSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultFileSystemReadGuardSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultFileSystemWriteGuardSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultGeolocationSetting</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultImagesSetting</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultInsecureContentSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultJavaScriptSetting</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultNotificationsSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultPopupsSetting</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultPrinterSelection</ValueName>
-        <Value>{ &quot;kind&quot;: &quot;cloud&quot;, &quot;idPattern&quot;: &quot;.*public&quot;, &quot;namePattern&quot;: &quot;.*Color&quot; }</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderContextMenuAccessAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderIconURL</ValueName>
-        <Value>https://search.my.company/favicon.ico</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderImageURL</ValueName>
-        <Value>https://search.my.company/searchbyimage/upload</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderImageURLPostParams</ValueName>
-        <Value>content={imageThumbnail},url={imageURL},sbisrc={SearchSource}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderKeyword</ValueName>
-        <Value>mis</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderName</ValueName>
-        <Value>My Intranet Search</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderNewTabURL</ValueName>
-        <Value>https://search.my.company/newtab</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderSearchURL</ValueName>
-        <Value>https://search.my.company/search?q={searchTerms}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderSearchURLPostParams</ValueName>
-        <Value>q={searchTerms},ie=utf-8,oe=utf-8</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderSuggestURL</ValueName>
-        <Value>https://search.my.company/suggest?q={searchTerms}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSearchProviderSuggestURLPostParams</ValueName>
-        <Value>q={searchTerms},ie=utf-8,oe=utf-8</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSensorsSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultSerialGuardSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultWebBluetoothGuardSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DefaultWebUsbGuardSetting</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DeveloperToolsAvailability</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>Disable3DAPIs</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DisableAuthNegotiateCnameLookup</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DisablePrintPreview</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DisableSafeBrowsingProceedAnyway</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DisableScreenshots</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DiskCacheDir</ValueName>
-        <Value>${user_home}/Chrome_cache</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DiskCacheSize</ValueName>
-        <Value>104857600</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DnsOverHttpsMode</ValueName>
-        <Value>off</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DnsOverHttpsTemplates</ValueName>
-        <Value>https://dns.example.net/dns-query{?dns}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DownloadDirectory</ValueName>
-        <Value>/home/${user_name}/Downloads</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>DownloadRestrictions</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>EditBookmarksEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>EnableAuthNegotiatePort</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>EnableDeprecatedPrivetPrinting</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>EnableMediaRouter</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>EnableOnlineRevocationChecks</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>EnterpriseHardwarePlatformAPIEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ExtensionSettings</ValueName>
-        <Value>{&quot;*&quot;: {&quot;allowed_types&quot;: [&quot;hosted_app&quot;], &quot;blocked_install_message&quot;: &quot;Custom error message.&quot;, &quot;blocked_permissions&quot;: [&quot;downloads&quot;, &quot;bookmarks&quot;], &quot;install_sources&quot;: [&quot;https://company-intranet/chromeapps&quot;], &quot;installation_mode&quot;: &quot;blocked&quot;, &quot;runtime_allowed_hosts&quot;: [&quot;*://good.example.com&quot;], &quot;runtime_blocked_hosts&quot;: [&quot;*://*.example.com&quot;]}, &quot;abcdefghijklmnopabcdefghijklmnop&quot;: {&quot;blocked_permissions&quot;: [&quot;history&quot;], &quot;installation_mode&quot;: &quot;allowed&quot;, &quot;minimum_version_required&quot;: &quot;1.0.1&quot;, &quot;toolbar_pin&quot;: &quot;force_pinned&quot;}, &quot;bcdefghijklmnopabcdefghijklmnopa&quot;: {&quot;allowed_permissions&quot;: [&quot;downloads&quot;], &quot;installation_mode&quot;: &quot;force_installed&quot;, &quot;runtime_allowed_hosts&quot;: [&quot;*://good.example.com&quot;], &quot;runtime_blocked_hosts&quot;: [&quot;*://*.example.com&quot;], &quot;update_url&quot;: &quot;https://example.com/update_url&quot;}, &quot;cdefghijklmnopabcdefghijklmnopab&quot;: {&quot;blocked_install_message&quot;: &quot;Custom error message.&quot;, &quot;installation_mode&quot;: &quot;blocked&quot;}, &quot;defghijklmnopabcdefghijklmnopabc,efghijklmnopabcdefghijklmnopabcd&quot;: {&quot;blocked_install_message&quot;: &quot;Custom error message.&quot;, &quot;installation_mode&quot;: &quot;blocked&quot;}, &quot;fghijklmnopabcdefghijklmnopabcde&quot;: {&quot;blocked_install_message&quot;: &quot;Custom removal message.&quot;, &quot;installation_mode&quot;: &quot;removed&quot;}, &quot;ghijklmnopabcdefghijklmnopabcdef&quot;: {&quot;installation_mode&quot;: &quot;force_installed&quot;, &quot;override_update_url&quot;: true, &quot;update_url&quot;: &quot;https://example.com/update_url&quot;}, &quot;update_url:https://www.example.com/update.xml&quot;: {&quot;allowed_permissions&quot;: [&quot;downloads&quot;], &quot;blocked_permissions&quot;: [&quot;wallpaper&quot;], &quot;installation_mode&quot;: &quot;allowed&quot;}}</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ExternalProtocolDialogShowAlwaysOpenCheckbox</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>FetchKeepaliveDurationSecondsOnShutdown</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ForceEphemeralProfiles</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ForceGoogleSafeSearch</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ForceYouTubeRestrict</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>FullscreenAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>GloballyScopeHTTPAuthCacheEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>HardwareAccelerationModeEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>HeadlessMode</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>HideWebStoreIcon</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>HomepageIsNewTabPage</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>HomepageLocation</ValueName>
-        <Value>https://www.chromium.org</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ImportAutofillFormData</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ImportBookmarks</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ImportHistory</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ImportHomepage</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ImportSavedPasswords</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ImportSearchEngine</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>IncognitoModeAvailability</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>InsecureFormsWarningsEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>InsecurePrivateNetworkRequestsAllowed</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>IntensiveWakeUpThrottlingEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>IntranetRedirectBehavior</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>IsolateOrigins</ValueName>
-        <Value>https://example.com/,https://othersite.org/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ManagedBookmarks</ValueName>
-        <Value>[{&quot;toplevel_name&quot;: &quot;My managed bookmarks folder&quot;}, {&quot;name&quot;: &quot;Google&quot;, &quot;url&quot;: &quot;google.com&quot;}, {&quot;name&quot;: &quot;Youtube&quot;, &quot;url&quot;: &quot;youtube.com&quot;}, {&quot;children&quot;: [{&quot;name&quot;: &quot;Chromium&quot;, &quot;url&quot;: &quot;chromium.org&quot;}, {&quot;name&quot;: &quot;Chromium Developers&quot;, &quot;url&quot;: &quot;dev.chromium.org&quot;}], &quot;name&quot;: &quot;Chrome links&quot;}]</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ManagedConfigurationPerOrigin</ValueName>
-        <Value>[{&quot;managed_configuration_hash&quot;: &quot;asd891jedasd12ue9h&quot;, &quot;managed_configuration_url&quot;: &quot;https://gstatic.google.com/configuration.json&quot;, &quot;origin&quot;: &quot;https://www.google.com&quot;}, {&quot;managed_configuration_hash&quot;: &quot;djio12easd89u12aws&quot;, &quot;managed_configuration_url&quot;: &quot;https://gstatic.google.com/configuration2.json&quot;, &quot;origin&quot;: &quot;https://www.example.com&quot;}]</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>MaxConnectionsPerProxy</ValueName>
-        <Value>32</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>MaxInvalidationFetchDelay</ValueName>
-        <Value>10000</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>MediaRecommendationsEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>MediaRouterCastAllowAllIPs</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>MetricsReportingEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>NTPCardsVisible</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>NTPCustomBackgroundEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>NativeMessagingUserLevelHosts</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>NetworkPredictionOptions</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>NewTabPageLocation</ValueName>
-        <Value>https://www.chromium.org</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PasswordLeakDetectionEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PasswordManagerEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PasswordProtectionChangePasswordURL</ValueName>
-        <Value>https://mydomain.com/change_password.html</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PasswordProtectionWarningTrigger</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PaymentMethodQueryEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PolicyAtomicGroupsEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PolicyRefreshRate</ValueName>
-        <Value>3600000</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PrintHeaderFooter</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PrintPreviewUseSystemDefaultPrinter</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PrintRasterizationMode</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PrintingAllowedBackgroundGraphicsModes</ValueName>
-        <Value>enabled</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PrintingBackgroundGraphicsDefault</ValueName>
-        <Value>enabled</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PrintingEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PrintingPaperSizeDefault</ValueName>
-        <Value>{&quot;custom_size&quot;: {&quot;height&quot;: 297000, &quot;width&quot;: 210000}, &quot;name&quot;: &quot;custom&quot;}</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ProfilePickerOnStartupAvailability</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PromotionalTabsEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>PromptForDownloadLocation</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ProxySettings</ValueName>
-        <Value>{&quot;ProxyBypassList&quot;: &quot;https://www.example1.com,https://www.example2.com,https://internalsite/&quot;, &quot;ProxyMode&quot;: &quot;direct&quot;, &quot;ProxyPacUrl&quot;: &quot;https://internal.site/example.pac&quot;, &quot;ProxyServer&quot;: &quot;123.123.123.123:8080&quot;, &quot;ProxyServerMode&quot;: 2}</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>QuicAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RelaunchNotification</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RelaunchNotificationPeriod</ValueName>
-        <Value>604800000</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostAllowClientPairing</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostAllowFileTransfer</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostAllowRelayedConnection</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostAllowRemoteAccessConnections</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostAllowUiAccessForRemoteAssistance</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostFirewallTraversal</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostMaximumSessionDurationMinutes</ValueName>
-        <Value>1200</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostRequireCurtain</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RemoteAccessHostUdpPortRange</ValueName>
-        <Value>12400-12409</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RendererCodeIntegrityEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RequireOnlineRevocationChecksForLocalAnchors</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RestoreOnStartup</ValueName>
-        <Value>4</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RestrictSigninToPattern</ValueName>
-        <Value>.*@example\\.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RoamingProfileLocation</ValueName>
-        <Value>${roaming_app_data}\\chrome-profile</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>RoamingProfileSupportEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SSLErrorOverrideAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SSLVersionMin</ValueName>
-        <Value>tls1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SafeBrowsingExtendedReportingEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SafeBrowsingForTrustedSourcesEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SafeBrowsingProtectionLevel</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SafeSitesFilterBehavior</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SavingBrowserHistoryDisabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ScreenCaptureAllowed</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ScrollToTextFragmentEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SearchSuggestEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SharedArrayBufferUnrestrictedAccessAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SharedClipboardEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ShowAppsShortcutInBookmarkBar</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ShowCastIconInToolbar</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ShowFullUrlsInAddressBar</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ShowHomeButton</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SignedHTTPExchangeEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SigninInterceptionEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SitePerProcess</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SpellCheckServiceEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SpellcheckEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SuppressDifferentOriginSubframeDialogs</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SuppressUnsupportedOSWarning</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>SyncDisabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>TargetBlankImpliesNoOpener</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>TaskManagerEndProcessEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>ThirdPartyBlockingEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>TotalMemoryLimitMb</ValueName>
-        <Value>2048</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>TranslateEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>TripleDESEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>UrlKeyedAnonymizedDataCollectionEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>UserAgentClientHintsEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>UserDataDir</ValueName>
-        <Value>${users}/${user_name}/Chrome</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>UserDataSnapshotRetentionLimit</ValueName>
-        <Value>3</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>UserFeedbackAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>VideoCaptureAllowed</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WPADQuickCheckEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WebAppInstallForceList</ValueName>
-        <Value>[{&quot;create_desktop_shortcut&quot;: true, &quot;default_launch_container&quot;: &quot;window&quot;, &quot;url&quot;: &quot;https://www.google.com/maps&quot;}, {&quot;default_launch_container&quot;: &quot;tab&quot;, &quot;url&quot;: &quot;https://docs.google.com&quot;}, {&quot;default_launch_container&quot;: &quot;window&quot;, &quot;fallback_app_name&quot;: &quot;Editor&quot;, &quot;url&quot;: &quot;https://docs.google.com/editor&quot;}]</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WebRtcAllowLegacyTLSProtocols</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WebRtcEventLogCollectionAllowed</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WebRtcIPHandling</ValueName>
-        <Value>default</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WebRtcUdpPortRange</ValueName>
-        <Value>10000-11999</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WebUsbAllowDevicesForUrls</ValueName>
-        <Value>[{&quot;devices&quot;: [{&quot;product_id&quot;: 5678, &quot;vendor_id&quot;: 1234}], &quot;urls&quot;: [&quot;https://google.com&quot;]}]</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome</Key>
-        <ValueName>WindowOcclusionEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AlternativeBrowserParameters</Key>
-        <ValueName>1</ValueName>
-        <Value>-foreground</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AlternativeBrowserParameters</Key>
-        <ValueName>2</ValueName>
-        <Value>-new-window</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AlternativeBrowserParameters</Key>
-        <ValueName>3</ValueName>
-        <Value>${url}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AlternativeBrowserParameters</Key>
-        <ValueName>4</ValueName>
-        <Value>-profile</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AlternativeBrowserParameters</Key>
-        <ValueName>5</ValueName>
-        <Value>%HOME%\\browser_profile</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AudioCaptureAllowedUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AudioCaptureAllowedUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>https://[*.]example.edu/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoOpenAllowedForURLs</Key>
-        <ValueName>1</ValueName>
-        <Value>example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoOpenAllowedForURLs</Key>
-        <ValueName>2</ValueName>
-        <Value>https://ssl.server.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoOpenAllowedForURLs</Key>
-        <ValueName>3</ValueName>
-        <Value>hosting.com/good_path</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoOpenAllowedForURLs</Key>
-        <ValueName>4</ValueName>
-        <Value>https://server:8080/path</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoOpenAllowedForURLs</Key>
-        <ValueName>5</ValueName>
-        <Value>.exact.hostname.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoOpenFileTypes</Key>
-        <ValueName>1</ValueName>
-        <Value>exe</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoOpenFileTypes</Key>
-        <ValueName>2</ValueName>
-        <Value>txt</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoSelectCertificateForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>{&quot;pattern&quot;:&quot;https://www.example.com&quot;,&quot;filter&quot;:{&quot;ISSUER&quot;:{&quot;CN&quot;:&quot;certificate issuer name&quot;, &quot;L&quot;: &quot;certificate issuer location&quot;, &quot;O&quot;: &quot;certificate issuer org&quot;, &quot;OU&quot;: &quot;certificate issuer org unit&quot;}, &quot;SUBJECT&quot;:{&quot;CN&quot;:&quot;certificate subject name&quot;, &quot;L&quot;: &quot;certificate subject location&quot;, &quot;O&quot;: &quot;certificate subject org&quot;, &quot;OU&quot;: &quot;certificate subject org unit&quot;}}}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoplayAllowlist</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\AutoplayAllowlist</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\BrowserSwitcherChromeParameters</Key>
-        <ValueName>1</ValueName>
-        <Value>--force-dark-mode</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\BrowserSwitcherUrlGreylist</Key>
-        <ValueName>1</ValueName>
-        <Value>ie.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\BrowserSwitcherUrlGreylist</Key>
-        <ValueName>2</ValueName>
-        <Value>!open-in-chrome.ie.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\BrowserSwitcherUrlGreylist</Key>
-        <ValueName>3</ValueName>
-        <Value>foobar.com/ie-only/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\BrowserSwitcherUrlList</Key>
-        <ValueName>1</ValueName>
-        <Value>ie.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\BrowserSwitcherUrlList</Key>
-        <ValueName>2</ValueName>
-        <Value>!open-in-chrome.ie.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\BrowserSwitcherUrlList</Key>
-        <ValueName>3</ValueName>
-        <Value>foobar.com/ie-only/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CertificateTransparencyEnforcementDisabledForCas</Key>
-        <ValueName>1</ValueName>
-        <Value>sha256/AAAAAAAAAAAAAAAAAAAAAA==</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CertificateTransparencyEnforcementDisabledForCas</Key>
-        <ValueName>2</ValueName>
-        <Value>sha256//////////////////////w==</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CertificateTransparencyEnforcementDisabledForLegacyCas</Key>
-        <ValueName>1</ValueName>
-        <Value>sha256/AAAAAAAAAAAAAAAAAAAAAA==</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CertificateTransparencyEnforcementDisabledForLegacyCas</Key>
-        <ValueName>2</ValueName>
-        <Value>sha256//////////////////////w==</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CertificateTransparencyEnforcementDisabledForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CertificateTransparencyEnforcementDisabledForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>1</ValueName>
-        <Value>browsing_history</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>2</ValueName>
-        <Value>download_history</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>3</ValueName>
-        <Value>cookies_and_other_site_data</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>4</ValueName>
-        <Value>cached_images_and_files</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>5</ValueName>
-        <Value>password_signin</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>6</ValueName>
-        <Value>autofill</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>7</ValueName>
-        <Value>site_settings</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ClearBrowsingDataOnExitList</Key>
-        <ValueName>8</ValueName>
-        <Value>hosted_app_data</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CookiesAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CookiesAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CookiesBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CookiesBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CookiesSessionOnlyForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\CookiesSessionOnlyForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\DefaultSearchProviderAlternateURLs</Key>
-        <ValueName>1</ValueName>
-        <Value>https://search.my.company/suggest#q={searchTerms}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\DefaultSearchProviderAlternateURLs</Key>
-        <ValueName>2</ValueName>
-        <Value>https://search.my.company/suggest/search#q={searchTerms}</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\DefaultSearchProviderEncodings</Key>
-        <ValueName>1</ValueName>
-        <Value>UTF-8</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\DefaultSearchProviderEncodings</Key>
-        <ValueName>2</ValueName>
-        <Value>UTF-16</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\DefaultSearchProviderEncodings</Key>
-        <ValueName>3</ValueName>
-        <Value>GB2312</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\DefaultSearchProviderEncodings</Key>
-        <ValueName>4</ValueName>
-        <Value>ISO-8859-1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\EnableExperimentalPolicies</Key>
-        <ValueName>1</ValueName>
-        <Value>ExtensionInstallAllowlist</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\EnableExperimentalPolicies</Key>
-        <ValueName>2</ValueName>
-        <Value>ExtensionInstallBlocklist</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExplicitlyAllowedNetworkPorts</Key>
-        <ValueName>1</ValueName>
-        <Value>10080</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionAllowedTypes</Key>
-        <ValueName>1</ValueName>
-        <Value>hosted_app</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionInstallAllowlist</Key>
-        <ValueName>1</ValueName>
-        <Value>extension_id1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionInstallAllowlist</Key>
-        <ValueName>2</ValueName>
-        <Value>extension_id2</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionInstallBlocklist</Key>
-        <ValueName>1</ValueName>
-        <Value>extension_id1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionInstallBlocklist</Key>
-        <ValueName>2</ValueName>
-        <Value>extension_id2</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionInstallForcelist</Key>
-        <ValueName>1</ValueName>
-        <Value>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;https://clients2.google.com/service/update2/crx</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionInstallForcelist</Key>
-        <ValueName>2</ValueName>
-        <Value>abcdefghijklmnopabcdefghijklmnop</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ExtensionInstallSources</Key>
-        <ValueName>1</ValueName>
-        <Value>https://corp.mycompany.com/*</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileHandlingAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileHandlingAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileHandlingBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileHandlingBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemReadAskForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemReadAskForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemReadBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemReadBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemWriteAskForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemWriteAskForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemWriteBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\FileSystemWriteBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ForcedLanguages</Key>
-        <ValueName>1</ValueName>
-        <Value>en-US</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\HSTSPolicyBypassList</Key>
-        <ValueName>1</ValueName>
-        <Value>meet</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ImagesAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ImagesAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ImagesBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\ImagesBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\InsecureContentAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\InsecureContentAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\InsecureContentBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\InsecureContentBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\InsecurePrivateNetworkRequestsAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>http://www.example.com:8080</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\InsecurePrivateNetworkRequestsAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\JavaScriptAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\JavaScriptAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\JavaScriptBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\JavaScriptBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\LegacySameSiteCookieBehaviorEnabledForDomainList</Key>
-        <ValueName>1</ValueName>
-        <Value>www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\LegacySameSiteCookieBehaviorEnabledForDomainList</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\LookalikeWarningAllowlistDomains</Key>
-        <ValueName>1</ValueName>
-        <Value>foo.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\LookalikeWarningAllowlistDomains</Key>
-        <ValueName>2</ValueName>
-        <Value>example.org</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NativeMessagingAllowlist</Key>
-        <ValueName>1</ValueName>
-        <Value>com.native.messaging.host.name1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NativeMessagingAllowlist</Key>
-        <ValueName>2</ValueName>
-        <Value>com.native.messaging.host.name2</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NativeMessagingBlocklist</Key>
-        <ValueName>1</ValueName>
-        <Value>com.native.messaging.host.name1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NativeMessagingBlocklist</Key>
-        <ValueName>2</ValueName>
-        <Value>com.native.messaging.host.name2</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NotificationsAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NotificationsAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NotificationsBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\NotificationsBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\OverrideSecurityRestrictionsOnInsecureOrigin</Key>
-        <ValueName>1</ValueName>
-        <Value>http://testserver.example.com/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\OverrideSecurityRestrictionsOnInsecureOrigin</Key>
-        <ValueName>2</ValueName>
-        <Value>*.example.org</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PasswordProtectionLoginURLs</Key>
-        <ValueName>1</ValueName>
-        <Value>https://mydomain.com/login.html</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PasswordProtectionLoginURLs</Key>
-        <ValueName>2</ValueName>
-        <Value>https://login.mydomain.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PolicyDictionaryMultipleSourceMergeList</Key>
-        <ValueName>1</ValueName>
-        <Value>ExtensionSettings</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PolicyListMultipleSourceMergeList</Key>
-        <ValueName>1</ValueName>
-        <Value>ExtensionInstallAllowlist</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PolicyListMultipleSourceMergeList</Key>
-        <ValueName>2</ValueName>
-        <Value>ExtensionInstallBlocklist</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PopupsAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PopupsAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PopupsBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PopupsBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PrinterTypeDenyList</Key>
-        <ValueName>1</ValueName>
-        <Value>cloud</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\PrinterTypeDenyList</Key>
-        <ValueName>2</ValueName>
-        <Value>privet</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\RemoteAccessHostClientDomainList</Key>
-        <ValueName>1</ValueName>
-        <Value>my-awesome-domain.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\RemoteAccessHostClientDomainList</Key>
-        <ValueName>2</ValueName>
-        <Value>my-auxiliary-domain.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\RemoteAccessHostDomainList</Key>
-        <ValueName>1</ValueName>
-        <Value>my-awesome-domain.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\RemoteAccessHostDomainList</Key>
-        <ValueName>2</ValueName>
-        <Value>my-auxiliary-domain.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\RestoreOnStartupURLs</Key>
-        <ValueName>1</ValueName>
-        <Value>https://example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\RestoreOnStartupURLs</Key>
-        <ValueName>2</ValueName>
-        <Value>https://www.chromium.org</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SSLErrorOverrideAllowedForOrigins</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SSLErrorOverrideAllowedForOrigins</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SafeBrowsingAllowlistDomains</Key>
-        <ValueName>1</ValueName>
-        <Value>mydomain.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SafeBrowsingAllowlistDomains</Key>
-        <ValueName>2</ValueName>
-        <Value>myuniversity.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SecurityKeyPermitAttestation</Key>
-        <ValueName>1</ValueName>
-        <Value>https://example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SensorsAllowedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SensorsAllowedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SensorsBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SensorsBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SerialAskForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SerialAskForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SerialBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SerialBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SpellcheckLanguage</Key>
-        <ValueName>1</ValueName>
-        <Value>fr</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SpellcheckLanguage</Key>
-        <ValueName>2</ValueName>
-        <Value>es</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SpellcheckLanguageBlocklist</Key>
-        <ValueName>1</ValueName>
-        <Value>fr</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SpellcheckLanguageBlocklist</Key>
-        <ValueName>2</ValueName>
-        <Value>es</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\SyncTypesListDisabled</Key>
-        <ValueName>1</ValueName>
-        <Value>bookmarks</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLAllowlist</Key>
-        <ValueName>1</ValueName>
-        <Value>example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLAllowlist</Key>
-        <ValueName>2</ValueName>
-        <Value>https://ssl.server.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLAllowlist</Key>
-        <ValueName>3</ValueName>
-        <Value>hosting.com/good_path</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLAllowlist</Key>
-        <ValueName>4</ValueName>
-        <Value>https://server:8080/path</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLAllowlist</Key>
-        <ValueName>5</ValueName>
-        <Value>.exact.hostname.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>1</ValueName>
-        <Value>example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>2</ValueName>
-        <Value>https://ssl.server.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>3</ValueName>
-        <Value>hosting.com/bad_path</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>4</ValueName>
-        <Value>https://server:8080/path</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>5</ValueName>
-        <Value>.exact.hostname.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>6</ValueName>
-        <Value>file://*</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>7</ValueName>
-        <Value>custom_scheme:*</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\URLBlocklist</Key>
-        <ValueName>8</ValueName>
-        <Value>*</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\VideoCaptureAllowedUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\VideoCaptureAllowedUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>https://[*.]example.edu/</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\WebRtcLocalIpsAllowedUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\WebRtcLocalIpsAllowedUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>*example.com*</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\WebUsbAskForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\WebUsbAskForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\WebUsbBlockedForUrls</Key>
-        <ValueName>1</ValueName>
-        <Value>https://www.example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\WebUsbBlockedForUrls</Key>
-        <ValueName>2</ValueName>
-        <Value>[*.]example.edu</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>AlternateErrorPagesEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ApplicationLocaleValue</ValueName>
-        <Value>en</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>AutofillAddressEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>AutofillCreditCardEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>BackgroundModeEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>BlockThirdPartyCookies</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>BookmarkBarEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>DefaultDownloadDirectory</ValueName>
-        <Value>/home/${user_name}/Downloads</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>DownloadDirectory</ValueName>
-        <Value>/home/${user_name}/Downloads</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>DownloadRestrictions</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>HomepageIsNewTabPage</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>HomepageLocation</ValueName>
-        <Value>https://www.chromium.org</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ImportAutofillFormData</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ImportBookmarks</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ImportHistory</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ImportSavedPasswords</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ImportSearchEngine</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>MetricsReportingEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>NetworkPredictionOptions</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>PasswordLeakDetectionEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>PasswordManagerEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>PrintHeaderFooter</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>PrintPreviewUseSystemDefaultPrinter</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>RegisteredProtocolHandlers</ValueName>
-        <Value>[{&quot;default&quot;: true, &quot;protocol&quot;: &quot;mailto&quot;, &quot;url&quot;: &quot;https://mail.google.com/mail/?extsrc=mailto&amp;url=%s&quot;}]</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>RestoreOnStartup</ValueName>
-        <Value>4</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>SafeBrowsingForTrustedSourcesEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>SafeBrowsingProtectionLevel</ValueName>
-        <Value>2</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>SearchSuggestEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ShowFullUrlsInAddressBar</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>ShowHomeButton</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>SpellCheckServiceEnabled</ValueName>
-        <Value>0</Value>
-    </Entry>
-    <Entry type="4" type_name="REG_DWORD">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended</Key>
-        <ValueName>TranslateEnabled</ValueName>
-        <Value>1</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended\RestoreOnStartupURLs</Key>
-        <ValueName>1</ValueName>
-        <Value>https://example.com</Value>
-    </Entry>
-    <Entry type="1" type_name="REG_SZ">
-        <Key>HKEY_LOCAL_MACHINE\Software\Policies\Google\Chrome\Recommended\RestoreOnStartupURLs</Key>
-        <ValueName>2</ValueName>
-        <Value>https://www.chromium.org</Value>
-    </Entry>
+<PolFile num_entries="418" signature="PReg" version="1">
     <Entry type="4" type_name="REG_DWORD">
         <Key>Software\Policies\Google\Chrome</Key>
         <ValueName>AbusiveExperienceInterventionEnforce</ValueName>
@@ -6884,6 +5000,7 @@ def gpupdate(lp, arg):
 
     p = Popen(gpupdate, stdout=PIPE, stderr=PIPE)
     stdoutdata, stderrdata = p.communicate()
+    print(stderrdata)
     return p.returncode
 
 def gpupdate_force(lp):
@@ -6923,7 +5040,7 @@ class GPOTests(tests.TestCase):
         super(GPOTests, self).setUp()
         self.server = os.environ["SERVER"]
         self.dc_account = self.server.upper() + '$'
-        self.lp = LoadParm()
+        self.lp = s3param.get_context()
         self.lp.load_default()
         self.creds = self.insta_creds(template=self.get_credentials())
 
@@ -6932,9 +5049,8 @@ class GPOTests(tests.TestCase):
 
     def test_gpo_list(self):
         global poldir, dspath
-        ads = gpo.ADS_STRUCT(self.server, self.lp, self.creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(self.creds.get_username())
+        gpos = get_gpo_list(self.server, self.creds, self.lp,
+                            self.creds.get_username())
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         names = ['Local Policy', guid]
         file_sys_paths = [None, '%s\\%s' % (poldir, guid)]
@@ -6946,12 +5062,6 @@ class GPOTests(tests.TestCase):
                               'file_sys_path did not match expected %s' % gpos[i].file_sys_path)
             self.assertEqual(gpos[i].ds_path, ds_paths[i],
                               'ds_path did not match expected %s' % gpos[i].ds_path)
-
-    def test_gpo_ads_does_not_segfault(self):
-        try:
-            ads = gpo.ADS_STRUCT(self.server, 42, self.creds)
-        except:
-            pass
 
     def test_gpt_version(self):
         global gpt_data
@@ -6972,9 +5082,8 @@ class GPOTests(tests.TestCase):
 
     def test_check_refresh_gpo_list(self):
         cache = self.lp.cache_path('gpo_cache')
-        ads = gpo.ADS_STRUCT(self.server, self.lp, self.creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(self.creds.get_username())
+        gpos = get_gpo_list(self.server, self.creds, self.lp,
+                            self.creds.get_username())
         check_refresh_gpo_list(self.server, self.lp, self.creds, gpos)
 
         self.assertTrue(os.path.exists(cache),
@@ -7016,7 +5125,7 @@ class GPOTests(tests.TestCase):
     def test_gpt_ext_register(self):
         this_path = os.path.dirname(os.path.realpath(__file__))
         samba_path = os.path.realpath(os.path.join(this_path, '../../../'))
-        ext_path = os.path.join(samba_path, 'python/samba/gp_sec_ext.py')
+        ext_path = os.path.join(samba_path, 'python/samba/gp/gp_sec_ext.py')
         ext_guid = '{827D319E-6EAC-11D2-A4EA-00C04F79F83A}'
         ret = register_gp_extension(ext_guid, 'gp_access_ext', ext_path,
                                     smb_conf=self.lp.configfile,
@@ -7091,9 +5200,8 @@ class GPOTests(tests.TestCase):
                                  days2rel_nttime(998),
                                  'minPwdAge policy not set')
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, self.creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(self.dc_account)
+        gpos = get_gpo_list(self.server, self.creds, self.lp,
+                            self.dc_account)
         del_gpos = get_deleted_gpos_list(gp_db, gpos[:-1])
         self.assertEqual(len(del_gpos), 1, 'Returned delete gpos is incorrect')
         self.assertEqual(guids[-1], del_gpos[0][0],
@@ -7116,7 +5224,6 @@ class GPOTests(tests.TestCase):
                  '{6AC1786C-016F-11D2-945F-00C04FB984F9}']
         gpofile = '%s/' + policies + '/%s/MACHINE/MICROSOFT/' \
                   'WINDOWS NT/SECEDIT/GPTTMPL.INF'
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7125,14 +5232,14 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_krb_ext(logger, self.lp, machine_creds,
+        ext = gp_krb_ext(self.lp, machine_creds,
                          machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
-        stage = '[Kerberos Policy]\nMaxTicketAge = %d\n'
+        # Include MaxClockSkew to ensure we don't fail on a key we ignore
+        stage = '[Kerberos Policy]\nMaxTicketAge = %d\nMaxClockSkew = 5'
         opts = [100, 200]
         for i in range(0, 2):
             gpttmpl = gpofile % (local_path, guids[i])
@@ -7171,7 +5278,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7180,12 +5286,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_scripts_ext(logger, self.lp, machine_creds,
+        ext = gp_scripts_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         reg_key = b'Software\\Policies\\Samba\\Unix Settings'
         sections = { b'%s\\Daily Scripts' % reg_key : '.cron.daily',
@@ -7209,18 +5314,22 @@ class GPOTests(tests.TestCase):
             with TemporaryDirectory(sections[keyname]) as dname:
                 ext.process_group_policy([], gpos, dname)
                 scripts = os.listdir(dname)
-                self.assertEquals(len(scripts), 1,
+                self.assertEqual(len(scripts), 1,
                     'The %s script was not created' % keyname.decode())
                 out, _ = Popen([os.path.join(dname, scripts[0])], stdout=PIPE).communicate()
                 self.assertIn(b'hello world', out,
                     '%s script execution failed' % keyname.decode())
 
+                # Check that a call to gpupdate --rsop also succeeds
+                ret = rsop(self.lp)
+                self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
                 # Remove policy
                 gp_db = store.get_gplog(machine_creds.get_username())
                 del_gpos = get_deleted_gpos_list(gp_db, [])
                 ext.process_group_policy(del_gpos, [])
-                self.assertEquals(len(os.listdir(dname)), 0,
-                                  'Unapply failed to cleanup scripts')
+                self.assertEqual(len(os.listdir(dname)), 0,
+                                 'Unapply failed to cleanup scripts')
 
             # Unstage the Registry.pol file
             unstage_file(reg_pol)
@@ -7230,7 +5339,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7239,12 +5347,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_sudoers_ext(logger, self.lp, machine_creds,
+        ext = gp_sudoers_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         stage = preg.file()
@@ -7262,17 +5369,21 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             sudoers = os.listdir(dname)
-            self.assertEquals(len(sudoers), 1, 'The sudoer file was not created')
+            self.assertEqual(len(sudoers), 1, 'The sudoer file was not created')
             self.assertIn(e.data,
                     open(os.path.join(dname, sudoers[0]), 'r').read(),
                     'The sudoers entry was not applied')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
-            self.assertEquals(len(os.listdir(dname)), 0,
-                              'Unapply failed to cleanup scripts')
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup scripts')
 
         # Unstage the Registry.pol file
         unstage_file(reg_pol)
@@ -7282,7 +5393,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         manifest = os.path.join(local_path, policies, guid, 'MACHINE',
             'VGP/VTLA/SUDO/SUDOERSCONFIGURATION/MANIFEST.XML')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7291,12 +5401,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_sudoers_ext(logger, self.lp, machine_creds,
+        ext = vgp_sudoers_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -7355,7 +5464,7 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             sudoers = os.listdir(dname)
-            self.assertEquals(len(sudoers), 3, 'The sudoer file was not created')
+            self.assertEqual(len(sudoers), 3, 'The sudoer file was not created')
             output = open(os.path.join(dname, sudoers[0]), 'r').read() + \
                      open(os.path.join(dname, sudoers[1]), 'r').read() + \
                      open(os.path.join(dname, sudoers[2]), 'r').read()
@@ -7366,18 +5475,21 @@ class GPOTests(tests.TestCase):
             self.assertIn(data_no_principal, output,
                     'The sudoers entry was not applied')
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
-            self.assertEquals(len(os.listdir(dname)), 0,
-                              'Unapply failed to cleanup scripts')
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup scripts')
 
         # Unstage the Registry.pol file
         unstage_file(manifest)
 
     def test_gp_inf_ext_utf(self):
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7385,7 +5497,7 @@ class GPOTests(tests.TestCase):
         machine_creds.guess(self.lp)
         machine_creds.set_machine_account()
 
-        ext = gp_inf_ext(logger, self.lp, machine_creds,
+        ext = gp_inf_ext(self.lp, machine_creds,
                          machine_creds.get_username(), store)
         test_data = '[Kerberos Policy]\nMaxTicketAge = 99\n'
 
@@ -7398,8 +5510,8 @@ class GPOTests(tests.TestCase):
                 self.fail('Failed to parse utf-16')
             self.assertIn('Kerberos Policy', inf_conf.keys(),
                           'Kerberos Policy was not read from the file')
-            self.assertEquals(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
-                              '99', 'MaxTicketAge was not read from the file')
+            self.assertEqual(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
+                             '99', 'MaxTicketAge was not read from the file')
 
         with NamedTemporaryFile() as f:
             with codecs.open(f.name, 'w', 'utf-8') as w:
@@ -7407,11 +5519,10 @@ class GPOTests(tests.TestCase):
             inf_conf = ext.read(f.name)
             self.assertIn('Kerberos Policy', inf_conf.keys(),
                           'Kerberos Policy was not read from the file')
-            self.assertEquals(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
-                              '99', 'MaxTicketAge was not read from the file')
+            self.assertEqual(inf_conf.get('Kerberos Policy', 'MaxTicketAge'),
+                             '99', 'MaxTicketAge was not read from the file')
 
     def test_rsop(self):
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         local_path = self.lp.cache_path('gpo_cache')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
@@ -7420,9 +5531,8 @@ class GPOTests(tests.TestCase):
         machine_creds.guess(self.lp)
         machine_creds.set_machine_account()
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         gp_extensions = []
         gp_extensions.append(gp_krb_ext)
@@ -7471,11 +5581,11 @@ class GPOTests(tests.TestCase):
             self.assertTrue(ret, 'Could not create the target %s' %
                                  (reg_pol % g.name))
             for ext in gp_extensions:
-                ext = ext(logger, self.lp, machine_creds,
+                ext = ext(self.lp, machine_creds,
                           machine_creds.get_username(), store)
                 ret = ext.rsop(g)
-                self.assertEquals(len(ret.keys()), 1,
-                                  'A single policy should have been displayed')
+                self.assertEqual(len(ret.keys()), 1,
+                                 'A single policy should have been displayed')
 
                 # Check the Security Extension
                 if type(ext) == gp_krb_ext:
@@ -7483,8 +5593,8 @@ class GPOTests(tests.TestCase):
                                   'Kerberos Policy not found')
                     self.assertIn('MaxTicketAge', ret['Kerberos Policy'],
                                   'MaxTicketAge setting not found')
-                    self.assertEquals(ret['Kerberos Policy']['MaxTicketAge'], '99',
-                                      'MaxTicketAge was not set to 99')
+                    self.assertEqual(ret['Kerberos Policy']['MaxTicketAge'], '99',
+                                     'MaxTicketAge was not set to 99')
                 # Check the Scripts Extension
                 elif type(ext) == gp_scripts_ext:
                     self.assertIn('Daily Scripts', ret.keys(),
@@ -7504,23 +5614,23 @@ class GPOTests(tests.TestCase):
                                   'apply group policies was not applied')
                     self.assertIn(e3.valuename, ret['smb.conf'],
                                   'apply group policies was not applied')
-                    self.assertEquals(ret['smb.conf'][e3.valuename], e3.data,
-                                      'apply group policies was not set')
+                    self.assertEqual(ret['smb.conf'][e3.valuename], e3.data,
+                                     'apply group policies was not set')
                 # Check the Messages Extension
                 elif type(ext) == gp_msgs_ext:
                     self.assertIn('/etc/issue', ret,
                                   'Login Prompt Message not applied')
-                    self.assertEquals(ret['/etc/issue'], e4.data,
-                                      'Login Prompt Message not set')
+                    self.assertEqual(ret['/etc/issue'], e4.data,
+                                     'Login Prompt Message not set')
+
+                # Check that a call to gpupdate --rsop also succeeds
+                ret = rsop(self.lp)
+                self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
             unstage_file(gpofile % g.name)
             unstage_file(reg_pol % g.name)
 
-        # Check that a call to gpupdate --rsop also succeeds
-        ret = rsop(self.lp)
-        self.assertEquals(ret, 0, 'gpupdate --rsop failed!')
-
     def test_gp_unapply(self):
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         local_path = self.lp.cache_path('gpo_cache')
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
@@ -7530,9 +5640,8 @@ class GPOTests(tests.TestCase):
         machine_creds.guess(self.lp)
         machine_creds.set_machine_account()
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         gp_extensions = []
         gp_extensions.append(gp_krb_ext)
@@ -7571,7 +5680,7 @@ class GPOTests(tests.TestCase):
         remove = []
         with TemporaryDirectory() as dname:
             for ext in gp_extensions:
-                ext = ext(logger, self.lp, machine_creds,
+                ext = ext(self.lp, machine_creds,
                           machine_creds.get_username(), store)
                 if type(ext) == gp_krb_ext:
                     ext.process_group_policy([], gpos)
@@ -7582,6 +5691,7 @@ class GPOTests(tests.TestCase):
                     gp_db = store.get_gplog(machine_creds.get_username())
                     applied_settings = gp_db.get_applied_settings([guid])
                     for _, fname in applied_settings[-1][-1][str(ext)].items():
+                        fname = fname.split(':')[-1]
                         self.assertIn(dname, fname,
                                       'Test file not created in tmp dir')
                         self.assertTrue(os.path.exists(fname),
@@ -7605,7 +5715,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7613,9 +5722,8 @@ class GPOTests(tests.TestCase):
         machine_creds.guess(self.lp)
         machine_creds.set_machine_account()
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         entries = []
         e = preg.entry()
@@ -7648,19 +5756,23 @@ class GPOTests(tests.TestCase):
             lp = LoadParm(f.name)
 
             # Initialize the group policy extension
-            ext = gp_smb_conf_ext(logger, lp, machine_creds,
+            ext = gp_smb_conf_ext(lp, machine_creds,
                                   machine_creds.get_username(), store)
             ext.process_group_policy([], gpos)
             lp = LoadParm(f.name)
 
             template_homedir = lp.get('template homedir')
-            self.assertEquals(template_homedir, '/home/samba/%D/%U',
+            self.assertEqual(template_homedir, '/home/samba/%D/%U',
                               'template homedir was not applied')
             apply_group_policies = lp.get('apply group policies')
             self.assertTrue(apply_group_policies,
                             'apply group policies was not applied')
             ldap_timeout = lp.get('ldap timeout')
-            self.assertEquals(ldap_timeout, 9999, 'ldap timeout was not applied')
+            self.assertEqual(ldap_timeout, 9999, 'ldap timeout was not applied')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -7670,13 +5782,13 @@ class GPOTests(tests.TestCase):
             lp = LoadParm(f.name)
 
             template_homedir = lp.get('template homedir')
-            self.assertEquals(template_homedir, self.lp.get('template homedir'),
+            self.assertEqual(template_homedir, self.lp.get('template homedir'),
                               'template homedir was not unapplied')
             apply_group_policies = lp.get('apply group policies')
-            self.assertEquals(apply_group_policies, self.lp.get('apply group policies'),
+            self.assertEqual(apply_group_policies, self.lp.get('apply group policies'),
                               'apply group policies was not unapplied')
             ldap_timeout = lp.get('ldap timeout')
-            self.assertEquals(ldap_timeout, self.lp.get('ldap timeout'),
+            self.assertEqual(ldap_timeout, self.lp.get('ldap timeout'),
                               'ldap timeout was not unapplied')
 
         # Unstage the Registry.pol file
@@ -7687,7 +5799,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7696,12 +5807,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_msgs_ext(logger, self.lp, machine_creds,
+        ext = gp_msgs_ext(self.lp, machine_creds,
                           machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         stage = preg.file()
@@ -7727,12 +5837,16 @@ class GPOTests(tests.TestCase):
             self.assertTrue(os.path.exists(motd_file),
                             'Message of the day file not created')
             data = open(motd_file, 'r').read()
-            self.assertEquals(data, e1.data, 'Message of the day not applied')
+            self.assertEqual(data, e1.data, 'Message of the day not applied')
             issue_file = os.path.join(dname, 'issue')
             self.assertTrue(os.path.exists(issue_file),
                             'Login Prompt Message file not created')
             data = open(issue_file, 'r').read()
-            self.assertEquals(data, e2.data, 'Login Prompt Message not applied')
+            self.assertEqual(data, e2.data, 'Login Prompt Message not applied')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Unapply policy, and ensure the test files are removed
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -7751,7 +5865,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         manifest = os.path.join(local_path, policies, guid, 'MACHINE',
             'VGP/VTLA/UNIX/SYMLINK/MANIFEST.XML')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7760,12 +5873,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_symlink_ext(logger, self.lp, machine_creds,
+        ext = vgp_symlink_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         with TemporaryDirectory() as dname:
             test_source = os.path.join(dname, 'test.source')
@@ -7817,6 +5929,10 @@ class GPOTests(tests.TestCase):
             self.assertIn('ln -s %s %s' % (test_source, test_target),
                           list(ret.values())[0])
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
         # Unstage the manifest.xml file
         unstage_file(manifest)
 
@@ -7829,7 +5945,6 @@ class GPOTests(tests.TestCase):
         source_data = '#!/bin/sh\necho hello world'
         ret = stage_file(source_file, source_data)
         self.assertTrue(ret, 'Could not create the target %s' % source_file)
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7838,12 +5953,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_files_ext(logger, self.lp, machine_creds,
+        ext = vgp_files_ext(self.lp, machine_creds,
                             machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         with TemporaryDirectory() as dname:
@@ -7885,9 +5999,9 @@ class GPOTests(tests.TestCase):
             ext.process_group_policy([], gpos)
             self.assertTrue(os.path.exists(target.text),
                             'The target file does not exist')
-            self.assertEquals(os.stat(target.text).st_mode & 0o777, 0o755,
+            self.assertEqual(os.stat(target.text).st_mode & 0o777, 0o755,
                               'The target file permissions are incorrect')
-            self.assertEquals(open(target.text).read(), source_data,
+            self.assertEqual(open(target.text).read(), source_data,
                               'The target file contents are incorrect')
 
             # Remove policy
@@ -7905,6 +6019,10 @@ class GPOTests(tests.TestCase):
             self.assertIn('-rwxr-xr-x', list(ret.values())[0][0],
                           'The target permissions were not listed by rsop')
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
         # Unstage the manifest and source files
         unstage_file(manifest)
         unstage_file(source_file)
@@ -7914,7 +6032,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         manifest = os.path.join(local_path, policies, guid, 'MACHINE',
             'VGP/VTLA/SSHCFG/SSHD/MANIFEST.XML')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7923,12 +6040,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_openssh_ext(logger, self.lp, machine_creds,
+        ext = vgp_openssh_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -7961,10 +6077,14 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             conf = os.listdir(dname)
-            self.assertEquals(len(conf), 1, 'The conf file was not created')
+            self.assertEqual(len(conf), 1, 'The conf file was not created')
             gp_cfg = os.path.join(dname, conf[0])
             self.assertIn(data, open(gp_cfg, 'r').read(),
                     'The sshd_config entry was not applied')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -7985,7 +6105,6 @@ class GPOTests(tests.TestCase):
         test_data = '#!/bin/sh\necho $@ hello world'
         ret = stage_file(test_script, test_data)
         self.assertTrue(ret, 'Could not create the target %s' % test_script)
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -7994,12 +6113,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_startup_scripts_ext(logger, self.lp, machine_creds,
+        ext = vgp_startup_scripts_ext(self.lp, machine_creds,
                                       machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -8024,7 +6142,7 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             files = os.listdir(dname)
-            self.assertEquals(len(files), 1,
+            self.assertEqual(len(files), 1,
                               'The target script was not created')
             entry = '@reboot %s %s %s' % (run_as.text, test_script,
                                           parameters.text)
@@ -8037,8 +6155,8 @@ class GPOTests(tests.TestCase):
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [])
             files = os.listdir(dname)
-            self.assertEquals(len(files), 0,
-                              'The target script was not removed')
+            self.assertEqual(len(files), 0,
+                             'The target script was not removed')
 
             # Test rsop
             g = [g for g in gpos if g.name == guid][0]
@@ -8046,9 +6164,12 @@ class GPOTests(tests.TestCase):
             self.assertIn(entry, list(ret.values())[0][0],
                           'The target entry was not listed by rsop')
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
         # Unstage the manifest.xml and script files
         unstage_file(manifest)
-        unstage_file(test_script)
 
         # Stage the manifest.xml file for run once scripts
         etree.SubElement(listelement, 'run_once')
@@ -8067,18 +6188,18 @@ class GPOTests(tests.TestCase):
 
             ext.process_group_policy([], gpos, dname)
             files = os.listdir(dname)
-            self.assertEquals(len(files), 1,
-                              'The test file was not created')
-            self.assertEquals(files[0], os.path.basename(test_file),
-                              'The test file was not created')
+            self.assertEqual(len(files), 1,
+                             'The test file was not created')
+            self.assertEqual(files[0], os.path.basename(test_file),
+                             'The test file was not created')
 
             # Unlink the test file and ensure that processing
             # policy again does not recreate it.
             os.unlink(test_file)
             ext.process_group_policy([], gpos, dname)
             files = os.listdir(dname)
-            self.assertEquals(len(files), 0,
-                              'The test file should not have been created')
+            self.assertEqual(len(files), 0,
+                             'The test file should not have been created')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -8093,6 +6214,62 @@ class GPOTests(tests.TestCase):
             self.assertIn(entry, list(ret.values())[0][0],
                           'The target entry was not listed by rsop')
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
+        # Unstage the manifest.xml and script files
+        unstage_file(manifest)
+
+        # Stage the manifest.xml file for a script without parameters
+        stage = etree.Element('vgppolicy')
+        policysetting = etree.SubElement(stage, 'policysetting')
+        version = etree.SubElement(policysetting, 'version')
+        version.text = '1'
+        data = etree.SubElement(policysetting, 'data')
+        listelement = etree.SubElement(data, 'listelement')
+        script = etree.SubElement(listelement, 'script')
+        script.text = os.path.basename(test_script).lower()
+        hash = etree.SubElement(listelement, 'hash')
+        hash.text = \
+            hashlib.md5(open(test_script, 'rb').read()).hexdigest().upper()
+        run_as = etree.SubElement(listelement, 'run_as')
+        run_as.text = 'root'
+        ret = stage_file(manifest, etree.tostring(stage))
+        self.assertTrue(ret, 'Could not create the target %s' % manifest)
+
+        # Process all gpos, with temp output directory
+        with TemporaryDirectory() as dname:
+            try:
+                ext.process_group_policy([], gpos, dname)
+            except Exception as e:
+                self.fail(str(e))
+            files = os.listdir(dname)
+            self.assertEqual(len(files), 1,
+                             'The target script was not created')
+            entry = '@reboot %s %s' % (run_as.text, test_script)
+            self.assertIn(entry,
+                          open(os.path.join(dname, files[0]), 'r').read(),
+                          'The test entry was not found')
+
+            # Remove policy
+            gp_db = store.get_gplog(machine_creds.get_username())
+            del_gpos = get_deleted_gpos_list(gp_db, [])
+            ext.process_group_policy(del_gpos, [])
+            files = os.listdir(dname)
+            self.assertEqual(len(files), 0,
+                             'The target script was not removed')
+
+            # Test rsop
+            g = [g for g in gpos if g.name == guid][0]
+            ret = ext.rsop(g)
+            self.assertIn(entry, list(ret.values())[0][0],
+                          'The target entry was not listed by rsop')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
         # Unstage the manifest.xml and script files
         unstage_file(manifest)
         unstage_file(test_script)
@@ -8102,7 +6279,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         manifest = os.path.join(local_path, policies, guid, 'MACHINE',
             'VGP/VTLA/UNIX/MOTD/MANIFEST.XML')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8111,12 +6287,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_motd_ext(logger, self.lp, machine_creds,
+        ext = vgp_motd_ext(self.lp, machine_creds,
                            machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -8134,15 +6309,19 @@ class GPOTests(tests.TestCase):
         # Process all gpos, with temp output directory
         with NamedTemporaryFile() as f:
             ext.process_group_policy([], gpos, f.name)
-            self.assertEquals(open(f.name, 'r').read(), text.text,
-                              'The motd was not applied')
+            self.assertEqual(open(f.name, 'r').read(), text.text,
+                             'The motd was not applied')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [], f.name)
-            self.assertNotEquals(open(f.name, 'r').read(), text.text,
-                                 'The motd was not unapplied')
+            self.assertNotEqual(open(f.name, 'r').read(), text.text,
+                                'The motd was not unapplied')
 
         # Unstage the Registry.pol file
         unstage_file(manifest)
@@ -8152,7 +6331,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         manifest = os.path.join(local_path, policies, guid, 'MACHINE',
             'VGP/VTLA/UNIX/ISSUE/MANIFEST.XML')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8161,12 +6339,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_issue_ext(logger, self.lp, machine_creds,
+        ext = vgp_issue_ext(self.lp, machine_creds,
                             machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml file with test data
         stage = etree.Element('vgppolicy')
@@ -8184,15 +6361,19 @@ class GPOTests(tests.TestCase):
         # Process all gpos, with temp output directory
         with NamedTemporaryFile() as f:
             ext.process_group_policy([], gpos, f.name)
-            self.assertEquals(open(f.name, 'r').read(), text.text,
-                              'The issue was not applied')
+            self.assertEqual(open(f.name, 'r').read(), text.text,
+                             'The issue was not applied')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [], f.name)
-            self.assertNotEquals(open(f.name, 'r').read(), text.text,
-                                 'The issue was not unapplied')
+            self.assertNotEqual(open(f.name, 'r').read(), text.text,
+                                'The issue was not unapplied')
 
         # Unstage the manifest.xml file
         unstage_file(manifest)
@@ -8204,7 +6385,6 @@ class GPOTests(tests.TestCase):
             'VGP/VTLA/VAS/HOSTACCESSCONTROL/ALLOW/MANIFEST.XML')
         deny = os.path.join(local_path, policies, guid, 'MACHINE',
             'VGP/VTLA/VAS/HOSTACCESSCONTROL/DENY/MANIFEST.XML')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8213,12 +6393,14 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = vgp_access_ext(logger, self.lp, machine_creds,
+        winbind_sep = self.lp.get('winbind separator')
+        self.addCleanup(self.lp.set, 'winbind separator', winbind_sep)
+        self.lp.set('winbind separator', '+')
+        ext = vgp_access_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the manifest.xml allow file
         stage = etree.Element('vgppolicy')
@@ -8306,16 +6488,23 @@ class GPOTests(tests.TestCase):
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
             conf = os.listdir(dname)
-            self.assertEquals(len(conf), 1, 'The conf file was not created')
-            gp_cfg = os.path.join(dname, conf[0])
+            # There will be 2 files, the policy file and the deny file
+            self.assertEqual(len(conf), 2, 'The conf file was not created')
+            # Ignore the DENY_ALL conf file
+            gp_cfg = os.path.join(dname,
+                [c for c in conf if '_gp_DENY_ALL.conf' not in c][0])
 
             # Check the access config for the correct access.conf entries
             print('Config file %s found' % gp_cfg)
             data = open(gp_cfg, 'r').read()
-            self.assertIn('+:%s\\goodguy:ALL' % realm, data)
-            self.assertIn('+:%s\\goodguys:ALL' % realm, data)
-            self.assertIn('-:%s\\badguy:ALL' % realm, data)
-            self.assertIn('-:%s\\badguys:ALL' % realm, data)
+            self.assertIn('+:%s+goodguy:ALL' % realm, data)
+            self.assertIn('+:%s+goodguys:ALL' % realm, data)
+            self.assertIn('-:%s+badguy:ALL' % realm, data)
+            self.assertIn('-:%s+badguys:ALL' % realm, data)
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
@@ -8333,7 +6522,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8342,12 +6530,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_gnome_settings_ext(logger, self.lp, machine_creds,
+        ext = gp_gnome_settings_ext(self.lp, machine_creds,
                                     machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -8363,7 +6550,7 @@ class GPOTests(tests.TestCase):
                             'Local db dir not created')
             def db_check(name, data, count=1):
                 db = glob(os.path.join(local_db, '*-%s' % name))
-                self.assertEquals(len(db), count, '%s not created' % name)
+                self.assertEqual(len(db), count, '%s not created' % name)
                 file_contents = ConfigParser()
                 file_contents.read(db)
                 for key in data.keys():
@@ -8377,14 +6564,14 @@ class GPOTests(tests.TestCase):
 
             def del_db_check(name):
                 db = glob(os.path.join(local_db, '*-%s' % name))
-                self.assertEquals(len(db), 0, '%s not deleted' % name)
+                self.assertEqual(len(db), 0, '%s not deleted' % name)
 
             locks = os.path.join(local_db, 'locks')
             self.assertTrue(os.path.isdir(local_db), 'Locks dir not created')
             def lock_check(name, items, count=1):
                 lock = glob(os.path.join(locks, '*%s' % name))
-                self.assertEquals(len(lock), count,
-                                  '%s lock not created' % name)
+                self.assertEqual(len(lock), count,
+                                 '%s lock not created' % name)
                 file_contents = []
                 for i in range(count):
                     file_contents.extend(open(lock[i], 'r').read().split('\n'))
@@ -8394,7 +6581,7 @@ class GPOTests(tests.TestCase):
 
             def del_lock_check(name):
                 lock = glob(os.path.join(locks, '*%s' % name))
-                self.assertEquals(len(lock), 0, '%s lock not deleted' % name)
+                self.assertEqual(len(lock), 0, '%s lock not deleted' % name)
 
             # Check the user profile
             user_profile = os.path.join(dname, 'etc/dconf/profile/user')
@@ -8465,23 +6652,23 @@ class GPOTests(tests.TestCase):
             actions = os.path.join(dname, 'etc/share/polkit-1/actions')
             udisk2 = glob(os.path.join(actions,
                           'org.freedesktop.[u|U][d|D]isks2.policy'))
-            self.assertEquals(len(udisk2), 1, 'udisk2 policy not created')
+            self.assertEqual(len(udisk2), 1, 'udisk2 policy not created')
             udisk2_tree = etree.fromstring(open(udisk2[0], 'r').read())
             actions = udisk2_tree.findall('action')
             md = 'org.freedesktop.udisks2.modify-device'
             action = [a for a in actions if a.attrib['id'] == md]
-            self.assertEquals(len(action), 1, 'modify-device not found')
+            self.assertEqual(len(action), 1, 'modify-device not found')
             defaults = action[0].find('defaults')
             self.assertTrue(defaults is not None,
                             'modify-device defaults not found')
             allow_any = defaults.find('allow_any').text
-            self.assertEquals(allow_any, 'no',
+            self.assertEqual(allow_any, 'no',
                               'modify-device allow_any not set to no')
             allow_inactive = defaults.find('allow_inactive').text
-            self.assertEquals(allow_inactive, 'no',
+            self.assertEqual(allow_inactive, 'no',
                               'modify-device allow_inactive not set to no')
             allow_active = defaults.find('allow_active').text
-            self.assertEquals(allow_active, 'yes',
+            self.assertEqual(allow_active, 'yes',
                               'modify-device allow_active not set to yes')
 
             # Disable printing
@@ -8519,6 +6706,10 @@ class GPOTests(tests.TestCase):
             # Verify RSOP does not fail
             ext.rsop([g for g in gpos if g.name == guid][0])
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
@@ -8538,7 +6729,7 @@ class GPOTests(tests.TestCase):
             actions = os.path.join(dname, 'etc/share/polkit-1/actions')
             udisk2 = glob(os.path.join(actions,
                           'org.freedesktop.[u|U][d|D]isks2.policy'))
-            self.assertEquals(len(udisk2), 0, 'udisk2 policy not deleted')
+            self.assertEqual(len(udisk2), 0, 'udisk2 policy not deleted')
             del_db_check('printing')
             del_lock_check('printing')
             del_db_check('filesaving')
@@ -8556,7 +6747,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8565,12 +6755,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_cert_auto_enroll_ext(logger, self.lp, machine_creds,
-                                      machine_creds.get_username(), store)
+        ext = cae.gp_cert_auto_enroll_ext(self.lp, machine_creds,
+                                          machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -8626,6 +6815,10 @@ class GPOTests(tests.TestCase):
             # Verify RSOP does not fail
             ext.rsop([g for g in gpos if g.name == guid][0])
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
             # Remove policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
@@ -8655,7 +6848,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'USER/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8664,12 +6856,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_user_scripts_ext(logger, self.lp, machine_creds,
+        ext = gp_user_scripts_ext(self.lp, machine_creds,
                                   os.environ.get('DC_USERNAME'), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         reg_key = b'Software\\Policies\\Samba\\Unix Settings'
         sections = { b'%s\\Daily Scripts' % reg_key : b'@daily',
@@ -8698,6 +6889,10 @@ class GPOTests(tests.TestCase):
             self.assertIn(entry, crontab,
                 'The crontab entry was not installed')
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
             # Remove policy
             gp_db = store.get_gplog(os.environ.get('DC_USERNAME'))
             del_gpos = get_deleted_gpos_list(gp_db, [])
@@ -8716,7 +6911,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8725,12 +6919,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_firefox_ext(logger, self.lp, machine_creds,
+        ext = gp_firefox_ext(self.lp, machine_creds,
                              machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -8756,6 +6949,10 @@ class GPOTests(tests.TestCase):
             # Verify RSOP does not fail
             ext.rsop([g for g in gpos if g.name == guid][0])
 
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
             # Unapply the policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
@@ -8774,7 +6971,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8783,12 +6979,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_chromium_ext(logger, self.lp, machine_creds,
+        ext = gp_chromium_ext(self.lp, machine_creds,
                               machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -8798,21 +6993,26 @@ class GPOTests(tests.TestCase):
 
         with TemporaryDirectory() as dname:
             ext.process_group_policy([], gpos, dname)
-            managed = os.path.join(dname, 'managed', 'policies.json')
-            self.assertTrue(os.path.exists(managed),
-                            'Chromium policies are missing')
-            with open(managed, 'r') as r:
+            managed = os.path.join(dname, 'managed')
+            managed_files = os.listdir(managed)
+            self.assertEqual(len(managed_files), 1,
+                             'Chromium policies are missing')
+            managed_file = os.path.join(managed, managed_files[0])
+            with open(managed_file, 'r') as r:
                 managed_data = json.load(r)
-            recommended = os.path.join(dname, 'recommended', 'policies.json')
-            self.assertTrue(os.path.exists(recommended),
-                            'Chromium policies are missing')
-            with open(recommended, 'r') as r:
+            recommended = os.path.join(dname, 'recommended')
+            recommended_files = os.listdir(recommended)
+            self.assertEqual(len(recommended_files), 1,
+                             'Chromium policies are missing')
+            recommended_file = os.path.join(recommended, recommended_files[0])
+            with open(recommended_file, 'r') as r:
                 recommended_data = json.load(r)
             expected_managed_data = json.loads(chromium_json_expected_managed)
             expected_recommended_data = \
                 json.loads(chromium_json_expected_recommended)
-            self.assertEqual(expected_managed_data.keys(),
-                             managed_data.keys(),
+            self.maxDiff = None
+            self.assertEqual(sorted(expected_managed_data.keys()),
+                             sorted(managed_data.keys()),
                              'Chromium policies are missing')
             for name in expected_managed_data.keys():
                 self.assertEqual(expected_managed_data[name],
@@ -8826,17 +7026,49 @@ class GPOTests(tests.TestCase):
                                  recommended_data[name],
                                  'Policies were not applied')
 
+            # Ensure modifying the policy does not generate extra policy files
+            unstage_file(reg_pol)
+            # Change a managed entry:
+            parser.pol_file.entries[0].data = 0
+            # Change a recommended entry:
+            parser.pol_file.entries[-1].data = b'https://google.com'
+            ret = stage_file(reg_pol, ndr_pack(parser.pol_file))
+            self.assertTrue(ret, 'Could not create the target %s' % reg_pol)
+
+            ext.process_group_policy([], gpos, dname)
+            managed_files = os.listdir(managed)
+            self.assertEqual(len(managed_files), 1,
+                             'Number of Chromium policies is incorrect')
+            omanaged_file = managed_file
+            managed_file = os.path.join(managed, managed_files[0])
+            self.assertNotEqual(omanaged_file, managed_file,
+                                'The managed Chromium file did not change')
+
+            recommended_files = os.listdir(recommended)
+            self.assertEqual(len(recommended_files), 1,
+                             'Number of Chromium policies is incorrect')
+            orecommended_file = recommended_file
+            recommended_file = os.path.join(recommended, recommended_files[0])
+            self.assertNotEqual(orecommended_file, recommended_file,
+                                'The recommended Chromium file did not change')
+
             # Verify RSOP does not fail
             ext.rsop([g for g in gpos if g.name == guid][0])
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
             # Unapply the policy
             gp_db = store.get_gplog(machine_creds.get_username())
             del_gpos = get_deleted_gpos_list(gp_db, [])
             ext.process_group_policy(del_gpos, [], dname)
+            managed = os.path.join(managed, managed_files[0])
             if os.path.exists(managed):
                 data = json.load(open(managed, 'r'))
                 self.assertEqual(len(data.keys()), 0,
                                  'The policy was not unapplied')
+            recommended = os.path.join(recommended, recommended_files[0])
             if os.path.exists(recommended):
                 data = json.load(open(recommended, 'r'))
                 self.assertEqual(len(data.keys()), 0,
@@ -8850,7 +7082,6 @@ class GPOTests(tests.TestCase):
         guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
         reg_pol = os.path.join(local_path, policies, guid,
                                'MACHINE/REGISTRY.POL')
-        logger = logging.getLogger('gpo_tests')
         cache_dir = self.lp.get('cache directory')
         store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
 
@@ -8859,12 +7090,11 @@ class GPOTests(tests.TestCase):
         machine_creds.set_machine_account()
 
         # Initialize the group policy extension
-        ext = gp_firewalld_ext(logger, self.lp, machine_creds,
+        ext = gp_firewalld_ext(self.lp, machine_creds,
                                machine_creds.get_username(), store)
 
-        ads = gpo.ADS_STRUCT(self.server, self.lp, machine_creds)
-        if ads.connect():
-            gpos = ads.get_gpo_list(machine_creds.get_username())
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
 
         # Stage the Registry.pol file with test data
         parser = GPPolParser()
@@ -8897,10 +7127,14 @@ class GPOTests(tests.TestCase):
         out, err = p.communicate()
         rule = b'rule family=ipv4 source address=172.25.1.7 ' + \
                b'service name=ftp reject'
-        self.assertEquals(rule, out.strip(), 'Failed to set rich rule')
+        self.assertEqual(rule, out.strip(), 'Failed to set rich rule')
 
         # Verify RSOP does not fail
         ext.rsop([g for g in gpos if g.name == guid][0])
+
+        # Check that a call to gpupdate --rsop also succeeds
+        ret = rsop(self.lp)
+        self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
 
         # Unapply the policy
         gp_db = store.get_gplog(machine_creds.get_username())
@@ -8913,6 +7147,302 @@ class GPOTests(tests.TestCase):
         out, err = p.communicate()
         self.assertNotIn(b'work', out, 'Failed to unapply zones')
         self.assertNotIn(b'home', out, 'Failed to unapply zones')
+
+        # Unstage the Registry.pol file
+        unstage_file(reg_pol)
+
+    def test_advanced_gp_cert_auto_enroll_ext(self):
+        local_path = self.lp.cache_path('gpo_cache')
+        guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
+        reg_pol = os.path.join(local_path, policies, guid,
+                               'MACHINE/REGISTRY.POL')
+        cache_dir = self.lp.get('cache directory')
+        store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
+
+        machine_creds = Credentials()
+        machine_creds.guess(self.lp)
+        machine_creds.set_machine_account()
+
+        # Initialize the group policy extension
+        ext = cae.gp_cert_auto_enroll_ext(self.lp, machine_creds,
+                                          machine_creds.get_username(), store)
+
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
+
+        admin_creds = Credentials()
+        admin_creds.set_username(os.environ.get('DC_USERNAME'))
+        admin_creds.set_password(os.environ.get('DC_PASSWORD'))
+        admin_creds.set_realm(os.environ.get('REALM'))
+        hostname = get_dc_hostname(machine_creds, self.lp)
+        url = 'ldap://%s' % hostname
+        ldb = Ldb(url=url, session_info=system_session(),
+                  lp=self.lp, credentials=admin_creds)
+
+        # Stage the Registry.pol file with test data
+        res = ldb.search('', _ldb.SCOPE_BASE, '(objectClass=*)',
+                         ['rootDomainNamingContext'])
+        self.assertTrue(len(res) == 1, 'rootDomainNamingContext not found')
+        res2 = ldb.search(res[0]['rootDomainNamingContext'][0],
+                          _ldb.SCOPE_BASE, '(objectClass=*)', ['objectGUID'])
+        self.assertTrue(len(res2) == 1, 'objectGUID not found')
+        objectGUID = b'{%s}' % \
+            cae.octet_string_to_objectGUID(res2[0]['objectGUID'][0]).upper().encode()
+        parser = GPPolParser()
+        parser.load_xml(etree.fromstring(advanced_enroll_reg_pol.strip() % \
+            (objectGUID, objectGUID, objectGUID, objectGUID)))
+        ret = stage_file(reg_pol, ndr_pack(parser.pol_file))
+        self.assertTrue(ret, 'Could not create the target %s' % reg_pol)
+
+        # Write the dummy CA entry
+        confdn = 'CN=Public Key Services,CN=Services,CN=Configuration,%s' % base_dn
+        ca_cn = '%s-CA' % hostname.replace('.', '-')
+        certa_dn = 'CN=%s,CN=Certification Authorities,%s' % (ca_cn, confdn)
+        ldb.add({'dn': certa_dn,
+                 'objectClass': 'certificationAuthority',
+                 'authorityRevocationList': ['XXX'],
+                 'cACertificate': 'XXX',
+                 'certificateRevocationList': ['XXX'],
+                })
+        # Write the dummy pKIEnrollmentService
+        enroll_dn = 'CN=%s,CN=Enrollment Services,%s' % (ca_cn, confdn)
+        ldb.add({'dn': enroll_dn,
+                 'objectClass': 'pKIEnrollmentService',
+                 'cACertificate': 'XXXX',
+                 'certificateTemplates': ['Machine'],
+                 'dNSHostName': hostname,
+                })
+        # Write the dummy pKICertificateTemplate
+        template_dn = 'CN=Machine,CN=Certificate Templates,%s' % confdn
+        ldb.add({'dn': template_dn,
+                 'objectClass': 'pKICertificateTemplate',
+                })
+
+        with TemporaryDirectory() as dname:
+            ext.process_group_policy([], gpos, dname, dname)
+            ca_list = [ca_cn, 'example0-com-CA', 'example1-com-CA',
+                       'example2-com-CA']
+            for ca in ca_list:
+                ca_crt = os.path.join(dname, '%s.crt' % ca)
+                self.assertTrue(os.path.exists(ca_crt),
+                                'Root CA certificate was not requested')
+                machine_crt = os.path.join(dname, '%s.Machine.crt' % ca)
+                self.assertTrue(os.path.exists(machine_crt),
+                                'Machine certificate was not requested')
+                machine_key = os.path.join(dname, '%s.Machine.key' % ca)
+                self.assertTrue(os.path.exists(machine_crt),
+                                'Machine key was not generated')
+
+            # Verify RSOP does not fail
+            ext.rsop([g for g in gpos if g.name == guid][0])
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
+            # Remove policy
+            gp_db = store.get_gplog(machine_creds.get_username())
+            del_gpos = get_deleted_gpos_list(gp_db, [])
+            ext.process_group_policy(del_gpos, [], dname)
+            self.assertFalse(os.path.exists(ca_crt),
+                            'Root CA certificate was not removed')
+            self.assertFalse(os.path.exists(machine_crt),
+                            'Machine certificate was not removed')
+            self.assertFalse(os.path.exists(machine_crt),
+                            'Machine key was not removed')
+            out, _ = Popen(['getcert', 'list-cas'], stdout=PIPE).communicate()
+            for ca in ca_list:
+                self.assertNotIn(get_bytes(ca), out, 'CA was not removed')
+            out, _ = Popen(['getcert', 'list'], stdout=PIPE).communicate()
+            self.assertNotIn(b'Machine', out,
+                             'Machine certificate not removed')
+
+        # Remove the dummy CA, pKIEnrollmentService, and pKICertificateTemplate
+        ldb.delete(certa_dn)
+        ldb.delete(enroll_dn)
+        ldb.delete(template_dn)
+
+        # Unstage the Registry.pol file
+        unstage_file(reg_pol)
+
+    def test_gp_centrify_sudoers_ext(self):
+        local_path = self.lp.cache_path('gpo_cache')
+        guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
+        reg_pol = os.path.join(local_path, policies, guid,
+                               'MACHINE/REGISTRY.POL')
+        cache_dir = self.lp.get('cache directory')
+        store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
+
+        machine_creds = Credentials()
+        machine_creds.guess(self.lp)
+        machine_creds.set_machine_account()
+
+        # Initialize the group policy extension
+        ext = gp_centrify_sudoers_ext(self.lp, machine_creds,
+                                      machine_creds.get_username(), store)
+
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
+
+        # Stage the Registry.pol file with test data
+        stage = preg.file()
+        e1 = preg.entry()
+        e1.keyname = b'Software\\Policies\\Centrify\\UnixSettings'
+        e1.valuename = b'sudo.enabled'
+        e1.type = 4
+        e1.data = 1
+        e2 = preg.entry()
+        e2.keyname = b'Software\\Policies\\Centrify\\UnixSettings\\SuDo'
+        e2.valuename = b'1'
+        e2.type = 1
+        e2.data = b'fakeu ALL=(ALL) NOPASSWD: ALL'
+        stage.num_entries = 2
+        stage.entries = [e1, e2]
+        ret = stage_file(reg_pol, ndr_pack(stage))
+        self.assertTrue(ret, 'Could not create the target %s' % reg_pol)
+
+        # Process all gpos, with temp output directory
+        with TemporaryDirectory() as dname:
+            ext.process_group_policy([], gpos, dname)
+            sudoers = os.listdir(dname)
+            self.assertEqual(len(sudoers), 1, 'The sudoer file was not created')
+            sudoers_file = os.path.join(dname, sudoers[0])
+            self.assertIn(e2.data, open(sudoers_file, 'r').read(),
+                    'The sudoers entry was not applied')
+
+            # Remove the sudoers file, and make sure a re-apply puts it back
+            os.unlink(sudoers_file)
+            ext.process_group_policy([], gpos, dname)
+            sudoers = os.listdir(dname)
+            self.assertEqual(len(sudoers), 1,
+                             'The sudoer file was not recreated')
+            sudoers_file = os.path.join(dname, sudoers[0])
+            self.assertIn(e2.data, open(sudoers_file, 'r').read(),
+                    'The sudoers entry was not reapplied')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
+            # Remove policy
+            gp_db = store.get_gplog(machine_creds.get_username())
+            del_gpos = get_deleted_gpos_list(gp_db, [])
+            ext.process_group_policy(del_gpos, [])
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup scripts')
+
+        # Unstage the Registry.pol file
+        unstage_file(reg_pol)
+
+    def test_gp_centrify_crontab_ext(self):
+        local_path = self.lp.cache_path('gpo_cache')
+        guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
+        reg_pol = os.path.join(local_path, policies, guid,
+                               'MACHINE/REGISTRY.POL')
+        cache_dir = self.lp.get('cache directory')
+        store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
+
+        machine_creds = Credentials()
+        machine_creds.guess(self.lp)
+        machine_creds.set_machine_account()
+
+        # Initialize the group policy extension
+        ext = gp_centrify_crontab_ext(self.lp, machine_creds,
+                                      machine_creds.get_username(), store)
+
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
+
+        # Stage the Registry.pol file with test data
+        stage = preg.file()
+        e = preg.entry()
+        e.keyname = \
+            b'Software\\Policies\\Centrify\\UnixSettings\\CrontabEntries'
+        e.valuename = b'Command1'
+        e.type = 1
+        e.data = b'17 * * * * root echo hello world'
+        stage.num_entries = 1
+        stage.entries = [e]
+        ret = stage_file(reg_pol, ndr_pack(stage))
+        self.assertTrue(ret, 'Could not create the target %s' % reg_pol)
+
+        # Process all gpos, with temp output directory
+        with TemporaryDirectory() as dname:
+            ext.process_group_policy([], gpos, dname)
+            cron_entries = os.listdir(dname)
+            self.assertEqual(len(cron_entries), 1, 'Cron entry not created')
+            fname = os.path.join(dname, cron_entries[0])
+            data = open(fname, 'rb').read()
+            self.assertIn(get_bytes(e.data), data, 'Cron entry is missing')
+
+            # Check that a call to gpupdate --rsop also succeeds
+            ret = rsop(self.lp)
+            self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
+            # Remove policy
+            gp_db = store.get_gplog(machine_creds.get_username())
+            del_gpos = get_deleted_gpos_list(gp_db, [])
+            ext.process_group_policy(del_gpos, [])
+            self.assertEqual(len(os.listdir(dname)), 0,
+                             'Unapply failed to cleanup script')
+
+            # Unstage the Registry.pol file
+            unstage_file(reg_pol)
+
+    def test_gp_user_centrify_crontab_ext(self):
+        local_path = self.lp.cache_path('gpo_cache')
+        guid = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
+        reg_pol = os.path.join(local_path, policies, guid,
+                               'USER/REGISTRY.POL')
+        cache_dir = self.lp.get('cache directory')
+        store = GPOStorage(os.path.join(cache_dir, 'gpo.tdb'))
+
+        machine_creds = Credentials()
+        machine_creds.guess(self.lp)
+        machine_creds.set_machine_account()
+
+        # Initialize the group policy extension
+        ext = gp_user_centrify_crontab_ext(self.lp, machine_creds,
+                                           os.environ.get('DC_USERNAME'),
+                                           store)
+
+        gpos = get_gpo_list(self.server, machine_creds, self.lp,
+                            machine_creds.get_username())
+
+        # Stage the Registry.pol file with test data
+        stage = preg.file()
+        e = preg.entry()
+        e.keyname = \
+            b'Software\\Policies\\Centrify\\UnixSettings\\CrontabEntries'
+        e.valuename = b'Command1'
+        e.type = 1
+        e.data = b'17 * * * * echo hello world'
+        stage.num_entries = 1
+        stage.entries = [e]
+        ret = stage_file(reg_pol, ndr_pack(stage))
+        self.assertTrue(ret, 'Could not create the target %s' % reg_pol)
+
+        # Process all gpos, intentionally skipping the privilege drop
+        ext.process_group_policy([], gpos)
+        # Dump the fake crontab setup for testing
+        p = Popen(['crontab', '-l'], stdout=PIPE)
+        crontab, _ = p.communicate()
+        self.assertIn(get_bytes(e.data), crontab,
+            'The crontab entry was not installed')
+
+        # Check that a call to gpupdate --rsop also succeeds
+        ret = rsop(self.lp)
+        self.assertEqual(ret, 0, 'gpupdate --rsop failed!')
+
+        # Remove policy
+        gp_db = store.get_gplog(os.environ.get('DC_USERNAME'))
+        del_gpos = get_deleted_gpos_list(gp_db, [])
+        ext.process_group_policy(del_gpos, [])
+        # Dump the fake crontab setup for testing
+        p = Popen(['crontab', '-l'], stdout=PIPE)
+        crontab, _ = p.communicate()
+        self.assertNotIn(get_bytes(e.data), crontab,
+            'Unapply failed to cleanup crontab entry')
 
         # Unstage the Registry.pol file
         unstage_file(reg_pol)

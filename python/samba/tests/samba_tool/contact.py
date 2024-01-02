@@ -241,9 +241,9 @@ class ContactCmdTestCase(SambaToolCmdTest):
             self.assertIn('Moved contact "%s"' % contact["expectedname"], out)
 
             found = self._find_contact(contact["expectedname"])
-            self.assertNotEquals(found.get("dn"), olddn,
-                                 ("Moved contact '%s' still exists with the "
-                                  "same dn" % contact["expectedname"]))
+            self.assertNotEqual(found.get("dn"), olddn,
+                                ("Moved contact '%s' still exists with the "
+                                 "same dn" % contact["expectedname"]))
             contactname = contact["expectedname"]
             newexpecteddn = ldb.Dn(self.samdb,
                                    "CN=%s,OU=%s,%s" %
@@ -295,7 +295,7 @@ class ContactCmdTestCase(SambaToolCmdTest):
             self.assertEqual("%s" % found.get("cn"), expected_cn)
 
             # remove given name, initials and surname
-            # (must forece new cn, because en empty new CN throws an error)
+            # (must force new cn, because en empty new CN throws an error)
             (result, out, err) = self.runsubcmd("contact", "rename", expected_cn,
                                                 "--force-new-cn=%s" % expected_cn,
                                                 "--surname=",
@@ -392,9 +392,11 @@ class ContactCmdTestCase(SambaToolCmdTest):
                                                 "--display-name=%s" % old_displayname)
             self.assertCmdSuccess(result, out, err)
 
-    def _randomContact(self, base={}):
+    def _randomContact(self, base=None):
         """Create a contact with random attribute values, you can specify base
         attributes"""
+        if base is None:
+            base = {}
 
         # No name attributes are given here, because the object name will
         # be made from the sn, givenName and initials attributes, if no name
@@ -405,9 +407,11 @@ class ContactCmdTestCase(SambaToolCmdTest):
         contact.update(base)
         return contact
 
-    def _randomOU(self, base={}):
+    def _randomOU(self, base=None):
         """Create an ou with random attribute values, you can specify base
         attributes."""
+        if base is None:
+            base = {}
 
         ou = {
             "name": self.randomName(),

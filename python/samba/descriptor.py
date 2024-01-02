@@ -45,14 +45,30 @@ def sddl2binary(sddl_in, domain_sid, name_map):
     return ndr_pack(sec)
 
 
-def get_empty_descriptor(domain_sid, name_map={}):
+def get_empty_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = ""
     return sddl2binary(sddl, domain_sid, name_map)
 
 # "get_schema_descriptor" is located in "schema.py"
 
 
-def get_config_descriptor(domain_sid, name_map={}):
+def get_deletedobjects_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
+    sddl = "O:SYG:SYD:PAI" \
+        "(A;;RPWPCCDCLCRCWOWDSDSW;;;SY)" \
+        "(A;;RPLC;;;BA)"
+    return sddl2binary(sddl, domain_sid, name_map)
+
+
+def get_config_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "O:EAG:EAD:(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
            "(OA;;CR;1131f6ab-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
            "(OA;;CR;1131f6ac-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
@@ -65,13 +81,16 @@ def get_config_descriptor(domain_sid, name_map={}):
            "(OA;;CR;89e95b76-444d-4c62-991a-0facbeda640c;;ED)" \
            "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
            "(OA;;CR;89e95b76-444d-4c62-991a-0facbeda640c;;BA)" \
-           "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;ER)" \
+           "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;RO)" \
            "S:(AU;SA;WPWOWD;;;WD)(AU;SA;CR;;;BA)(AU;SA;CR;;;DU)" \
            "(OU;SA;CR;45ec5156-db7e-47bb-b53f-dbeb2d03c40f;;WD)"
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_config_partitions_descriptor(domain_sid, name_map={}):
+def get_config_partitions_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;LCLORC;;;AU)" \
         "(OA;;RP;e48d0154-bcf8-11d1-8702-00c04fb96050;;AU)" \
@@ -89,10 +108,13 @@ def get_config_partitions_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_config_sites_descriptor(domain_sid, name_map={}):
+def get_config_sites_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;RPLCLORC;;;AU)" \
-        "(OA;CIIO;SW;d31a8757-2447-4545-8081-3bb610cacbf2;f0f8ffab-1191-11d0-a060-00aa006c33ed;ER)" \
+        "(OA;CIIO;SW;d31a8757-2447-4545-8081-3bb610cacbf2;f0f8ffab-1191-11d0-a060-00aa006c33ed;RO)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;EA)" \
         "(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;SY)" \
         "S:" \
@@ -104,7 +126,10 @@ def get_config_sites_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_config_ntds_quotas_descriptor(domain_sid, name_map={}):
+def get_config_ntds_quotas_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;EA)" \
         "(A;;RPLCLORC;;;BA)" \
@@ -112,7 +137,10 @@ def get_config_ntds_quotas_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_config_delete_protected1_descriptor(domain_sid, name_map={}):
+def get_config_delete_protected1_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:AI" \
         "(A;;RPLCLORC;;;AU)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;EA)" \
@@ -120,7 +148,10 @@ def get_config_delete_protected1_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_config_delete_protected1wd_descriptor(domain_sid, name_map={}):
+def get_config_delete_protected1wd_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:AI" \
         "(A;;RPLCLORC;;;WD)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;EA)" \
@@ -128,7 +159,10 @@ def get_config_delete_protected1wd_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_config_delete_protected2_descriptor(domain_sid, name_map={}):
+def get_config_delete_protected2_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:AI" \
         "(A;;RPLCLORC;;;AU)" \
         "(A;;RPWPCRCCDCLCLORCWOWDSW;;;EA)" \
@@ -136,7 +170,10 @@ def get_config_delete_protected2_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_descriptor(domain_sid, name_map={}):
+def get_domain_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "O:BAG:BAD:AI(OA;CIIO;RP;4c164200-20c0-11d0-a768-00aa006e0529;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
         "(OA;CIIO;RP;4c164200-20c0-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
         "(OA;CIIO;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
@@ -147,7 +184,7 @@ def get_domain_descriptor(domain_sid, name_map={}):
         "(OA;CIIO;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
         "(OA;CIIO;RP;037088f8-0ae1-11d2-b422-00a0c968f939;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
         "(OA;CIIO;RP;037088f8-0ae1-11d2-b422-00a0c968f939;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
-        "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;ER)" \
+        "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;RO)" \
         "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;DD)" \
         "(OA;CIIO;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0de6-11d0-a285-00aa003049e2;ED)" \
         "(OA;CIIO;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a9c-0de6-11d0-a285-00aa003049e2;ED)" \
@@ -158,7 +195,7 @@ def get_domain_descriptor(domain_sid, name_map={}):
         "(OA;;CR;1131f6ac-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
         "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
         "(OA;;CR;1131f6ae-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
-        "(OA;;CR;e2a36dc9-ae17-47c3-b58b-be34c55ba633;;IF)" \
+        "(OA;;CR;e2a36dc9-ae17-47c3-b58b-be34c55ba633;;S-1-5-32-557)" \
         "(OA;;RP;c7407360-20bf-11d0-a768-00aa006e0529;;RU)" \
         "(OA;;RP;b8119fd0-04f6-4762-ab7a-4986c76b3f9a;;RU)" \
         "(OA;CIIO;RPLCLORC;;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
@@ -174,6 +211,13 @@ def get_domain_descriptor(domain_sid, name_map={}):
         "(OA;;CR;1131f6ae-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
         "(OA;;RP;b8119fd0-04f6-4762-ab7a-4986c76b3f9a;;AU)" \
         "(OA;CIIO;RPWPCR;91e647de-d96f-4b70-9557-d63ff4f3ccd8;;PS)" \
+        "(OA;CIIO;WP;ea1b7b93-5e48-46d5-bc6c-4df4fda78a35;bf967a86-0de6-11d0-a285-00aa003049e2;PS)" \
+        "(OA;;CR;3e0f7e18-2c7a-4c10-ba82-4d926db99a3e;;CN)" \
+        "(OA;OICI;RPWP;3f78c3e5-f79a-46bd-a0b8-9d18116ddc79;;PS)" \
+        "(OA;CI;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;KA)" \
+        "(OA;CI;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;EK)" \
+        "(OA;CIIO;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;PS)" \
+        "(OA;CIIO;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;CO)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;DA)" \
         "(A;CI;RPWPCRCCDCLCLORCWOWDSDDTSW;;;EA)" \
         "(A;;RPRC;;;RU)" \
@@ -189,7 +233,10 @@ def get_domain_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_infrastructure_descriptor(domain_sid, name_map={}):
+def get_domain_infrastructure_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;RPLCLORC;;;AU)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;DA)" \
@@ -199,7 +246,10 @@ def get_domain_infrastructure_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_builtin_descriptor(domain_sid, name_map={}):
+def get_domain_builtin_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(OA;CIIO;RP;4c164200-20c0-11d0-a768-00aa006e0529;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
         "(OA;CIIO;RP;4c164200-20c0-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
@@ -211,7 +261,7 @@ def get_domain_builtin_descriptor(domain_sid, name_map={}):
         "(OA;CIIO;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
         "(OA;CIIO;RP;037088f8-0ae1-11d2-b422-00a0c968f939;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
         "(OA;CIIO;RP;037088f8-0ae1-11d2-b422-00a0c968f939;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
-        "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;ER)" \
+        "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;RO)" \
         "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;DD)" \
         "(OA;CIIO;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0de6-11d0-a285-00aa003049e2;ED)" \
         "(OA;CIIO;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a9c-0de6-11d0-a285-00aa003049e2;ED)" \
@@ -222,7 +272,7 @@ def get_domain_builtin_descriptor(domain_sid, name_map={}):
         "(OA;;CR;1131f6ac-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
         "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
         "(OA;;CR;1131f6ae-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
-        "(OA;;CR;e2a36dc9-ae17-47c3-b58b-be34c55ba633;;IF)" \
+        "(OA;;CR;e2a36dc9-ae17-47c3-b58b-be34c55ba633;;S-1-5-32-557)" \
         "(OA;;RP;c7407360-20bf-11d0-a768-00aa006e0529;;RU)" \
         "(OA;;RP;b8119fd0-04f6-4762-ab7a-4986c76b3f9a;;RU)" \
         "(OA;CIIO;RPLCLORC;;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
@@ -238,6 +288,10 @@ def get_domain_builtin_descriptor(domain_sid, name_map={}):
         "(OA;;CR;1131f6ae-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
         "(OA;;RP;b8119fd0-04f6-4762-ab7a-4986c76b3f9a;;AU)" \
         "(OA;CIIO;RPWPCR;91e647de-d96f-4b70-9557-d63ff4f3ccd8;;PS)" \
+        "(OA;CIIO;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;CO)" \
+        "(OA;OICI;RPWP;3f78c3e5-f79a-46bd-a0b8-9d18116ddc79;;PS)" \
+        "(OA;CIIO;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;PS)" \
+        "(OA;CIIO;WP;ea1b7b93-5e48-46d5-bc6c-4df4fda78a35;bf967a86-0de6-11d0-a285-00aa003049e2;PS)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;DA)" \
         "(A;CI;RPWPCRCCDCLCLORCWOWDSDDTSW;;;EA)" \
         "(A;;RPRC;;;RU)" \
@@ -256,7 +310,10 @@ def get_domain_builtin_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_computers_descriptor(domain_sid, name_map={}):
+def get_domain_computers_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;SY)" \
         "(A;;RPWPCRCCDCLCLORCWOWDSW;;;DA)" \
@@ -270,7 +327,10 @@ def get_domain_computers_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_users_descriptor(domain_sid, name_map={}):
+def get_domain_users_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;SY)" \
         "(A;;RPWPCRCCDCLCLORCWOWDSW;;;DA)" \
@@ -283,7 +343,10 @@ def get_domain_users_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_managed_service_accounts_descriptor(domain_sid, name_map={}):
+def get_managed_service_accounts_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;SY)" \
         "(A;;RPWPCRCCDCLCLORCWOWDSW;;;DA)" \
@@ -295,7 +358,10 @@ def get_managed_service_accounts_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_controllers_descriptor(domain_sid, name_map={}):
+def get_domain_controllers_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:" \
         "(A;;RPLCLORC;;;AU)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;DA)" \
@@ -307,7 +373,10 @@ def get_domain_controllers_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_delete_protected1_descriptor(domain_sid, name_map={}):
+def get_domain_delete_protected1_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:AI" \
         "(A;;RPLCLORC;;;AU)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;DA)" \
@@ -315,7 +384,10 @@ def get_domain_delete_protected1_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_domain_delete_protected2_descriptor(domain_sid, name_map={}):
+def get_domain_delete_protected2_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "D:AI" \
         "(A;;RPLCLORC;;;AU)" \
         "(A;;RPWPCRCCDCLCLORCWOWDSW;;;DA)" \
@@ -323,7 +395,10 @@ def get_domain_delete_protected2_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_dns_partition_descriptor(domain_sid, name_map={}):
+def get_dns_partition_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "O:SYG:BAD:AI" \
         "(OA;CIIO;RP;4c164200-20c0-11d0-a768-00aa006e0529;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
         "(OA;CIIO;RP;4c164200-20c0-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
@@ -335,7 +410,7 @@ def get_dns_partition_descriptor(domain_sid, name_map={}):
         "(OA;CIIO;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
         "(OA;CIIO;RP;037088f8-0ae1-11d2-b422-00a0c968f939;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
         "(OA;CIIO;RP;037088f8-0ae1-11d2-b422-00a0c968f939;bf967aba-0de6-11d0-a285-00aa003049e2;RU)" \
-        "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;ER)" \
+        "(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;RO)" \
         "(OA;CIIO;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0de6-11d0-a285-00aa003049e2;ED)" \
         "(OA;CIIO;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a9c-0de6-11d0-a285-00aa003049e2;ED)" \
         "(OA;CIIO;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967aba-0de6-11d0-a285-00aa003049e2;ED)" \
@@ -345,7 +420,7 @@ def get_dns_partition_descriptor(domain_sid, name_map={}):
         "(OA;;CR;1131f6ac-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
         "(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
         "(OA;;CR;1131f6ae-9c07-11d1-f79f-00c04fc2dcd2;;BA)" \
-        "(OA;;CR;e2a36dc9-ae17-47c3-b58b-be34c55ba633;;IF)" \
+        "(OA;;CR;e2a36dc9-ae17-47c3-b58b-be34c55ba633;;S-1-5-32-557)" \
         "(OA;;RP;c7407360-20bf-11d0-a768-00aa006e0529;;RU)" \
         "(OA;;RP;b8119fd0-04f6-4762-ab7a-4986c76b3f9a;;RU)" \
         "(OA;CIIO;RPLCLORC;;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)" \
@@ -362,6 +437,10 @@ def get_dns_partition_descriptor(domain_sid, name_map={}):
         "(OA;;CR;1131f6ae-9c07-11d1-f79f-00c04fc2dcd2;;ED)" \
         "(OA;;RP;b8119fd0-04f6-4762-ab7a-4986c76b3f9a;;AU)" \
         "(OA;CIIO;RPWPCR;91e647de-d96f-4b70-9557-d63ff4f3ccd8;;PS)" \
+        "(OA;CIIO;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;CO)" \
+        "(OA;OICI;RPWP;3f78c3e5-f79a-46bd-a0b8-9d18116ddc79;;PS)" \
+        "(OA;CIIO;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;PS)" \
+        "(OA;CIIO;WP;ea1b7b93-5e48-46d5-bc6c-4df4fda78a35;bf967a86-0de6-11d0-a285-00aa003049e2;PS)" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;DA)" \
         "(A;CI;RPWPCRCCDCLCLORCWOWDSDDTSW;;;EA)" \
         "(A;;RPRC;;;RU)" \
@@ -378,14 +457,20 @@ def get_dns_partition_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_dns_forest_microsoft_dns_descriptor(domain_sid, name_map={}):
+def get_dns_forest_microsoft_dns_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "O:SYG:SYD:AI" \
         "(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;SY)" \
         "(A;CI;RPWPCRCCDCLCRCWOWDSDDTSW;;;ED)"
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_dns_domain_microsoft_dns_descriptor(domain_sid, name_map={}):
+def get_dns_domain_microsoft_dns_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "O:SYG:SYD:AI" \
         "(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;DA)" \
         "(A;CI;RPWPCRCCDCLCRCWOWDSDDTSW;;;DnsAdmins)" \
@@ -394,7 +479,10 @@ def get_dns_domain_microsoft_dns_descriptor(domain_sid, name_map={}):
     return sddl2binary(sddl, domain_sid, name_map)
 
 
-def get_paritions_crossref_subdomain_descriptor(domain_sid, name_map={}):
+def get_paritions_crossref_subdomain_descriptor(domain_sid, name_map=None):
+    if name_map is None:
+        name_map = {}
+
     sddl = "O:SubdomainAdminsG:SubdomainAdminsD:AI" \
         "(A;;RPWPCRCCLCLORCWOWDSW;;;SubdomainAdmins)" \
         "(A;;RPLCLORC;;;AU)" \
@@ -407,6 +495,7 @@ def get_wellknown_sds(samdb):
     # Then subcontainers
     subcontainers = [
         (ldb.Dn(samdb, "%s" % str(samdb.domain_dn())), get_domain_descriptor),
+        (ldb.Dn(samdb, "CN=Deleted Objects,%s" % str(samdb.domain_dn())), get_deletedobjects_descriptor),
         (ldb.Dn(samdb, "CN=LostAndFound,%s" % str(samdb.domain_dn())), get_domain_delete_protected2_descriptor),
         (ldb.Dn(samdb, "CN=System,%s" % str(samdb.domain_dn())), get_domain_delete_protected1_descriptor),
         (ldb.Dn(samdb, "CN=Infrastructure,%s" % str(samdb.domain_dn())), get_domain_infrastructure_descriptor),
@@ -417,6 +506,7 @@ def get_wellknown_sds(samdb):
         (ldb.Dn(samdb, "CN=MicrosoftDNS,CN=System,%s" % str(samdb.domain_dn())), get_dns_domain_microsoft_dns_descriptor),
 
         (ldb.Dn(samdb, "%s" % str(samdb.get_config_basedn())), get_config_descriptor),
+        (ldb.Dn(samdb, "CN=Deleted Objects,%s" % str(samdb.get_config_basedn())), get_deletedobjects_descriptor),
         (ldb.Dn(samdb, "CN=NTDS Quotas,%s" % str(samdb.get_config_basedn())), get_config_ntds_quotas_descriptor),
         (ldb.Dn(samdb, "CN=LostAndFoundConfig,%s" % str(samdb.get_config_basedn())), get_config_delete_protected1wd_descriptor),
         (ldb.Dn(samdb, "CN=Services,%s" % str(samdb.get_config_basedn())), get_config_delete_protected1_descriptor),
@@ -441,6 +531,9 @@ def get_wellknown_sds(samdb):
         if ldb.Dn(samdb, nc.decode('utf8')) == dnsforestdn:
             c = (ldb.Dn(samdb, "%s" % str(dnsforestdn)), get_dns_partition_descriptor)
             subcontainers.append(c)
+            c = (ldb.Dn(samdb, "CN=Deleted Objects,%s" % str(dnsforestdn)),
+                 get_deletedobjects_descriptor)
+            subcontainers.append(c)
             c = (ldb.Dn(samdb, "CN=Infrastructure,%s" % str(dnsforestdn)),
                  get_domain_delete_protected1_descriptor)
             subcontainers.append(c)
@@ -455,6 +548,9 @@ def get_wellknown_sds(samdb):
         dnsdomaindn = ldb.Dn(samdb, "DC=DomainDnsZones,%s" % (str(samdb.domain_dn())))
         if ldb.Dn(samdb, nc.decode('utf8')) == dnsdomaindn:
             c = (ldb.Dn(samdb, "%s" % str(dnsdomaindn)), get_dns_partition_descriptor)
+            subcontainers.append(c)
+            c = (ldb.Dn(samdb, "CN=Deleted Objects,%s" % str(dnsdomaindn)),
+                 get_deletedobjects_descriptor)
             subcontainers.append(c)
             c = (ldb.Dn(samdb, "CN=Infrastructure,%s" % str(dnsdomaindn)),
                  get_domain_delete_protected1_descriptor)
@@ -548,11 +644,12 @@ def get_clean_sd(sd):
     return sd_clean
 
 
-def get_diff_sds(refsd, cursd, domainsid, checkSacl=True):
+def get_diff_sds(refsd, cursd, domainsid, checkSacl=True,
+                 ignoreAdditionalACEs=False):
     """Get the difference between 2 sd
 
     This function split the textual representation of ACL into smaller
-    chunck in order to not to report a simple permutation as a difference
+    chunk in order to not to report a simple permutation as a difference
 
     :param refsddl: First sddl to compare
     :param cursddl: Second sddl to compare
@@ -603,6 +700,10 @@ def get_diff_sds(refsd, cursd, domainsid, checkSacl=True):
                     h_ref.remove(k)
 
             if len(h_cur) + len(h_ref) > 0:
+                if txt == "" and len(h_ref) == 0:
+                    if ignoreAdditionalACEs:
+                        return ""
+
                 txt = "%s\tPart %s is different between reference" \
                       " and current here is the detail:\n" % (txt, part)
 

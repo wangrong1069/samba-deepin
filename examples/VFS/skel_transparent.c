@@ -163,22 +163,10 @@ static DIR *skel_fdopendir(vfs_handle_struct *handle, files_struct *fsp,
 	return SMB_VFS_NEXT_FDOPENDIR(handle, fsp, mask, attr);
 }
 
-static struct dirent *skel_readdir(vfs_handle_struct *handle,
-				   struct files_struct *dirfsp,
-				   DIR *dirp,
-				   SMB_STRUCT_STAT *sbuf)
+static struct dirent *
+skel_readdir(vfs_handle_struct *handle, struct files_struct *dirfsp, DIR *dirp)
 {
-	return SMB_VFS_NEXT_READDIR(handle, dirfsp, dirp, sbuf);
-}
-
-static void skel_seekdir(vfs_handle_struct *handle, DIR *dirp, long offset)
-{
-	SMB_VFS_NEXT_SEEKDIR(handle, dirp, offset);
-}
-
-static long skel_telldir(vfs_handle_struct *handle, DIR *dirp)
-{
-	return SMB_VFS_NEXT_TELLDIR(handle, dirp);
+	return SMB_VFS_NEXT_READDIR(handle, dirfsp, dirp);
 }
 
 static void skel_rewind_dir(vfs_handle_struct *handle, DIR *dirp)
@@ -206,14 +194,14 @@ static int skel_openat(struct vfs_handle_struct *handle,
 		       const struct files_struct *dirfsp,
 		       const struct smb_filename *smb_fname,
 		       struct files_struct *fsp,
-		       int flags,
-		       mode_t mode)
+		       const struct vfs_open_how *how)
 {
-	return SMB_VFS_NEXT_OPENAT(handle, dirfsp, smb_fname, fsp, flags, mode);
+	return SMB_VFS_NEXT_OPENAT(handle, dirfsp, smb_fname, fsp, how);
 }
 
 static NTSTATUS skel_create_file(struct vfs_handle_struct *handle,
 				 struct smb_request *req,
+				 struct files_struct *dirfsp,
 				 struct smb_filename *smb_fname,
 				 uint32_t access_mask,
 				 uint32_t share_access,
@@ -232,6 +220,7 @@ static NTSTATUS skel_create_file(struct vfs_handle_struct *handle,
 {
 	return SMB_VFS_NEXT_CREATE_FILE(handle,
 					req,
+					dirfsp,
 					smb_fname,
 					access_mask,
 					share_access,
@@ -471,6 +460,16 @@ static int skel_lstat(vfs_handle_struct *handle,
 		      struct smb_filename *smb_fname)
 {
 	return SMB_VFS_NEXT_LSTAT(handle, smb_fname);
+}
+
+static int skel_fstatat(
+	struct vfs_handle_struct *handle,
+	const struct files_struct *dirfsp,
+	const struct smb_filename *smb_fname,
+	SMB_STRUCT_STAT *sbuf,
+	int flags)
+{
+	return SMB_VFS_NEXT_FSTATAT(handle, dirfsp, smb_fname, sbuf, flags);
 }
 
 static uint64_t skel_get_alloc_size(struct vfs_handle_struct *handle,
@@ -865,19 +864,22 @@ static NTSTATUS skel_fstreaminfo(struct vfs_handle_struct *handle,
 				streams);
 }
 
-static int skel_get_real_filename(struct vfs_handle_struct *handle,
-				  const struct smb_filename *path,
-				  const char *name,
-				  TALLOC_CTX *mem_ctx, char **found_name)
+static NTSTATUS skel_get_real_filename_at(struct vfs_handle_struct *handle,
+					  struct files_struct *dirfsp,
+					  const char *name,
+					  TALLOC_CTX *mem_ctx,
+					  char **found_name)
 {
-	return SMB_VFS_NEXT_GET_REAL_FILENAME(handle,
-					      path, name, mem_ctx, found_name);
+	return SMB_VFS_NEXT_GET_REAL_FILENAME_AT(
+		handle, dirfsp, name, mem_ctx, found_name);
 }
 
-static const char *skel_connectpath(struct vfs_handle_struct *handle,
-				const struct smb_filename *smb_fname)
+static const char *skel_connectpath(
+	struct vfs_handle_struct *handle,
+	const struct files_struct *dirfsp,
+	const struct smb_filename *smb_fname)
 {
-	return SMB_VFS_NEXT_CONNECTPATH(handle, smb_fname);
+	return SMB_VFS_NEXT_CONNECTPATH(handle, dirfsp, smb_fname);
 }
 
 static NTSTATUS skel_brl_lock_windows(struct vfs_handle_struct *handle,
@@ -1290,8 +1292,6 @@ static struct vfs_fn_pointers skel_transparent_fns = {
 
 	.fdopendir_fn = skel_fdopendir,
 	.readdir_fn = skel_readdir,
-	.seekdir_fn = skel_seekdir,
-	.telldir_fn = skel_telldir,
 	.rewind_dir_fn = skel_rewind_dir,
 	.mkdirat_fn = skel_mkdirat,
 	.closedir_fn = skel_closedir,
@@ -1316,6 +1316,7 @@ static struct vfs_fn_pointers skel_transparent_fns = {
 	.stat_fn = skel_stat,
 	.fstat_fn = skel_fstat,
 	.lstat_fn = skel_lstat,
+	.fstatat_fn = skel_fstatat,
 	.get_alloc_size_fn = skel_get_alloc_size,
 	.unlinkat_fn = skel_unlinkat,
 	.fchmod_fn = skel_fchmod,
@@ -1347,7 +1348,7 @@ static struct vfs_fn_pointers skel_transparent_fns = {
 	.set_compression_fn = skel_set_compression,
 
 	.fstreaminfo_fn = skel_fstreaminfo,
-	.get_real_filename_fn = skel_get_real_filename,
+	.get_real_filename_at_fn = skel_get_real_filename_at,
 	.connectpath_fn = skel_connectpath,
 	.brl_lock_windows_fn = skel_brl_lock_windows,
 	.brl_unlock_windows_fn = skel_brl_unlock_windows,

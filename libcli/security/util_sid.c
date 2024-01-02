@@ -23,10 +23,13 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
+#include "lib/util/samba_util.h"
 #include "../librpc/gen_ndr/ndr_security.h"
 #include "../librpc/gen_ndr/netlogon.h"
 #include "../libcli/security/security.h"
+#include "auth/auth.h"
+
 
 #undef strcasecmp
 #undef strncasecmp
@@ -63,7 +66,7 @@ const struct dom_sid global_sid_Authenticated_Users =	/* All authenticated rids 
 { 1, 1, {0,0,0,0,0,5}, {11,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 #if 0
 /* for documentation S-1-5-12 */
-const struct dom_sid global_sid_Restriced =			/* Restriced Code */
+const struct dom_sid global_sid_Restriced =			/* Restricted Code */
 { 1, 1, {0,0,0,0,0,5}, {12,0,0,0,0,0,0,0,0,0,0,0,0,0,0}};
 #endif
 
@@ -161,6 +164,13 @@ const struct dom_sid global_sid_Unix_NFS_Other =		/* Unix other, MS NFS and Appl
 /* Information passing via security token */
 const struct dom_sid global_sid_Samba_SMB3 =
 {1, 1, {0,0,0,0,0,22}, {1397571891, }};
+
+const struct dom_sid global_sid_Samba_NPA_Flags = {1,
+						   1,
+						   {0, 0, 0, 0, 0, 22},
+						   {
+							   2041152804,
+						   }};
 
 /* Unused, left here for documentary purposes */
 #if 0
@@ -339,7 +349,7 @@ int sid_compare_domain(const struct dom_sid *sid1, const struct dom_sid *sid2)
 }
 
 /********************************************************************
- Add SID to an array SIDs
+ Add SID to an array of SIDs
 ********************************************************************/
 
 NTSTATUS add_sid_to_array(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
@@ -366,7 +376,7 @@ NTSTATUS add_sid_to_array(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 
 
 /********************************************************************
- Add SID to an array SIDs ensuring that it is not already there
+ Add SID to an array of SIDs ensuring that it is not already there
 ********************************************************************/
 
 NTSTATUS add_sid_to_array_unique(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
@@ -381,6 +391,72 @@ NTSTATUS add_sid_to_array_unique(TALLOC_CTX *mem_ctx, const struct dom_sid *sid,
 	}
 
 	return add_sid_to_array(mem_ctx, sid, sids, num_sids);
+}
+
+/**
+ * Appends a SID and attribute to an array of auth_SidAttr.
+ *
+ * @param [in] mem_ctx	Talloc memory context on which to allocate the array.
+ * @param [in] sid	The SID to append.
+ * @param [in] attrs	SE_GROUP_* flags to go with the SID.
+ * @param [inout] sids	A pointer to the auth_SidAttr array.
+ * @param [inout] num	A pointer to the size of the auth_SidArray array.
+ * @returns NT_STATUS_OK on success.
+ */
+NTSTATUS add_sid_to_array_attrs(TALLOC_CTX *mem_ctx,
+				const struct dom_sid *sid, uint32_t attrs,
+				struct auth_SidAttr **sids, uint32_t *num)
+{
+	struct auth_SidAttr *tmp = NULL;
+
+	if ((*num) == UINT32_MAX) {
+		return NT_STATUS_INTEGER_OVERFLOW;
+	}
+
+	tmp = talloc_realloc(mem_ctx, *sids, struct auth_SidAttr, (*num)+1);
+	if (tmp == NULL) {
+		*num = 0;
+		return NT_STATUS_NO_MEMORY;
+	}
+	*sids = tmp;
+
+	sid_copy(&((*sids)[*num].sid), sid);
+	(*sids)[*num].attrs = attrs;
+	*num += 1;
+
+	return NT_STATUS_OK;
+}
+
+
+/**
+ * Appends a SID and attribute to an array of auth_SidAttr,
+ * ensuring that it is not already there.
+ *
+ * @param [in] mem_ctx	Talloc memory context on which to allocate the array.
+ * @param [in] sid	The SID to append.
+ * @param [in] attrs	SE_GROUP_* flags to go with the SID.
+ * @param [inout] sids	A pointer to the auth_SidAttr array.
+ * @param [inout] num	A pointer to the size of the auth_SidArray array.
+ * @returns NT_STATUS_OK on success.
+ */
+NTSTATUS add_sid_to_array_attrs_unique(TALLOC_CTX *mem_ctx,
+				       const struct dom_sid *sid, uint32_t attrs,
+				       struct auth_SidAttr **sids, uint32_t *num_sids)
+{
+	uint32_t i;
+
+	for (i=0; i<(*num_sids); i++) {
+		if (attrs != (*sids)[i].attrs) {
+			continue;
+		}
+		if (!dom_sid_equal(sid, &(*sids)[i].sid)) {
+			continue;
+		}
+
+		return NT_STATUS_OK;
+	}
+
+	return add_sid_to_array_attrs(mem_ctx, sid, attrs, sids, num_sids);
 }
 
 /********************************************************************
@@ -438,7 +514,7 @@ bool add_rid_to_array_unique(TALLOC_CTX *mem_ctx,
 
 bool is_null_sid(const struct dom_sid *sid)
 {
-	const struct dom_sid null_sid = {0};
+	static const struct dom_sid null_sid = {0};
 	return dom_sid_equal(sid, &null_sid);
 }
 

@@ -149,9 +149,12 @@ static NTSTATUS db_rbt_storev(struct db_record *rec,
 	if (num_dbufs == 1) {
 		data = dbufs[0];
 	} else {
-		data = dbwrap_merge_dbufs(rec, dbufs, num_dbufs);
-		if (data.dptr == NULL) {
-			return NT_STATUS_NO_MEMORY;
+		NTSTATUS status;
+
+		data = (TDB_DATA) {0};
+		status = dbwrap_merge_dbufs(&data, rec, dbufs, num_dbufs);
+		if (!NT_STATUS_IS_OK(status)) {
+			return status;
 		}
 		to_free = data.dptr;
 	}
@@ -355,7 +358,7 @@ static struct db_record *db_rbt_fetch_locked(struct db_context *db_ctx,
 
 	/*
 	 * In this low-level routine, play tricks to reduce the number of
-	 * tallocs to one. Not recommened for general use, but here it pays
+	 * tallocs to one. Not recommended for general use, but here it pays
 	 * off.
 	 */
 

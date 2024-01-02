@@ -19,15 +19,18 @@
 
 /* key and data in the connections database - used in smbstatus and smbd */
 
+#include "source3/include/includes.h"
+
 struct connections_data {
 	struct server_id pid;
 	int cnum;
+	uint32_t sess_id;
 	uid_t uid;
 	gid_t gid;
 	fstring servicename;
 	fstring addr;
 	fstring machine;
-	time_t start;
+	NTTIME start;
 	uint8_t encryption_flags;
 	uint16_t cipher;
 	uint16_t dialect;

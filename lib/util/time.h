@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <talloc.h>
+#include <time.h>
 
 #ifndef TIME_T_MIN
 /* we use 0 here, because (time_t)-1 means error */
@@ -70,6 +71,9 @@
 
 /* 64 bit time (100 nanosec) 1601 - cifs6.txt, section 3.5, page 30, 4 byte aligned */
 typedef uint64_t NTTIME;
+
+#define NTTIME_USEC (10UL)
+#define NTTIME_MSEC (1000UL * NTTIME_USEC)
 
 /**
  External access to time_t_min and time_t_max.

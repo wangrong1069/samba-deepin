@@ -31,10 +31,11 @@
  * SUCH DAMAGE.
  */
 
-#include <string.h>
 #include "krb5_locl.h"
 #include "an2ln_plugin.h"
 #include "db_plugin.h"
+
+#include <string.h>
 
 /* Default plugin (DB using binary search of sorted text file) follows */
 static krb5_error_code KRB5_LIB_CALL an2ln_def_plug_init(krb5_context, void **);
@@ -43,7 +44,7 @@ static krb5_error_code KRB5_LIB_CALL an2ln_def_plug_an2ln(void *, krb5_context, 
 					    krb5_const_principal, set_result_f,
 					    void *);
 
-static krb5plugin_an2ln_ftable an2ln_def_plug = {
+static const krb5plugin_an2ln_ftable an2ln_def_plug = {
     0,
     an2ln_def_plug_init,
     an2ln_def_plug_fini,
@@ -80,9 +81,9 @@ plcallback(krb5_context context,
     return locate->an2ln(plugctx, context, plctx->rule, plctx->aname, set_res, plctx);
 }
 
-static const char *an2ln_plugin_deps[] = { "krb5", NULL };
+static const char *const an2ln_plugin_deps[] = { "krb5", NULL };
 
-static struct heim_plugin_data
+static const struct heim_plugin_data
 an2ln_plugin_data = {
     "krb5",
     KRB5_PLUGIN_AN2LN,
@@ -420,6 +421,7 @@ an2ln_def_plug_an2ln(void *plug_ctx, krb5_context context,
 	heim_dict_set_value(db_options, HSTR("read-only"),
 			    heim_number_create(1));
     dbh = heim_db_create(NULL, an2ln_db_fname, db_options, &error);
+    heim_release(db_options);
     if (dbh == NULL) {
 	krb5_set_error_message(context, heim_error_get_code(error),
 			       N_("Couldn't open aname2lname-text-db", ""));

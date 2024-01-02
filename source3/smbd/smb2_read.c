@@ -353,7 +353,6 @@ static NTSTATUS schedule_smb2_sendfile_read(struct smbd_smb2_request *smb2req,
 	 * Signing is active OR
 	 * This is a compound SMB2 operation OR
 	 * fsp is a STREAM file OR
-	 * We're using a write cache OR
 	 * It's not a regular file OR
 	 * Requested offset is greater than file size OR
 	 * there's not enough data in the file.
@@ -365,7 +364,7 @@ static NTSTATUS schedule_smb2_sendfile_read(struct smbd_smb2_request *smb2req,
 	    smb2req->do_signing ||
 	    smb2req->do_encryption ||
 	    smbd_smb2_is_compound(smb2req) ||
-	    (fsp->base_fsp != NULL) ||
+	    fsp_is_alternate_stream(fsp) ||
 	    (!S_ISREG(fsp->fsp_name->st.st_ex_mode)) ||
 	    (state->in_offset >= fsp->fsp_name->st.st_ex_size) ||
 	    (fsp->fsp_name->st.st_ex_size < state->in_offset + state->in_length))
@@ -480,7 +479,7 @@ static struct tevent_req *smbd_smb2_read_send(TALLOC_CTX *mem_ctx,
 	DEBUG(10,("smbd_smb2_read: %s - %s\n",
 		  fsp_str_dbg(fsp), fsp_fnum_dbg(fsp)));
 
-	smbreq = smbd_smb2_fake_smb_request(smb2req);
+	smbreq = smbd_smb2_fake_smb_request(smb2req, fsp);
 	if (tevent_req_nomem(smbreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -495,6 +494,7 @@ static struct tevent_req *smbd_smb2_read_send(TALLOC_CTX *mem_ctx,
 
 	if (IS_IPC(smbreq->conn)) {
 		struct tevent_req *subreq = NULL;
+		bool ok;
 
 		state->out_data = data_blob_talloc(state, NULL, in_length);
 		if (in_length > 0 && tevent_req_nomem(state->out_data.data, req)) {
@@ -516,6 +516,18 @@ static struct tevent_req *smbd_smb2_read_send(TALLOC_CTX *mem_ctx,
 		tevent_req_set_callback(subreq,
 					smbd_smb2_read_pipe_done,
 					req);
+
+		/*
+		 * Make sure we mark the fsp as having outstanding async
+		 * activity so we don't crash on shutdown close.
+		 */
+
+		ok = aio_add_req_to_fsp(fsp, req);
+		if (!ok) {
+			tevent_req_nterror(req, NT_STATUS_NO_MEMORY);
+			return tevent_req_post(req, ev);
+		}
+
 		return req;
 	}
 

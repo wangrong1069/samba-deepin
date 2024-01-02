@@ -53,6 +53,7 @@
 #include <sys/stat.h>
 #ifndef WIN32
 #include <sys/file.h>
+#include <locale.h>
 #endif
 #ifdef HAVE_IO_H
 #include <io.h>
@@ -63,6 +64,7 @@
 #include <fcntl.h>
 
 #include "baselocl.h"
+#include "heimbase-atomics.h"
 
 static void HEIM_CALLCONV
 memory_free(heim_object_t obj)
@@ -244,26 +246,318 @@ test_json(void)
     };
     char *s;
     size_t i, k;
-    heim_object_t o, o2;
+    heim_object_t o, o2, o3;
     heim_string_t k1 = heim_string_create("k1");
 
     o = heim_json_create("\"string\"", 10, 0, NULL);
     heim_assert(o != NULL, "string");
     heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
     heim_assert(strcmp("string", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
+    /*
+     * Test string escaping:
+     *
+     *  - C-like must-escapes
+     *  - ASCII control character must-escapes
+     *  - surrogate pairs
+     *
+     * We test round-tripping.  First we parse, then we serialize, then parse,
+     * then compare the second parse to the first for equality.
+     *
+     * We do compare serialized forms in spite of their not being canonical.
+     * That means that some changes to serialization can cause failures here.
+     */
+    o = heim_json_create("\""
+        "\\b\\f\\n\\r\\t"   /* ASCII C-like escapes */
+        "\x1e"              /* ASCII control character w/o C-like escape */
+        "\\u00e1"           /* &aacute; */
+        "\\u07ff"
+        "\\u0801"
+        "\\u8001"
+        "\\uD834\\udd1e"    /* U+1D11E, as shown in RFC 7159 */
+        "\"", 10, 0, NULL);
+    heim_assert(o != NULL, "string");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp(
+        "\b\f\n\r\t"
+        "\x1e"
+        "\xc3\xa1"
+        "\xdf\xbf"
+        "\xe0\xA0\x81"
+        "\xe8\x80\x81"
+        "\xf0\x9d\x84\x9e", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    heim_assert(strcmp("\"\\b\\f\\n\\r\\t\\u001Eá߿ࠁ老\\uD834\\uDD1E\"",
+                       heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    o = heim_json_create("\""
+        "\\b\\f\\n\\r\\t"   /* ASCII C-like escapes */
+        "\x1e"              /* ASCII control character w/o C-like escape */
+        "\xc3\xa1"
+        "\xdf\xbf"
+        "\xe0\xa0\x81"
+        "\xE8\x80\x81"
+        "\\uD834\\udd1e"    /* U+1D11E, as shown in RFC 7159 */
+        "\"", 10, 0, NULL);
+    heim_assert(o != NULL, "string");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp(
+        "\b\f\n\r\t"
+        "\x1e"
+        "\xc3\xa1"
+        "\xdf\xbf"
+        "\xe0\xA0\x81"
+        "\xe8\x80\x81"
+        "\xf0\x9d\x84\x9e", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    heim_assert(strcmp("\"\\b\\f\\n\\r\\t\\u001Eá߿ࠁ老\\uD834\\uDD1E\"",
+                       heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /*
+     * Test HEIM_JSON_F_ESCAPE_NON_ASCII.
+     *
+     * Also test that we get escaped non-ASCII because we're in a not-UTF-8
+     * locale, since we setlocale(LC_ALL, "C"), so we should escape non-ASCII
+     * by default.
+     */
+    o = heim_json_create("\""
+        "\\b\\f\\n\\r\\t"   /* ASCII C-like escapes */
+        "\x1e"              /* ASCII control character w/o C-like escape */
+        "\xc3\xa1"
+        "\xdf\xbf"
+        "\xe0\xa0\x81"
+        "\xE8\x80\x81"
+        "\\uD834\\udd1e"    /* U+1D11E, as shown in RFC 7159 */
+        "\"", 10, 0, NULL);
+    heim_assert(o != NULL, "string");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp(
+        "\b\f\n\r\t"
+        "\x1e"
+        "\xc3\xa1"
+        "\xdf\xbf"
+        "\xe0\xA0\x81"
+        "\xe8\x80\x81"
+        "\xf0\x9d\x84\x9e", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_ESCAPE_NON_ASCII, NULL);
+    heim_assert(strcmp("\"\\b\\f\\n\\r\\t\\u001E\\u00E1\\u07FF\\u0801\\u8001"
+                       "\\uD834\\uDD1E\"",
+                       heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    heim_release(o2);
+    o2 = heim_json_copy_serialize(o, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(strcmp("\"\\b\\f\\n\\r\\t\\u001E\\u00E1\\u07FF\\u0801\\u8001"
+                       "\\uD834\\uDD1E\"",
+                       heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /* Test rejection of unescaped ASCII control characters */
+    o = heim_json_create("\"\b\\f\"", 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o == NULL, "strict parse accepted bad input");
+    o = heim_json_create("\"\b\x1e\"", 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o == NULL, "strict parse accepted bad input");
+
+    o = heim_json_create("\"\b\\f\"", 10, 0, NULL);
+    heim_assert(o != NULL, "string");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp("\b\f", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    heim_assert(strcmp("\"\\b\\f\"", heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /* Test bogus backslash escape */
+    o = heim_json_create("\""
+        "\\ "
+        "\"", 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o == NULL, "malformed string accepted");
+    o = heim_json_create("\""
+        "\\ "
+        "\"", 10, 0, NULL);
+    heim_assert(o != NULL, "malformed string rejected (not strict)");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp(" ", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    heim_assert(strcmp("\" \"", heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /* Test truncated surrogate encoding (bottom code unit) */
+    o = heim_json_create("\""
+        "\xE8\x80\x81"
+        "\\uD834\\udd"
+        "\"", 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o == NULL, "malformed string accepted");
+    o = heim_json_create("\""
+        "\xE8\x80\x81"
+        "\\uD834\\udd"
+        "\"", 10, 0, NULL);
+    heim_assert(o != NULL, "malformed string rejected (not strict)");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp(
+        "\xe8\x80\x81"
+        "\\uD834\\udd", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    heim_assert(strcmp("\"老\\\\uD834\\\\udd\"",
+                       heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /* Test truncated surrogate encodings (top code unit) */
+    o = heim_json_create("\""
+        "\xE8\x80\x81"
+        "\\uD83"
+        "\"", 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o == NULL, "malformed string accepted");
+    o = heim_json_create("\""
+        "\xE8\x80\x81"
+        "\\uD83"
+        "\"", 10, 0, NULL);
+    heim_assert(o != NULL, "malformed string rejected (not strict)");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp(
+        "\xe8\x80\x81"
+        "\\uD83", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    heim_assert(strcmp("\"老\\\\uD83\"",
+                       heim_string_get_utf8(o2)) == 0,
+                "JSON encoding changed; please check that it is till valid");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /*
+     * Test handling of truncated UTF-8 multi-byte sequences.
+     */
+    o = heim_json_create("\""
+        "\xE8\x80"
+        "\"", 10, 0, NULL);
+    heim_assert(o != NULL, "malformed string rejected (not strict)");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp("\xe8\x80",
+                       heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o,
+                                  HEIM_JSON_F_STRICT |
+                                  HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    heim_assert(o2 == NULL, "malformed string serialized");
+    o2 = heim_json_copy_serialize(o, HEIM_JSON_F_NO_ESCAPE_NON_ASCII, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o3 == NULL, "malformed string accepted (not strict)");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(strcmp("\xe8\x80",
+                       heim_string_get_utf8(o3)) == 0, "wrong string");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /* Test handling of unescaped / embedded newline */
+    o = heim_json_create("\"\n\"", 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o == NULL, "malformed string accepted (strict)");
+    o = heim_json_create("\"\n\"", 10, 0, NULL);
+    heim_assert(o != NULL, "malformed string rejected (not strict)");
+    heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
+    heim_assert(strcmp("\n", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o2 != NULL, "string not serialized");
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o3 != NULL, "string not accepted");
+    heim_assert(strcmp("\n", heim_string_get_utf8(o3)) == 0, "wrong string");
+    heim_release(o3);
+    heim_release(o2);
+    heim_release(o);
+
+    /* Test handling of embedded NULs (must decode as data, not string) */
+    o = heim_json_create("\"\\u0000\"", 10, HEIM_JSON_F_STRICT, NULL);
+    heim_assert(o != NULL, "string with NULs rejected");
+    heim_assert(heim_get_tid(o) == heim_data_get_type_id(), "data-tid");
+    heim_assert(heim_data_get_length(o) == 1, "wrong data length");
+    heim_assert(((const char *)heim_data_get_ptr(o))[0] == '\0',
+                "wrong data NUL");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    heim_assert(o2 != NULL, "data not serialized");
+    heim_release(o2);
+    heim_release(o);
+
+    /*
+     * Note that the trailing ']' is not part of the JSON text (which is just a
+     * string).
+     */
     o = heim_json_create(" \"foo\\\"bar\" ]", 10, 0, NULL);
     heim_assert(o != NULL, "string");
     heim_assert(heim_get_tid(o) == heim_string_get_type_id(), "string-tid");
     heim_assert(strcmp("foo\"bar", heim_string_get_utf8(o)) == 0, "wrong string");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
     o = heim_json_create(" { \"key\" : \"value\" }", 10, 0, NULL);
     heim_assert(o != NULL, "dict");
     heim_assert(heim_get_tid(o) == heim_dict_get_type_id(), "dict-tid");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
+    /*
+     * heim_json_eq() can't handle dicts with dicts as keys, so we don't check
+     * for round-tripping here
+     */
     o = heim_json_create("{ { \"k1\" : \"s1\", \"k2\" : \"s2\" } : \"s3\", "
 			 "{ \"k3\" : \"s4\" } : -1 }", 10, 0, NULL);
     heim_assert(o != NULL, "dict");
@@ -281,6 +575,11 @@ test_json(void)
     o2 = heim_dict_copy_value(o, k1);
     heim_assert(heim_get_tid(o2) == heim_string_get_type_id(), "string-tid");
     heim_release(o2);
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
     o = heim_json_create(" { \"k1\" : { \"k2\" : \"s2\" } }", 10, 0, NULL);
@@ -288,6 +587,11 @@ test_json(void)
     heim_assert(heim_get_tid(o) == heim_dict_get_type_id(), "dict-tid");
     o2 = heim_dict_copy_value(o, k1);
     heim_assert(heim_get_tid(o2) == heim_dict_get_type_id(), "dict-tid");
+    heim_release(o2);
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
     heim_release(o2);
     heim_release(o);
 
@@ -297,26 +601,51 @@ test_json(void)
     o2 = heim_dict_copy_value(o, k1);
     heim_assert(heim_get_tid(o2) == heim_number_get_type_id(), "number-tid");
     heim_release(o2);
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
     o = heim_json_create("-10", 10, 0, NULL);
     heim_assert(o != NULL, "number");
     heim_assert(heim_get_tid(o) == heim_number_get_type_id(), "number-tid");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
     o = heim_json_create("99", 10, 0, NULL);
     heim_assert(o != NULL, "number");
     heim_assert(heim_get_tid(o) == heim_number_get_type_id(), "number-tid");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
     o = heim_json_create(" [ 1 ]", 10, 0, NULL);
     heim_assert(o != NULL, "array");
     heim_assert(heim_get_tid(o) == heim_array_get_type_id(), "array-tid");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
     o = heim_json_create(" [ -1 ]", 10, 0, NULL);
     heim_assert(o != NULL, "array");
     heim_assert(heim_get_tid(o) == heim_array_get_type_id(), "array-tid");
+    o2 = heim_json_copy_serialize(o, 0, NULL);
+    o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+    heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+    heim_release(o3);
+    heim_release(o2);
     heim_release(o);
 
     for (i = 0; i < (sizeof (j) / sizeof (j[0])); i++) {
@@ -325,6 +654,11 @@ test_json(void)
 	    fprintf(stderr, "Failed to parse this JSON: %s\n", j[i]);
 	    return 1;
 	}
+        o2 = heim_json_copy_serialize(o, 0, NULL);
+        o3 = heim_json_create(heim_string_get_utf8(o2), 10, 0, NULL);
+        heim_assert(heim_json_eq(o, o3), "JSON text did not round-trip");
+        heim_release(o3);
+        heim_release(o2);
 	heim_release(o);
 	/* Simple fuzz test */
 	for (k = strlen(j[i]) - 1; k > 0; k--) {
@@ -940,10 +1274,93 @@ test_array()
     return 0;
 }
 
+/* This function tests only that heimbase-atomics.h compiles */
+static int
+test_atomics(void)
+{
+    heim_base_atomic(void *) tptr;
+    heim_base_atomic(uint32_t) tu32;
+    heim_base_atomic(uint64_t) tu64;
+
+    heim_base_atomic_init(&tptr, NULL);
+    heim_base_atomic_init(&tu32, 0);
+    heim_base_atomic_init(&tu64, 0);
+
+    if (heim_base_atomic_load(&tptr))
+        return 1;
+    if (heim_base_atomic_load(&tu32))
+        return 1;
+    if (heim_base_atomic_load(&tu64))
+        return 1;
+
+    heim_base_atomic_store(&tptr, &tptr);
+    heim_base_atomic_store(&tu32, 1);
+    heim_base_atomic_store(&tu64, 1);
+
+    if (heim_base_atomic_load(&tptr) != &tptr)
+        return 1;
+    if (heim_base_atomic_load(&tu32) != 1)
+        return 1;
+    if (heim_base_atomic_load(&tu64) != 1)
+        return 1;
+
+    if (heim_base_atomic_inc_32(&tu32) != 2 ||
+        heim_base_atomic_load(&tu32) != 2)
+        return 1;
+    if (heim_base_atomic_inc_64(&tu64) != 2 ||
+        heim_base_atomic_load(&tu64) != 2)
+        return 1;
+
+    if (heim_base_atomic_dec_32(&tu32) != 1 ||
+        heim_base_atomic_load(&tu32) != 1)
+        return 1;
+    if (heim_base_atomic_dec_64(&tu64) != 1 ||
+        heim_base_atomic_load(&tu64) != 1)
+        return 1;
+
+    heim_base_exchange_pointer(&tptr, (void *)&tu32);
+    if (heim_base_atomic_load(&tptr) != &tu32)
+        return 1;
+    heim_base_exchange_32(&tu32, 32);
+    if (heim_base_atomic_load(&tu32) != 32)
+        return 1;
+    heim_base_exchange_64(&tu64, 64);
+    if (heim_base_atomic_load(&tu64) != 64)
+        return 1;
+
+    if (heim_base_cas_pointer(&tptr, (void *)&tu32, (void *)&tu64) != &tu32)
+        return 1;
+    if (heim_base_cas_pointer(&tptr, (void *)&tu32, (void *)&tptr) != &tu64)
+        return 1;
+    if (heim_base_atomic_load(&tptr) != (void *)&tu64)
+        return 1;
+
+    if (heim_base_cas_32(&tu32, 32, 4) != 32)
+        return 1;
+    if (heim_base_cas_32(&tu32, 32, 4) != 4)
+        return 1;
+    if (heim_base_atomic_load(&tu32) != 4)
+        return 1;
+
+    if (heim_base_cas_64(&tu64, 64, 4) != 64)
+        return 1;
+    if (heim_base_cas_64(&tu64, 64, 4) != 4)
+        return 1;
+    if (heim_base_atomic_load(&tu64) != 4)
+        return 1;
+
+    return 0;
+}
+
 int
 main(int argc, char **argv)
 {
     int res = 0;
+
+#ifndef WIN32
+    setlocale(LC_ALL, "C");
+    heim_assert(!heim_locale_is_utf8(), "setlocale(LC_ALL, \"C\") failed?");
+#endif
 
     res |= test_memory();
     res |= test_mutex();
@@ -957,6 +1374,7 @@ main(int argc, char **argv)
     res |= test_db(NULL, NULL);
     res |= test_db("json", argc > 1 ? argv[1] : "test_db.json");
     res |= test_array();
+    res |= test_atomics();
 
     return res ? 1 : 0;
 }

@@ -7,6 +7,7 @@ libwbclient.so.0 libwbclient0 #MINVER#
  WBCLIENT_0.13@WBCLIENT_0.13 2:4.5.0+dfsg
  WBCLIENT_0.14@WBCLIENT_0.14 2:4.7.0+dfsg
  WBCLIENT_0.15@WBCLIENT_0.15 2:4.10.0+dfsg
+ WBCLIENT_0.16@WBCLIENT_0.16 2:4.18.0~rc1+dfsg
  wbcAddNamedBlob@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcAllocateGid@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcAllocateMemory@WBCLIENT_0.9 2:4.0.3+dfsg1
@@ -15,6 +16,7 @@ libwbclient.so.0 libwbclient0 #MINVER#
  wbcAuthenticateUser@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcAuthenticateUserEx@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcChangeTrustCredentials@WBCLIENT_0.9 2:4.0.3+dfsg1
+ wbcChangeTrustCredentialsAt@WBCLIENT_0.16 2:4.18.0~rc1+dfsg
  wbcChangeUserPassword@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcChangeUserPasswordEx@WBCLIENT_0.9 2:4.0.3+dfsg1
  wbcCheckTrustCredentials@WBCLIENT_0.9 2:4.0.3+dfsg1
@@ -25,6 +27,7 @@ libwbclient.so.0 libwbclient0 #MINVER#
  wbcCtxAuthenticateUser@WBCLIENT_0.12 2:4.2.1+dfsg
  wbcCtxAuthenticateUserEx@WBCLIENT_0.12 2:4.2.1+dfsg
  wbcCtxChangeTrustCredentials@WBCLIENT_0.12 2:4.2.1+dfsg
+ wbcCtxChangeTrustCredentialsAt@WBCLIENT_0.16 2:4.18.0~rc1+dfsg
  wbcCtxChangeUserPassword@WBCLIENT_0.12 2:4.2.1+dfsg
  wbcCtxChangeUserPasswordEx@WBCLIENT_0.12 2:4.2.1+dfsg
  wbcCtxCheckTrustCredentials@WBCLIENT_0.12 2:4.2.1+dfsg

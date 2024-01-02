@@ -531,8 +531,7 @@ static int preopen_openat(struct vfs_handle_struct *handle,
 			  const struct files_struct *dirfsp,
 			  const struct smb_filename *smb_fname,
 			  struct files_struct *fsp,
-			  int flags,
-			  mode_t mode)
+			  const struct vfs_open_how *how)
 {
 	const char *dirname = dirfsp->fsp_name->base_name;
 	struct preopen_state *state;
@@ -557,21 +556,20 @@ static int preopen_openat(struct vfs_handle_struct *handle,
 					   dirfsp,
 					   smb_fname,
 					   fsp,
-					   flags,
-					   mode);
+					   how);
 	}
 
-	res = SMB_VFS_NEXT_OPENAT(handle, dirfsp, smb_fname, fsp, flags, mode);
+	res = SMB_VFS_NEXT_OPENAT(handle, dirfsp, smb_fname, fsp, how);
 	if (res == -1) {
 		return -1;
 	}
 
-	if ((flags & O_ACCMODE) != O_RDONLY) {
+	if ((how->flags & O_ACCMODE) != O_RDONLY) {
 		return res;
 	}
 
 	/*
-	 * Make sure we can later contruct an absolute pathname
+	 * Make sure we can later construct an absolute pathname
 	 */
 	if (dirname[0] != '/') {
 		return res;
@@ -658,7 +656,7 @@ static int preopen_openat(struct vfs_handle_struct *handle,
 		need_reset = true;
 	} else if (state->number_start != new_start) {
 		/*
-		 * If the digits started at a different possition
+		 * If the digits started at a different position
 		 * we better reset the queue
 		 */
 		DBG_PREFIX(state->reset_dbglvl, ("RESET: "

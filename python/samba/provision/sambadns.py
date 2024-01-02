@@ -42,6 +42,7 @@ from samba.dsdb import (
     DS_GUID_USERS_CONTAINER
 )
 from samba.descriptor import (
+    get_deletedobjects_descriptor,
     get_domain_descriptor,
     get_domain_delete_protected1_descriptor,
     get_domain_delete_protected2_descriptor,
@@ -77,7 +78,7 @@ def get_dnsadmins_sid(samdb, domaindn):
     return dnsadmins_sid
 
 
-# Note: these classses are not quite the same as similar looking ones
+# Note: these classes are not quite the same as similar looking ones
 # in ../dnsserver.py -- those ones are based on
 # dnsserver.DNS_RPC_RECORD ([MS-DNSP]2.2.2.2.5 "DNS_RPC_RECORD"),
 # these are based on dnsp.DnssrvRpcRecord ([MS-DNSP] 2.3.2.2
@@ -256,6 +257,7 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
     domainzone_dn = "DC=DomainDnsZones,%s" % domaindn
     forestzone_dn = "DC=ForestDnsZones,%s" % forestdn
     descriptor = get_dns_partition_descriptor(domainsid)
+    deletedobjects_desc = get_deletedobjects_descriptor(domainsid)
 
     setup_add_ldif(samdb, setup_path("provision_dnszones_partitions.ldif"), {
         "ZONE_DN": domainzone_dn,
@@ -267,7 +269,6 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
             "SECDESC": b64encode(descriptor).decode('utf8')
         })
 
-    domainzone_guid = get_domainguid(samdb, domainzone_dn)
     domainzone_guid = str(uuid.uuid4())
     domainzone_dns = ldb.Dn(samdb, domainzone_dn).canonical_ex_str().strip()
 
@@ -279,6 +280,7 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
         "ZONE_DNS": domainzone_dns,
         "CONFIGDN": configdn,
         "SERVERDN": serverdn,
+        "DELETEDOBJECTS_DESCRIPTOR": b64encode(deletedobjects_desc).decode('utf8'),
         "LOSTANDFOUND_DESCRIPTOR": b64encode(protected2_desc).decode('utf8'),
         "INFRASTRUCTURE_DESCRIPTOR": b64encode(protected1_desc).decode('utf8'),
     })
@@ -289,7 +291,6 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
     })
 
     if fill_level != FILL_SUBDOMAIN:
-        forestzone_guid = get_domainguid(samdb, forestzone_dn)
         forestzone_guid = str(uuid.uuid4())
         forestzone_dns = ldb.Dn(samdb, forestzone_dn).canonical_ex_str().strip()
 
@@ -299,6 +300,7 @@ def setup_dns_partitions(samdb, domainsid, domaindn, forestdn, configdn,
             "ZONE_DNS": forestzone_dns,
             "CONFIGDN": configdn,
             "SERVERDN": serverdn,
+            "DELETEDOBJECTS_DESCRIPTOR": b64encode(deletedobjects_desc).decode('utf8'),
             "LOSTANDFOUND_DESCRIPTOR": b64encode(protected2_desc).decode('utf8'),
             "INFRASTRUCTURE_DESCRIPTOR": b64encode(protected1_desc).decode('utf8'),
         })
@@ -686,7 +688,7 @@ def secretsdb_setup_dns(secretsdb, names, private_dir, binddns_dir, realm,
         key_version_number = 1
 
     # This will create the dns.keytab file in the private_dir when it is
-    # commited!
+    # committed!
     setup_ldb(secretsdb, setup_path("secrets_dns.ldif"), {
             "REALM": realm,
             "DNSDOMAIN": dnsdomain,
@@ -986,7 +988,7 @@ def create_named_conf(paths, realm, dnsdomain, dns_backend, logger):
     """
 
     # TODO: This really should have been done as a top level import.
-    # It is done here to avoid a depencency loop.  That is, we move
+    # It is done here to avoid a dependency loop.  That is, we move
     # ProvisioningError to another file, and have all the provision
     # scripts import it from there.
 

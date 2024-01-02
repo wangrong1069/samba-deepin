@@ -6,6 +6,8 @@ Files-Excluded:
   third_party/heimdal/lib/wind/rfc*.txt
   third_party/heimdal/doc/standardisation
   source4/ldap_server/devdocs
+  docs/manpages/*.?
+  ctdb/doc/*.? ctdb/doc/*.?.html
 
 Files: *
 Copyright: 1992-2012 Andrew Tridgell and the Samba Team

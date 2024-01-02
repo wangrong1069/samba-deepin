@@ -172,6 +172,7 @@ static void smbd_smb2_request_getinfo_done(struct tevent_req *subreq)
 		/* Return a specific error with data. */
 		error = smbd_smb2_request_error_ex(req,
 						call_status,
+						0,
 						&out_output_buffer,
 						__location__);
 		if (!NT_STATUS_IS_OK(error)) {
@@ -276,7 +277,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 	DEBUG(10,("smbd_smb2_getinfo_send: %s - %s\n",
 		  fsp_str_dbg(fsp), fsp_fnum_dbg(fsp)));
 
-	smbreq = smbd_smb2_fake_smb_request(smb2req);
+	smbreq = smbd_smb2_fake_smb_request(smb2req, fsp);
 	if (tevent_req_nomem(smbreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -296,9 +297,6 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 		bool delete_pending = false;
 		struct timespec write_time_ts;
 		struct file_id fileid;
-		struct ea_list *ea_list = NULL;
-		int lock_data_count = 0;
-		char *lock_data = NULL;
 		size_t fixed_portion;
 
 		ZERO_STRUCT(write_time_ts);
@@ -340,6 +338,14 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 			file_info_level = SMB2_FILE_ALL_INFORMATION;
 			break;
 
+		case SMB2_FILE_POSIX_INFORMATION:
+			if (!(fsp->posix_flags & FSP_POSIX_FLAGS_OPEN)) {
+				tevent_req_nterror(req, NT_STATUS_INVALID_LEVEL);
+				return tevent_req_post(req, ev);
+			}
+			file_info_level = SMB2_FILE_POSIX_INFORMATION_INTERNAL;
+			break;
+
 		default:
 			/* the levels directly map to the passthru levels */
 			file_info_level = in_file_info_class + 1000;
@@ -378,7 +384,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 				return tevent_req_post(req, ev);
 			}
 
-			if (lp_smbd_getinfo_ask_sharemode(SNUM(conn))) {
+			if (fsp_getinfo_ask_sharemode(fsp)) {
 				fileid = vfs_file_id_from_sbuf(
 					conn, &fsp->fsp_name->st);
 				get_file_infos(fileid, fsp->name_hash,
@@ -398,7 +404,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 				tevent_req_nterror(req, status);
 				return tevent_req_post(req, ev);
 			}
-			if (lp_smbd_getinfo_ask_sharemode(SNUM(conn))) {
+			if (fsp_getinfo_ask_sharemode(fsp)) {
 				fileid = vfs_file_id_from_sbuf(
 					conn, &fsp->fsp_name->st);
 				get_file_infos(fileid, fsp->name_hash,
@@ -414,9 +420,7 @@ static struct tevent_req *smbd_smb2_getinfo_send(TALLOC_CTX *mem_ctx,
 					       fsp->fsp_name,
 					       delete_pending,
 					       write_time_ts,
-					       ea_list,
-					       lock_data_count,
-					       lock_data,
+					       NULL,
 					       STR_UNICODE,
 					       in_output_buffer_length,
 					       &fixed_portion,

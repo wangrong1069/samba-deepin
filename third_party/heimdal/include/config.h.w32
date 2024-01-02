@@ -26,13 +26,13 @@
  * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
  * OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  **********************************************************************/
 
 #ifndef __CONFIG_H__
 #define __CONFIG_H__
 
-#define fallthrough do {} while(0) /* fallthrough */
+#define HEIM_FALLTHROUGH do {} while(0) /* fallthrough */
 
 #ifndef RCSID
 #define RCSID(msg) \
@@ -55,6 +55,10 @@ static const char *const rcsid[] = { (const char *)rcsid, "@(#)" msg }
 #endif
 #ifndef MAXPATHLEN
 #define MAXPATHLEN MaxPathLen
+#endif
+
+#if _MSC_VER < 1900
+# define __func__ __FUNCTION__
 #endif
 
 #ifdef BUILD_KRB5_LIB

@@ -17,7 +17,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include "python/py3compat.h"
 #include "includes.h"
 #include <ldb.h>
@@ -1426,6 +1426,57 @@ static PyObject *py_dsdb_user_account_control_flag_bit_to_string(PyObject *self,
 	return PyUnicode_FromString(str);
 }
 
+static PyObject *py_dsdb_check_and_update_fl(PyObject *self, PyObject *args)
+{
+	TALLOC_CTX *frame = NULL;
+
+	PyObject *py_ldb = NULL, *py_lp = NULL;
+	struct ldb_context *ldb = NULL;
+	struct loadparm_context *lp_ctx = NULL;
+
+	int ret;
+
+	if (!PyArg_ParseTuple(args, "OO", &py_ldb, &py_lp)) {
+		return NULL;
+	}
+
+	PyErr_LDB_OR_RAISE(py_ldb, ldb);
+
+	frame = talloc_stackframe();
+
+	lp_ctx = lpcfg_from_py_object(frame, py_lp);
+	if (lp_ctx == NULL) {
+		TALLOC_FREE(frame);
+		return NULL;
+	}
+
+	ret = dsdb_check_and_update_fl(ldb, lp_ctx);
+	TALLOC_FREE(frame);
+
+	PyErr_LDB_ERROR_IS_ERR_RAISE(py_ldb_get_exception(), ret, ldb);
+
+	Py_RETURN_NONE;
+}
+
+static PyObject *py_dsdb_dc_operatingSystemVersion(PyObject *self, PyObject *args)
+{
+	const char *str = NULL;
+	int dc_level = 0;
+
+	if (!PyArg_ParseTuple(args, "i", &dc_level)) {
+		return NULL;
+	}
+
+	str = dsdb_dc_operatingSystemVersion(dc_level);
+	if (str == NULL) {
+		return PyErr_Format(PyExc_KeyError,
+				    "dsdb_dc_operatingSystemVersion(%d) failed",
+				    dc_level);
+	}
+
+	return PyUnicode_FromString(str);
+}
+
 static PyMethodDef py_dsdb_methods[] = {
 	{ "_samdb_server_site_name", (PyCFunction)py_samdb_server_site_name,
 		METH_VARARGS, "Get the server site name as a string"},
@@ -1511,6 +1562,17 @@ static PyMethodDef py_dsdb_methods[] = {
 	        (PyCFunction)py_dsdb_user_account_control_flag_bit_to_string,
 	        METH_VARARGS,
 	        "user_account_control_flag_bit_to_string(bit)"
+                " -> string name" },
+	{ "check_and_update_fl",
+	        (PyCFunction)py_dsdb_check_and_update_fl,
+	        METH_VARARGS,
+	        "check_and_update_fl(ldb, lp) -> None\n"
+	  "Hook to run in testing the code run on samba server startup "
+	  "to validate and update DC functional levels"},
+	{ "dc_operatingSystemVersion",
+	        (PyCFunction)py_dsdb_dc_operatingSystemVersion,
+	        METH_VARARGS,
+	        "dsdb_dc_operatingSystemVersion(dc_level)"
                 " -> string name" },
 	{0}
 };
@@ -1665,6 +1727,36 @@ MODULE_INIT_FUNC(dsdb)
 	ADD_DSDB_FLAG(DS_NTDSDSA_OPT_DISABLE_NTDSCONN_XLATE);
 	ADD_DSDB_FLAG(DS_NTDSDSA_OPT_DISABLE_SPN_REGISTRATION);
 
+	/* dsHeuristics character indexes (see MS-ADTS 7.1.1.2.4.1.2) */
+	ADD_DSDB_FLAG(DS_HR_SUPFIRSTLASTANR);
+	ADD_DSDB_FLAG(DS_HR_SUPLASTFIRSTANR);
+	ADD_DSDB_FLAG(DS_HR_DOLISTOBJECT);
+	ADD_DSDB_FLAG(DS_HR_DONICKRES);
+	ADD_DSDB_FLAG(DS_HR_LDAP_USEPERMMOD);
+	ADD_DSDB_FLAG(DS_HR_HIDEDSID);
+	ADD_DSDB_FLAG(DS_HR_BLOCK_ANONYMOUS_OPS);
+	ADD_DSDB_FLAG(DS_HR_ALLOW_ANON_NSPI);
+	ADD_DSDB_FLAG(DS_HR_USER_PASSWORD_SUPPORT);
+	ADD_DSDB_FLAG(DS_HR_TENTH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_SPECIFY_GUID_ON_ADD);
+	ADD_DSDB_FLAG(DS_HR_NO_STANDARD_SD);
+	ADD_DSDB_FLAG(DS_HR_ALLOW_NONSECURE_PWD_OPS);
+	ADD_DSDB_FLAG(DS_HR_NO_PROPAGATE_ON_NOCHANGE);
+	ADD_DSDB_FLAG(DS_HR_COMPUTE_ANR_STATS);
+	ADD_DSDB_FLAG(DS_HR_ADMINSDEXMASK);
+	ADD_DSDB_FLAG(DS_HR_KVNOEMUW2K);
+
+	ADD_DSDB_FLAG(DS_HR_TWENTIETH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_ATTR_AUTHZ_ON_LDAP_ADD);
+	ADD_DSDB_FLAG(DS_HR_BLOCK_OWNER_IMPLICIT_RIGHTS);
+	ADD_DSDB_FLAG(DS_HR_THIRTIETH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_FOURTIETH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_FIFTIETH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_SIXTIETH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_SEVENTIETH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_EIGHTIETH_CHAR);
+	ADD_DSDB_FLAG(DS_HR_NINETIETH_CHAR);
+
 	ADD_DSDB_FLAG(NTDSCONN_KCC_GC_TOPOLOGY);
 	ADD_DSDB_FLAG(NTDSCONN_KCC_RING_TOPOLOGY);
 	ADD_DSDB_FLAG(NTDSCONN_KCC_MINIMIZE_HOPS_TOPOLOGY);
@@ -1724,6 +1816,22 @@ MODULE_INIT_FUNC(dsdb)
 	ADD_DSDB_STRING(DS_GUID_PROGRAM_DATA_CONTAINER);
 	ADD_DSDB_STRING(DS_GUID_SYSTEMS_CONTAINER);
 	ADD_DSDB_STRING(DS_GUID_USERS_CONTAINER);
+	ADD_DSDB_STRING(DS_GUID_MANAGED_SERVICE_ACCOUNTS_CONTAINER);
+
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_DEPARTMENT);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_DNS_HOST_NAME);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_INSTANCE_TYPE);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_MS_SFU_30);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_NT_SECURITY_DESCRIPTOR);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_PRIMARY_GROUP_ID);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_SERVICE_PRINCIPAL_NAME);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_USER_ACCOUNT_CONTROL);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_ATTR_USER_PASSWORD);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_CLASS_COMPUTER);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_CLASS_MANAGED_SERVICE_ACCOUNT);
+	ADD_DSDB_STRING(DS_GUID_SCHEMA_CLASS_USER);
+
+	ADD_DSDB_STRING(DSDB_FULL_JOIN_REPLICATION_COMPLETED_OPAQUE_NAME);
 
 	return m;
 }

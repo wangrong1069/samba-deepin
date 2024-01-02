@@ -1,19 +1,19 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    SMB parameters and setup, plus a whole lot more.
-   
+
    Copyright (C) Andrew Tridgell              2001
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -26,7 +26,7 @@
 /* the following rather strange looking definitions of NTSTATUS and WERROR
    and there in order to catch common coding errors where different error types
    are mixed up. This is especially important as we slowly convert Samba
-   from using bool for internal functions 
+   from using bool for internal functions
 */
 
 #if defined(HAVE_IMMEDIATE_STRUCTURES)
@@ -100,7 +100,6 @@ typedef uint32_t WERROR;
 #define WERR_INVALID_PRIMARY_GROUP      W_ERROR(0x0000051C)
 
 #define WERR_DS_DRA_SECRETS_DENIED			W_ERROR(0x000021B6)
-#define WERR_DS_DRA_RECYCLED_TARGET			W_ERROR(0x000021BF)
 
 #define WERR_DNS_ERROR_KEYMASTER_REQUIRED               W_ERROR(0x0000238D)
 #define WERR_DNS_ERROR_NOT_ALLOWED_ON_SIGNED_ZONE       W_ERROR(0x0000238E)

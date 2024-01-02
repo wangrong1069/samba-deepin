@@ -6,9 +6,13 @@ AUTOMAKE_OPTIONS = no-texinfo.tex
 
 MAKEINFOFLAGS = --css-include=$(srcdir)/heimdal.css
 
-TEXI2DVI = true # ARGH, make distcheck can't be disabled to not build dvifiles
+#TEXI2DVI = true # ARGH, make distcheck can't be disabled to not build dvifiles
 
 info_TEXINFOS = heimdal.texi hx509.texi
+
+BUILT_SOURCES = vars.texi
+
+#all: html pdf dvi ps info
 
 dxy_subst = sed -e 's,[@]srcdir[@],$(srcdir),g' \
 	-e 's,[@]objdir[@],.,g' \
@@ -119,7 +123,6 @@ heimdal_TEXINFOS = \
 	heimdal.texi \
 	install.texi \
 	intro.texi \
-	kerberos4.texi \
 	migration.texi \
 	misc.texi \
 	programming.texi \

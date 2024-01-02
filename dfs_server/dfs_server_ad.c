@@ -70,8 +70,9 @@ static NTSTATUS fill_normal_dfs_referraltype(TALLOC_CTX *mem_ctx,
 	switch (version) {
 	case 4:
 		ref->version = version;
-		/* For the moment there is a bug with XP that don't seems to appriciate much
-		 * level4 so we return just level 3 for everyone
+		/* For the moment there is a bug with XP that doesn't
+		 * seem to appreciate much level4 so we return just
+		 * level 3 for everyone
 		 */
 		ref->referral.v4.server_type = DFS_SERVER_NON_ROOT;
 		/* "normal" referral seems to always include the GUID */
@@ -458,8 +459,11 @@ static NTSTATUS get_dcs(TALLOC_CTX *ctx, struct ldb_context *ldb,
 
 		if (searched_site == NULL ||
 		    strcmp(searched_site, site_name) != 0) {
-			DEBUG(2,(__location__ ": Site: %s %s\n",
-				searched_site, site_name));
+			DEBUG(2,
+			      (__location__ ": Site: %s %s\n",
+			       searched_site != NULL ? searched_site
+						     : "UNKNOWN",
+			       site_name));
 
 			/*
 			 * Do all the site but the one of the client

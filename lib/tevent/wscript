@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 APPNAME = 'tevent'
-VERSION = '0.11.0'
+VERSION = '0.15.0'
 
 import sys, os
 
@@ -51,7 +51,7 @@ def configure(conf):
                 conf.CHECK_BUNDLED_SYSTEM_PYTHON('pytevent', 'tevent', minversion=VERSION):
                 conf.define('USING_SYSTEM_PYTEVENT', 1)
 
-    if conf.CHECK_FUNCS('epoll_create', headers='sys/epoll.h'):
+    if conf.CHECK_FUNCS('epoll_create1', headers='sys/epoll.h'):
         conf.DEFINE('HAVE_EPOLL', 1)
 
     tevent_num_signals = 64
@@ -93,9 +93,6 @@ def build(bld):
     if bld.CONFIG_SET('HAVE_EPOLL'):
         SRC += ' tevent_epoll.c'
 
-    if bld.CONFIG_SET('HAVE_SOLARIS_PORTS'):
-        SRC += ' tevent_port.c'
-
     if bld.env.standalone_tevent:
         bld.env.PKGCONFIGDIR = '${LIBDIR}/pkgconfig'
         private_library = False
@@ -113,7 +110,7 @@ def build(bld):
                           enabled= not bld.CONFIG_SET('USING_SYSTEM_TEVENT'),
                           includes='.',
                           abi_directory='ABI',
-                          abi_match='tevent_* _tevent_*',
+                          abi_match='tevent_* _tevent_* __tevent_*',
                           vnum=VERSION,
                           public_headers=('' if private_library else 'tevent.h'),
                           public_headers_install=not private_library,

@@ -2,7 +2,7 @@
 # event strict to manage vsftpd in a cluster environment
 
 [ -n "$CTDB_BASE" ] || \
-    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
+	CTDB_BASE=$(d=$(dirname "$0") && cd -P "$d" && dirname "$PWD")
 
 . "${CTDB_BASE}/functions"
 
@@ -10,7 +10,9 @@ service_name="vsftpd"
 
 service_reconfigure ()
 {
-    service $service_name restart
+	# shellcheck disable=SC2317
+	# Called indirectly via ctdb_service_reconfigure()
+	service "$service_name" restart
 }
 
 load_script_options

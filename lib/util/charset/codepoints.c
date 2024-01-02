@@ -16441,9 +16441,6 @@ void smb_init_locale(void)
 **/
 _PUBLIC_ codepoint_t toupper_m(codepoint_t val)
 {
-	if (val < 128) {
-		return toupper(val);
-	}
 	if (val >= ARRAY_SIZE(upcase_table)) {
 		return val;
 	}
@@ -16455,9 +16452,6 @@ _PUBLIC_ codepoint_t toupper_m(codepoint_t val)
 **/
 _PUBLIC_ codepoint_t tolower_m(codepoint_t val)
 {
-	if (val < 128) {
-		return tolower(val);
-	}
 	if (val >= ARRAY_SIZE(lowcase_table)) {
 		return val;
 	}
@@ -16670,7 +16664,7 @@ smb_iconv_t get_conv_handle(struct smb_iconv_handle *ic,
 /**
  * Return the unicode codepoint for the next character in the input
  * string in the given src_charset.
- * The unicode codepoint (codepoint_t) is an unsinged 32 bit value.
+ * The unicode codepoint (codepoint_t) is an unsigned 32 bit value.
  *
  * Also return the number of bytes consumed (which tells the caller
  * how many bytes to skip to get to the next src_charset-character).

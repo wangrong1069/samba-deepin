@@ -1,0 +1,32 @@
+#! /bin/sh
+# Check if the given service (smb|nmb|winbind|samba)
+# should be run according to the settings in smb.conf
+
+[ -f /etc/samba/smb.conf ] || exit 1
+
+server_role=$(testparm -s --parameter-name="server role" 2>/dev/null)
+[ "active directory domain controller" = "$server_role" ] \
+  && addc=1 || addc=0
+
+case "$1" in
+    ( smb | smbd )
+	exit $addc
+	;;
+    ( winbind | winbindd )
+	exit $addc
+	;;
+    ( nmb | nmbd )
+	[ "$addc" = 1 ] && exit 1
+	disable_netbios=$(testparm -s --parameter-name="disable netbios" 2>/dev/null)
+	[ Yes = "$disable_netbios" ] && exit 1 || exit 0
+	;;
+    ( samba | samba-ad-dc )
+	# source4/samba/server.c checks for other parameters too, even if !AD-DC
+	# Should we support these?
+	exit $((!$addc))
+	;;
+    ( * )
+	echo "Wrong usage: should be smb|nmb|winbind|samba" >&2
+	exit 255
+	;;
+esac

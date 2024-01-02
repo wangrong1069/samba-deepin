@@ -22,6 +22,7 @@ import os
 import time
 import ldb
 from samba.tests.samba_tool.base import SambaToolCmdTest
+from samba.tests import env_loadparm
 import random
 
 
@@ -69,11 +70,37 @@ class NtACLCmdSysvolTestCase(SambaToolCmdTest):
         self.assertEqual(err, "", "Shouldn't be any error messages")
         self.assertEqual(out, "", "Shouldn't be any output messages")
 
+    def test_with_missing_files(self):
+        lp = env_loadparm()
+        sysvol = lp.get('path', 'sysvol')
+        realm = lp.get('realm').lower()
+
+        src = os.path.join(sysvol, realm, 'Policies')
+        dest = os.path.join(sysvol, realm, 'Policies-NOT-IN-THE-EXPECTED-PLACE')
+        try:
+            os.rename(src, dest)
+
+            for args in (["sysvolreset", "--use-s3fs"],
+                         ["sysvolreset", "--use-ntvfs"],
+                         ["sysvolreset"],
+                         ["sysvolcheck"]
+            ):
+
+                (result, out, err) = self.runsubcmd("ntacl", *args)
+                self.assertCmdFail(result, f"succeeded with {args} with missing dir")
+                self.assertNotIn("uncaught exception", err,
+                                 "Shouldn't be uncaught exception")
+                self.assertNotRegex(err, '^\s*File [^,]+, line \d+, in',
+                                    "Shouldn't be lines of traceback")
+                self.assertEqual(out, "", "Shouldn't be any output messages")
+        finally:
+            os.rename(dest, src)
+
 
 class NtACLCmdGetSetTestCase(SambaToolCmdTest):
     """Tests for samba-tool ntacl get/set subcommands"""
 
-    acl = "O:DAG:DUD:P(A;OICI;0x001f01ff;;;DA)(A;OICI;0x001f01ff;;;EA)(A;OICIIO;0x001f01ff;;;CO)(A;OICI;0x001f01ff;;;DA)(A;OICI;0x001f01ff;;;SY)(A;OICI;0x001200a9;;;AU)(A;OICI;0x001200a9;;;ED)S:AI(OU;CIIDSA;WP;f30e3bbe-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)(OU;CIIDSA;WP;f30e3bbf-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)"
+    acl = "O:DAG:DUD:P(A;OICI;FA;;;DA)(A;OICI;FA;;;EA)(A;OICIIO;FA;;;CO)(A;OICI;FA;;;DA)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;AU)(A;OICI;0x1200a9;;;ED)S:AI(OU;CIIDSA;WP;f30e3bbe-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)(OU;CIIDSA;WP;f30e3bbf-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)"
 
     def test_ntvfs(self):
         path = os.environ['SELFTEST_PREFIX']
@@ -136,9 +163,9 @@ class NtACLCmdGetSetTestCase(SambaToolCmdTest):
 
 class NtACLCmdChangedomsidTestCase(SambaToolCmdTest):
     """Tests for samba-tool ntacl changedomsid subcommand"""
-
+    maxDiff = 10000
     acl = "O:DAG:DUD:P(A;OICI;0x001f01ff;;;DA)(A;OICI;0x001f01ff;;;EA)(A;OICIIO;0x001f01ff;;;CO)(A;OICI;0x001f01ff;;;DA)(A;OICI;0x001f01ff;;;SY)(A;OICI;0x001200a9;;;AU)(A;OICI;0x001200a9;;;ED)S:AI(OU;CIIDSA;WP;f30e3bbe-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)(OU;CIIDSA;WP;f30e3bbf-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)"
-    new_acl="O:S-1-5-21-2212615479-2695158682-2101375468-512G:S-1-5-21-2212615479-2695158682-2101375468-513D:P(A;OICI;0x001f01ff;;;S-1-5-21-2212615479-2695158682-2101375468-512)(A;OICI;0x001f01ff;;;S-1-5-21-2212615479-2695158682-2101375468-519)(A;OICIIO;0x001f01ff;;;CO)(A;OICI;0x001f01ff;;;S-1-5-21-2212615479-2695158682-2101375468-512)(A;OICI;0x001f01ff;;;SY)(A;OICI;0x001200a9;;;AU)(A;OICI;0x001200a9;;;ED)S:AI(OU;CIIDSA;WP;f30e3bbe-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)(OU;CIIDSA;WP;f30e3bbf-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)"
+    new_acl="O:S-1-5-21-2212615479-2695158682-2101375468-512G:S-1-5-21-2212615479-2695158682-2101375468-513D:P(A;OICI;FA;;;S-1-5-21-2212615479-2695158682-2101375468-512)(A;OICI;FA;;;S-1-5-21-2212615479-2695158682-2101375468-519)(A;OICIIO;FA;;;CO)(A;OICI;FA;;;S-1-5-21-2212615479-2695158682-2101375468-512)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;AU)(A;OICI;0x1200a9;;;ED)S:AI(OU;CIIDSA;WP;f30e3bbe-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)(OU;CIIDSA;WP;f30e3bbf-9ff0-11d1-b603-0000f80367c1;bf967aa5-0de6-11d0-a285-00aa003049e2;WD)"
     domain_sid=os.environ['DOMSID']
     new_domain_sid="S-1-5-21-2212615479-2695158682-2101375468"
 

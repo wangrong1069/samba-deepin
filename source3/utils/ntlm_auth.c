@@ -38,7 +38,6 @@
 #include "smb_krb5.h"
 #include "lib/util/tiniparser.h"
 #include "librpc/gen_ndr/krb5pac.h"
-#include "../lib/util/asn1.h"
 #include "auth/common_auth.h"
 #include "source3/include/auth.h"
 #include "source3/auth/proto.h"
@@ -1238,7 +1237,7 @@ static struct auth4_context *make_auth4_context_ntlm_auth(TALLOC_CTX *mem_ctx, b
 {
 	struct auth4_context *auth4_context = talloc_zero(mem_ctx, struct auth4_context);
 	if (auth4_context == NULL) {
-		DEBUG(10, ("failed to allocate auth4_context failed\n"));
+		DEBUG(10, ("failed to allocate auth4_context\n"));
 		return NULL;
 	}
 	auth4_context->generate_session_info = ntlm_auth_generate_session_info;
@@ -2592,7 +2591,7 @@ enum {
 			.argInfo    = POPT_ARG_NONE,
 			.arg        = &request_lm_key,
 			.val        = OPT_LM_KEY,
-			.descrip    = "Retrieve LM session key"
+			.descrip    = "Retrieve LM session key (or, with --diagnostics, expect LM support)"
 		},
 		{
 			.longName   = "request-nt-key",
@@ -2821,7 +2820,7 @@ enum {
 	}
 
 	if (diagnostics) {
-		if (!diagnose_ntlm_auth()) {
+		if (!diagnose_ntlm_auth(request_lm_key)) {
 			poptFreeContext(pc);
 			return 1;
 		}

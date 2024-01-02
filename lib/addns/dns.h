@@ -197,7 +197,7 @@ struct dns_request {
 	struct dns_question **questions;
 	struct dns_rrec **answers;
 	struct dns_rrec **auths;
-	struct dns_rrec **additionals;
+	struct dns_rrec **additional;
 };
 
 /*
@@ -216,7 +216,7 @@ struct dns_update_request {
 	struct dns_zone **zones;
 	struct dns_rrec **preqs;
 	struct dns_rrec **updates;
-	struct dns_rrec **additionals;
+	struct dns_rrec **additional;
 };
 
 struct dns_connection {
@@ -285,13 +285,12 @@ DNS_ERROR dns_create_tsig_record(TALLOC_CTX *mem_ctx, const char *keyname,
 				 uint16_t mac_length, const uint8_t *mac,
 				 uint16_t original_id, uint16_t error,
 				 struct dns_rrec **prec);
-DNS_ERROR dns_add_rrec(TALLOC_CTX *mem_ctx, struct dns_rrec *rec,
-		       uint16_t *num_records, struct dns_rrec ***records);
 DNS_ERROR dns_create_update_request(TALLOC_CTX *mem_ctx,
 				    const char *domainname,
 				    const char *hostname,
 				    const struct sockaddr_storage *ip_addr,
 				    size_t num_adds,
+				    uint32_t ttl,
 				    struct dns_update_request **preq);
 
 /* from dnssock.c */

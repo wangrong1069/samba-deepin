@@ -24,10 +24,14 @@
 #ifndef _LIBCLI_SECURITY_SECURITY_TOKEN_H_
 #define _LIBCLI_SECURITY_SECURITY_TOKEN_H_
 
+#include "replace.h"
+#include "lib/util/data_blob.h"
 #include "librpc/gen_ndr/security.h"
 
 #define PRIMARY_USER_SID_INDEX 0
 #define PRIMARY_GROUP_SID_INDEX 1
+#define PRIMARY_SIDS_COUNT 2
+#define REMAINING_SIDS_INDEX 2
 
 /*
   return a blank security token
@@ -46,6 +50,15 @@ bool security_token_is_system(const struct security_token *token);
 bool security_token_is_anonymous(const struct security_token *token);
 
 bool security_token_has_sid(const struct security_token *token, const struct dom_sid *sid);
+
+/*
+ * Return any of the domain sids found in the token matching "domain"
+ * in _domain_sid, makes most sense if you just found one.
+ */
+size_t security_token_count_flag_sids(const struct security_token *token,
+				      const struct dom_sid *prefix_sid,
+				      size_t num_flags,
+				      const struct dom_sid **_flag_sid);
 
 bool security_token_has_builtin_guests(const struct security_token *token);
 

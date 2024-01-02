@@ -216,7 +216,7 @@ state for this function. The tstream_readv_pdu engine will ask
 the next_vector function for the next iovec vector to be used.
 There is a tstream_readv_send/recv pair for each vector returned
 by the next_vector function. If the next_vector function detects
-it received a full pdu, it returns an empty vector. The the callback
+it received a full pdu, it returns an empty vector. The callback
 of the tevent_req (returned by tstream_readv_pdu_send()) is triggered.
 Note: the buffer allocation is completely up to the next_vector function
 and its private state.
@@ -246,7 +246,7 @@ abstracted socket.
 (Remember at the low level there is always only one IO in a specific
  direction allowed, only one tdgram_sendto_send() at a time).
 
-Some helpers that use 'tevent_queue' are avilable to simplify handling
+Some helpers that use 'tevent_queue' are available to simplify handling
 multiple IO requests. The functions just get a 'queue' argument and
 internally serialize all operations.
 
@@ -468,7 +468,7 @@ Virtual Sockets
 ===============
 
 The abstracted layout of tdgram_context and tstream_context
-allow implementations arround virtual sockets for encrypted tunnels
+allow implementations around virtual sockets for encrypted tunnels
 (like TLS, SASL or GSSAPI) or named pipes over smb.
 
 Named Pipe Auth (NPA) Sockets

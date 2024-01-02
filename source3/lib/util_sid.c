@@ -129,9 +129,6 @@ NTSTATUS sid_array_from_info3(TALLOC_CTX *mem_ctx,
 
 	for (i = 0; i < info3->base.groups.count; i++) {
 		/* Don't add the primary group sid twice. */
-		if (info3->base.primary_gid == info3->base.groups.rids[i].rid) {
-			continue;
-		}
 		if (!sid_compose(&sid, info3->base.domain_sid,
 				 info3->base.groups.rids[i].rid)) {
 			DEBUG(3, ("could not compose SID from additional group "
@@ -172,4 +169,38 @@ NTSTATUS sid_array_from_info3(TALLOC_CTX *mem_ctx,
 	*num_user_sids = num_sids;
 
 	return NT_STATUS_OK;
+}
+
+bool security_token_find_npa_flags(const struct security_token *token,
+				   uint32_t *_flags)
+{
+	const struct dom_sid *npa_flags_sid = NULL;
+	size_t num_npa_sids;
+
+	num_npa_sids =
+		security_token_count_flag_sids(token,
+					       &global_sid_Samba_NPA_Flags,
+					       1,
+					       &npa_flags_sid);
+	if (num_npa_sids != 1) {
+		return false;
+	}
+
+	sid_peek_rid(npa_flags_sid, _flags);
+	return true;
+}
+
+void security_token_del_npa_flags(struct security_token *token)
+{
+	const struct dom_sid *npa_flags_sid = NULL;
+	size_t num_npa_sids;
+
+	num_npa_sids =
+		security_token_count_flag_sids(token,
+					       &global_sid_Samba_NPA_Flags,
+					       1,
+					       &npa_flags_sid);
+	SMB_ASSERT(num_npa_sids == 1);
+
+	del_sid_from_array(npa_flags_sid, &token->sids, &token->num_sids);
 }

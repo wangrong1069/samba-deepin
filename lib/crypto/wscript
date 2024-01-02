@@ -1,6 +1,44 @@
 #!/usr/bin/env python
+from waflib import Errors, Logs
 
-def options(opt):
-    opt.add_option('--accel-aes',
-        help=("Should we use accelerated AES crypto functions. Options are intelaesni|none."),
-        action="store", dest='accel_aes', default="none")
+
+def build(bld):
+    extra_deps = ""
+
+    bld.SAMBA_SUBSYSTEM("GNUTLS_HELPERS",
+                        source='''
+                        gnutls_error.c
+                        gnutls_aead_aes_256_cbc_hmac_sha512.c
+                        gnutls_arcfour_confounded_md5.c
+                        gnutls_weak_crypto.c
+                        ''',
+                        deps="gnutls samba-errors")
+
+    bld.SAMBA_SUBSYSTEM('LIBCRYPTO',
+                        source='''
+                        md4.c
+                        ''',
+                        deps='''
+                        talloc
+                        ''')
+
+    bld.SAMBA_SUBSYSTEM('TORTURE_LIBCRYPTO',
+                        source='md4test.c',
+                        autoproto='test_proto.h',
+                        deps='''
+                        LIBCRYPTO
+                        ''')
+
+    bld.SAMBA_PYTHON('python_crypto',
+                     source='py_crypto.c',
+                     deps='gnutls talloc LIBCLI_AUTH',
+                     realname='samba/crypto.so')
+
+    bld.SAMBA_BINARY('test_gnutls_aead_aes_256_cbc_hmac_sha512',
+                     source='''
+                            gnutls_error.c
+                            tests/test_gnutls_aead_aes_256_cbc_hmac_sha512.c
+                            ''',
+                     deps='cmocka gnutls samba-util samba-errors',
+                     local_include=False,
+                     for_selftest=True)

@@ -513,7 +513,7 @@ static NTSTATUS torture_delete_fn(struct file_info *finfo,
 					  FILE_ATTRIBUTE_SYSTEM,
 				  torture_delete_fn,
 				  cli);
-		if (NT_STATUS_IS_OK(status)) {
+		if (!NT_STATUS_IS_OK(status)) {
 			printf("torture_delete_fn: cli_list "
 				"of %s failed (%s)\n",
 				subdirname,
@@ -1435,6 +1435,7 @@ static bool run_tcon_test(int dummy)
 	uint16_t fnum1;
 	uint32_t cnum1, cnum2, cnum3;
 	struct smbXcli_tcon *orig_tcon = NULL;
+	char *orig_share = NULL;
 	uint16_t vuid1, vuid2;
 	char buf[4];
 	bool ret = True;
@@ -1466,16 +1467,13 @@ static bool run_tcon_test(int dummy)
 		return False;
 	}
 
-	orig_tcon = cli_state_save_tcon(cli);
-	if (orig_tcon == NULL) {
-		return false;
-	}
+	cli_state_save_tcon_share(cli, &orig_tcon, &orig_share);
 
 	status = cli_tree_connect_creds(cli, share, "?????", torture_creds);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("%s refused 2nd tree connect (%s)\n", host,
 		       nt_errstr(status));
-		cli_state_restore_tcon(cli, orig_tcon);
+		cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 		cli_shutdown(cli);
 		return False;
 	}
@@ -1528,7 +1526,7 @@ static bool run_tcon_test(int dummy)
 	status = cli_close(cli, fnum1);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("close failed (%s)\n", nt_errstr(status));
-		cli_state_restore_tcon(cli, orig_tcon);
+		cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 		cli_shutdown(cli);
 		return False;
 	}
@@ -1538,12 +1536,12 @@ static bool run_tcon_test(int dummy)
 	status = cli_tdis(cli);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("secondary tdis failed (%s)\n", nt_errstr(status));
-		cli_state_restore_tcon(cli, orig_tcon);
+		cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 		cli_shutdown(cli);
 		return False;
 	}
 
-	cli_state_restore_tcon(cli, orig_tcon);
+	cli_state_restore_tcon_share(cli, orig_tcon, orig_share);
 
 	cli_state_set_tid(cli, cnum1);
 
@@ -3953,8 +3951,15 @@ static bool run_negprot_nowait(int dummy)
 	for (i=0;i<50000;i++) {
 		struct tevent_req *req;
 
-		req = smbXcli_negprot_send(ev, ev, cli->conn, cli->timeout,
-					   PROTOCOL_CORE, PROTOCOL_NT1, 0);
+		req = smbXcli_negprot_send(
+			ev,
+			ev,
+			cli->conn,
+			cli->timeout,
+			PROTOCOL_CORE,
+			PROTOCOL_NT1,
+			0,
+			NULL);
 		if (req == NULL) {
 			TALLOC_FREE(ev);
 			return false;
@@ -5841,7 +5846,7 @@ static bool run_deletetest(int dummy)
 
   fail:
 	/* FIXME: This will crash if we aborted before cli2 got
-	 * intialized, because these functions don't handle
+	 * initialized, because these functions don't handle
 	 * uninitialized connections. */
 
 	if (fnum1 != (uint16_t)-1) cli_close(cli1, fnum1);
@@ -7758,6 +7763,7 @@ static bool run_simple_posix_open_test(int dummy)
 	size_t nread;
 	const char *fname_windows = "windows_file";
 	uint16_t fnum2 = (uint16_t)-1;
+	bool ok;
 
 	printf("Starting simple POSIX open test\n");
 
@@ -8026,18 +8032,19 @@ static bool run_simple_posix_open_test(int dummy)
 	if (NT_STATUS_IS_OK(status)) {
 		printf("POSIX open of %s succeeded (should have failed)\n", sname);
 		goto out;
-	} else {
-		if (!check_both_error(__LINE__, status, ERRDOS, ERRbadpath,
-				NT_STATUS_OBJECT_NAME_NOT_FOUND)) {
-			printf("POSIX open of %s should have failed "
-				"with NT_STATUS_OBJECT_NAME_NOT_FOUND, "
-				"failed with %s instead.\n",
-				sname, nt_errstr(status));
-			goto out;
-		}
+	}
+	ok = check_both_error(
+		__LINE__, status, ERRDOS, ERRbadpath,
+		NT_STATUS_OBJECT_NAME_NOT_FOUND);
+	if (!ok) {
+		printf("POSIX open of %s should have failed "
+		       "with NT_STATUS_OBJECT_NAME_NOT_FOUND, "
+		       "failed with %s instead.\n",
+		       sname, nt_errstr(status));
+		goto out;
 	}
 
-	status = cli_posix_readlink(cli1, sname, talloc_tos(), &target);
+	status = cli_readlink(cli1, sname, talloc_tos(), &target, NULL, NULL);
 	if (!NT_STATUS_IS_OK(status)) {
 		printf("POSIX readlink on %s failed (%s)\n", sname, nt_errstr(status));
 		goto out;
@@ -9901,7 +9908,7 @@ bool torture_ioctl_test(int dummy)
 
 
 /*
-  tries varients of chkpath
+  tries variants of chkpath
  */
 bool torture_chkpath_test(int dummy)
 {
@@ -10066,7 +10073,7 @@ static bool run_eatest(int dummy)
 	}
 
 	/* Setting EA's to zero length deletes them. Test this */
-	printf("Now deleting all EA's - case indepenent....\n");
+	printf("Now deleting all EA's - case independent....\n");
 
 #if 1
 	cli_set_ea_path(cli, fname, "", "", 0);
@@ -10169,7 +10176,7 @@ static bool run_dirtest1(int dummy)
 		correct = False;
 
 	/* Ensure if we have the "must have" bits we only see the
-	 * relevent entries.
+	 * relevant entries.
 	 */
 	num_seen = 0;
 	cli_list_old(cli, "\\LISTDIR\\*", (FILE_ATTRIBUTE_DIRECTORY<<8)|FILE_ATTRIBUTE_DIRECTORY, list_fn, &num_seen);
@@ -11847,7 +11854,7 @@ static bool run_uid_regression_test(int dummy)
 	 * second tdis call with invalid vuid.
 	 *
 	 * This is a test-only hack. Real client code
-	 * uses cli_state_save_tcon()/cli_state_restore_tcon().
+	 * uses cli_state_save_tcon_share()/cli_state_restore_tcon_share().
 	 */
 	tcon_copy = smbXcli_tcon_copy(cli, cli->smb1.tcon);
 	if (tcon_copy == NULL) {
@@ -14638,6 +14645,395 @@ static bool run_local_canonicalize_path(int dummy)
 	}
 	return true;
 }
+struct session_setup_nt1_truncated_state {
+	uint16_t vwv[13];
+	uint8_t bytes[20];
+};
+
+static void smb1_session_setup_nt1_truncated_done(struct tevent_req *subreq);
+
+static struct tevent_req *smb1_session_setup_nt1_truncated_send(
+		TALLOC_CTX *mem_ctx,
+		struct tevent_context *ev,
+		struct smbXcli_conn *conn)
+{
+	uint16_t *vwv = NULL;
+	uint8_t *bytes = NULL;
+	const char *pass = "12345678";
+	const char *uname = "z";
+	struct session_setup_nt1_truncated_state *state = NULL;
+	struct tevent_req *req = NULL;
+	struct tevent_req *subreq = NULL;
+
+	req = tevent_req_create(mem_ctx,
+				&state,
+				struct session_setup_nt1_truncated_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	vwv = &state->vwv[0];
+	bytes = &state->bytes[0];
+
+	SCVAL(vwv+0,  0, 0xff);
+	SCVAL(vwv+0,  1, 0);
+	SSVAL(vwv+1,  0, 0);
+	SSVAL(vwv+2,  0, 8192);
+	SSVAL(vwv+3,  0, 2);
+	SSVAL(vwv+4,  0, 1);
+	SIVAL(vwv+5,  0, 0);
+	SSVAL(vwv+7,  0, strlen(pass)); /* OEMPasswordLen */
+	SSVAL(vwv+8,  0, 0); /* UnicodePasswordLen */
+	SSVAL(vwv+9,  0, 0); /* reserved */
+	SSVAL(vwv+10, 0, 0); /* reserved */
+	SIVAL(vwv+11, 0, CAP_STATUS32);
+
+	memcpy(bytes, pass, strlen(pass));
+	bytes += strlen(pass);
+	memcpy(bytes, uname, strlen(uname)+1);
+
+	subreq = smb1cli_req_send(state, ev, conn,
+				  SMBsesssetupX,
+				  0, /*  additional_flags */
+				  0, /*  clear_flags */
+				  0, /*  additional_flags2 */
+				  0, /*  clear_flags2 */
+				  10000, /* timeout_msec */
+				  getpid(),
+				  NULL, /* tcon */
+				  NULL, /* session */
+				  13, /* wct */
+				  state->vwv,
+				  strlen(pass), /* Truncate length at password. */
+				  state->bytes);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq,
+				smb1_session_setup_nt1_truncated_done,
+				req);
+	return req;
+}
+
+static void smb1_session_setup_nt1_truncated_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq,
+		struct tevent_req);
+	struct session_setup_nt1_truncated_state *state =
+		tevent_req_data(req,
+		struct session_setup_nt1_truncated_state);
+	NTSTATUS status;
+	struct smb1cli_req_expected_response expected[] = {
+	{
+		.status = NT_STATUS_OK,
+		.wct    = 3,
+	},
+	};
+
+	status = smb1cli_req_recv(subreq, state,
+				  NULL,
+				  NULL,
+				  NULL,
+				  NULL,
+				  NULL, /* pvwv_offset */
+				  NULL,
+				  NULL,
+				  NULL, /* pbytes_offset */
+				  NULL,
+				  expected, ARRAY_SIZE(expected));
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	tevent_req_done(req);
+}
+
+static NTSTATUS smb1_session_setup_nt1_truncated_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_ntstatus(req);
+}
+
+static bool run_smb1_truncated_sesssetup(int dummy)
+{
+	struct tevent_context *ev;
+	struct tevent_req *req;
+	struct smbXcli_conn *conn;
+	struct sockaddr_storage ss;
+	NTSTATUS status;
+	int fd;
+	bool ok;
+
+	printf("Starting send truncated SMB1 sesssetup.\n");
+
+	ok = resolve_name(host, &ss, 0x20, true);
+	if (!ok) {
+		d_fprintf(stderr, "Could not resolve name %s\n", host);
+		return false;
+	}
+
+	status = open_socket_out(&ss, 445, 10000, &fd);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "open_socket_out failed: %s\n",
+			  nt_errstr(status));
+		return false;
+	}
+
+	conn = smbXcli_conn_create(talloc_tos(), fd, host, SMB_SIGNING_OFF, 0,
+				   NULL, 0, NULL);
+	if (conn == NULL) {
+		d_fprintf(stderr, "smbXcli_conn_create failed\n");
+		return false;
+	}
+
+	status = smbXcli_negprot(conn, 0, PROTOCOL_NT1, PROTOCOL_NT1);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "smbXcli_negprot failed!\n");
+		return false;
+	}
+
+	ev = samba_tevent_context_init(talloc_tos());
+	if (ev == NULL) {
+		d_fprintf(stderr, "samba_tevent_context_init failed\n");
+		return false;
+	}
+
+	req = smb1_session_setup_nt1_truncated_send(ev, ev, conn);
+	if (req == NULL) {
+		d_fprintf(stderr, "smb1_session_setup_nt1_truncated_send failed\n");
+		return false;
+	}
+
+	ok = tevent_req_poll_ntstatus(req, ev, &status);
+	if (!ok) {
+		d_fprintf(stderr, "tevent_req_poll failed with status %s\n",
+			nt_errstr(status));
+		return false;
+	}
+
+	status = smb1_session_setup_nt1_truncated_recv(req);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "smb1_session_setup_nt1_truncated_recv returned "
+			  "%s, expected NT_STATUS_OK\n",
+			  nt_errstr(status));
+		return false;
+	}
+
+	TALLOC_FREE(conn);
+	return true;
+}
+
+struct smb1_negotiate_exit_state {
+	int dummy;
+};
+
+static void smb1_negotiate_exit_done(struct tevent_req *subreq);
+
+static struct tevent_req *smb1_negotiate_exit_send(
+		TALLOC_CTX *mem_ctx,
+		struct tevent_context *ev,
+		struct smbXcli_conn *conn)
+{
+	struct smb1_negotiate_exit_state *state = NULL;
+	struct tevent_req *req = NULL;
+	struct tevent_req *subreq = NULL;
+
+	req = tevent_req_create(mem_ctx,
+				&state,
+				struct smb1_negotiate_exit_state);
+	if (req == NULL) {
+		return NULL;
+	}
+	subreq = smb1cli_req_send(state, ev, conn,
+				  SMBexit,
+				  0, /*  additional_flags */
+				  0, /*  clear_flags */
+				  0, /*  additional_flags2 */
+				  0, /*  clear_flags2 */
+				  10000, /* timeout_msec */
+				  getpid(),
+				  NULL, /* tcon */
+				  NULL, /* session */
+				  0, /* wct */
+				  NULL,
+				  0,
+				  NULL);
+	if (tevent_req_nomem(subreq, req)) {
+		return tevent_req_post(req, ev);
+	}
+	tevent_req_set_callback(subreq,
+				smb1_negotiate_exit_done,
+				req);
+	return req;
+}
+
+static void smb1_negotiate_exit_done(struct tevent_req *subreq)
+{
+	struct tevent_req *req =
+		tevent_req_callback_data(subreq,
+		struct tevent_req);
+	struct smb1_negotiate_exit_state *state =
+		tevent_req_data(req,
+		struct smb1_negotiate_exit_state);
+	NTSTATUS status;
+	struct smb1cli_req_expected_response expected[] = {
+	{
+		.status = NT_STATUS_OK,
+		.wct    = 0,
+	},
+	};
+
+	status = smb1cli_req_recv(subreq, state,
+				  NULL,
+				  NULL,
+				  NULL,
+				  NULL,
+				  NULL, /* pvwv_offset */
+				  NULL,
+				  NULL,
+				  NULL, /* pbytes_offset */
+				  NULL,
+				  expected, ARRAY_SIZE(expected));
+	TALLOC_FREE(subreq);
+	if (tevent_req_nterror(req, status)) {
+		return;
+	}
+	tevent_req_done(req);
+}
+
+static NTSTATUS smb1_negotiate_exit_recv(struct tevent_req *req)
+{
+	return tevent_req_simple_recv_ntstatus(req);
+}
+
+static bool do_smb1_exit(TALLOC_CTX *mem_ctx,
+			 struct tevent_context *ev,
+			 struct smbXcli_conn *conn)
+{
+	struct tevent_req *req;
+	bool ok;
+	NTSTATUS status;
+	NTSTATUS expected_status = NT_STATUS_DOS(ERRSRV, ERRinvnid);;
+
+	req = smb1_negotiate_exit_send(ev, ev, conn);
+	if (req == NULL) {
+		d_fprintf(stderr, "smb1_negotiate_exit_send failed\n");
+		return false;
+	}
+
+	ok = tevent_req_poll_ntstatus(req, ev, &status);
+	if (!ok) {
+		d_fprintf(stderr, "tevent_req_poll failed with status %s\n",
+			nt_errstr(status));
+		return false;
+	}
+
+	status = smb1_negotiate_exit_recv(req);
+	if (!NT_STATUS_EQUAL(status, expected_status)) {
+		d_fprintf(stderr, "smb1_negotiate_exit_recv returned "
+			  "%s, expected ERRSRV, ERRinvnid\n",
+			  nt_errstr(status));
+		return false;
+	}
+	return true;
+}
+
+static bool run_smb1_negotiate_exit(int dummy)
+{
+	struct tevent_context *ev;
+	struct smbXcli_conn *conn;
+	struct sockaddr_storage ss;
+	NTSTATUS status;
+	int fd;
+	bool ok;
+
+	printf("Starting send SMB1 negotiate+exit.\n");
+
+	ok = resolve_name(host, &ss, 0x20, true);
+	if (!ok) {
+		d_fprintf(stderr, "Could not resolve name %s\n", host);
+		return false;
+	}
+
+	status = open_socket_out(&ss, 445, 10000, &fd);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "open_socket_out failed: %s\n",
+			  nt_errstr(status));
+		return false;
+	}
+
+	conn = smbXcli_conn_create(talloc_tos(), fd, host, SMB_SIGNING_OFF, 0,
+				   NULL, 0, NULL);
+	if (conn == NULL) {
+		d_fprintf(stderr, "smbXcli_conn_create failed\n");
+		return false;
+	}
+
+	status = smbXcli_negprot(conn, 0, PROTOCOL_NT1, PROTOCOL_NT1);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "smbXcli_negprot failed!\n");
+		return false;
+	}
+
+	ev = samba_tevent_context_init(talloc_tos());
+	if (ev == NULL) {
+		d_fprintf(stderr, "samba_tevent_context_init failed\n");
+		return false;
+	}
+
+	/*
+	 * Call do_smb1_exit twice to catch a server crash, the
+	 * server sends the first return code then crashes.
+	 */
+	ok = do_smb1_exit(ev, ev, conn);
+	if (!ok) {
+		d_fprintf(stderr, "do_smb1_exit (1) failed\n");
+		return false;
+	}
+	ok = do_smb1_exit(ev, ev, conn);
+	if (!ok) {
+		d_fprintf(stderr, "do_smb1_exit (2) failed\n");
+		return false;
+	}
+
+	TALLOC_FREE(conn);
+	return true;
+}
+
+static bool run_smb1_negotiate_tcon(int dummy)
+{
+	struct cli_state *cli = NULL;
+	uint16_t cnum = 0;
+	uint16_t max_xmit = 0;
+	NTSTATUS status;
+
+	printf("Starting send SMB1 negotiate+tcon.\n");
+	cli = open_nbt_connection();
+	if (cli == NULL) {
+		d_fprintf(stderr, "open_nbt_connection failed!\n");
+		return false;
+	}
+	smbXcli_conn_set_sockopt(cli->conn, sockops);
+
+	status = smbXcli_negprot(cli->conn, 0, PROTOCOL_NT1, PROTOCOL_NT1);
+	if (!NT_STATUS_IS_OK(status)) {
+		d_fprintf(stderr, "smbXcli_negprot failed %s!\n",
+			nt_errstr(status));
+		return false;
+	}
+        status = cli_raw_tcon(cli,
+			      share,
+			      "",
+			      "?????",
+			      &max_xmit,
+			      &cnum);
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
+		d_fprintf(stderr, "cli_raw_tcon failed - got %s "
+			"(should get NT_STATUS_ACCESS_DENIED)!\n",
+			nt_errstr(status));
+		return false;
+	}
+	return true;
+}
 
 static bool run_ign_bad_negprot(int dummy)
 {
@@ -14713,6 +15109,7 @@ static bool run_ign_bad_negprot(int dummy)
 
 	return true;
 }
+
 
 static double create_procs(bool (*fn)(int), bool *result)
 {
@@ -15331,6 +15728,10 @@ static struct {
 		.fn    = run_smb2_quota1,
 	},
 	{
+		.name  = "SMB2-INVALID-PIPENAME",
+		.fn    = run_smb2_invalid_pipename,
+	},
+	{
 		.name  = "SMB2-STREAM-ACL",
 		.fn    = run_smb2_stream_acl,
 	},
@@ -15349,6 +15750,54 @@ static struct {
 	{
 		.name  = "SMB2-DEL-ON-CLOSE-NONWRITE-DELETE-NO",
 		.fn    = run_delete_on_close_nonwrite_delete_no_test,
+	},
+	{
+		.name  = "SMB2-DFS-PATHS",
+		.fn    = run_smb2_dfs_paths,
+	},
+	{
+		.name  = "SMB2-NON-DFS-SHARE",
+		.fn    = run_smb2_non_dfs_share,
+	},
+	{
+		.name  = "SMB2-DFS-SHARE-NON-DFS-PATH",
+		.fn    = run_smb2_dfs_share_non_dfs_path,
+	},
+	{
+		.name  = "SMB2-DFS-FILENAME-LEADING-BACKSLASH",
+		.fn    = run_smb2_dfs_filename_leading_backslash,
+	},
+	{
+		.name  = "SMB2-PIPE-READ-ASYNC-DISCONNECT",
+		.fn    = run_smb2_pipe_read_async_disconnect,
+	},
+	{
+		.name  = "SMB1-TRUNCATED-SESSSETUP",
+		.fn    = run_smb1_truncated_sesssetup,
+	},
+	{
+		.name  = "SMB1-NEGOTIATE-EXIT",
+		.fn    = run_smb1_negotiate_exit,
+	},
+	{
+		.name  = "SMB1-NEGOTIATE-TCON",
+		.fn    = run_smb1_negotiate_tcon,
+	},
+	{
+		.name  = "SMB1-DFS-PATHS",
+		.fn    = run_smb1_dfs_paths,
+	},
+	{
+		.name  = "SMB1-DFS-SEARCH-PATHS",
+		.fn    = run_smb1_dfs_search_paths,
+	},
+	{
+		.name  = "SMB1-DFS-OPERATIONS",
+		.fn    = run_smb1_dfs_operations,
+	},
+	{
+		.name  = "SMB1-DFS-BADPATH",
+		.fn    = run_smb1_dfs_check_badpath,
 	},
 	{
 		.name  = "CLEANUP1",
@@ -15582,6 +16031,10 @@ static struct {
 		.name  = "hide-new-files-timeout",
 		.fn    = run_hidenewfiles,
 	},
+	{
+		.name  = "hide-new-files-timeout-showdirs",
+		.fn    = run_hidenewfiles_showdirs,
+	},
 #ifdef CLUSTER_SUPPORT
 	{
 		.name  = "ctdbd-conn1",
@@ -15591,6 +16044,14 @@ static struct {
 	{
 		.name  = "readdir-timestamp",
 		.fn    = run_readdir_timestamp,
+	},
+	{
+		.name  = "rpc-scale",
+		.fn    = run_rpc_scale,
+	},
+	{
+		.name  = "LOCAL-TDB-VALIDATE",
+		.fn    = run_tdb_validate,
 	},
 	{
 		.name = NULL,

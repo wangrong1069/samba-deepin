@@ -155,16 +155,16 @@ struct ldb_dn;
 #define LDB_FLAG_INTERNAL_MASK 0xFFFFFFF0
 
 /**
-  OID for logic AND comaprison.
+  OID for logic AND comparison.
 
-  This is the well known object ID for a logical AND comparitor.
+  This is the well known object ID for a logical AND comparator.
 */
 #define LDB_OID_COMPARATOR_AND  "1.2.840.113556.1.4.803"
 
 /**
   OID for logic OR comparison.
 
-  This is the well known object ID for a logical OR comparitor.
+  This is the well known object ID for a logical OR comparator.
 */
 #define LDB_OID_COMPARATOR_OR   "1.2.840.113556.1.4.804"
 
@@ -817,6 +817,11 @@ typedef int (*ldb_qsort_cmp_fn_t) (void *v1, void *v2, void *opaque);
 */
 #define LDB_EXTENDED_DYNAMIC_OID	"1.3.6.1.4.1.1466.101.119.1"
 
+/**
+   OID for RFC4532 "Who Am I" extended operation
+*/
+#define LDB_EXTENDED_WHOAMI_OID		"1.3.6.1.4.1.4203.1.11.3"
+
 struct ldb_sd_flags_control {
 	/*
 	 * request the owner	0x00000001
@@ -1185,8 +1190,8 @@ int ldb_modify_default_callback(struct ldb_request *req, struct ldb_reply *ares)
   \param attrs the search attributes for the query (pass NULL if none required)
   \param controls an array of controls
   \param context the callback function context
-  \param the callback function to handle the async replies
-  \param the parent request if any
+  \param callback the callback function to handle the async replies
+  \param parent the parent request if any
 
   \return result code (LDB_SUCCESS on success, or a failure code)
 */
@@ -1224,8 +1229,8 @@ int ldb_build_search_req_ex(struct ldb_request **ret_req,
   \param message contains the entry to be added
   \param controls an array of controls
   \param context the callback function context
-  \param the callback function to handle the async replies
-  \param the parent request if any
+  \param callback the callback function to handle the async replies
+  \param parent the parent request if any
 
   \return result code (LDB_SUCCESS on success, or a failure code)
 */
@@ -1248,8 +1253,8 @@ int ldb_build_add_req(struct ldb_request **ret_req,
   \param message contains the entry to be modified
   \param controls an array of controls
   \param context the callback function context
-  \param the callback function to handle the async replies
-  \param the parent request if any
+  \param callback the callback function to handle the async replies
+  \param parent the parent request if any
 
   \return result code (LDB_SUCCESS on success, or a failure code)
 */
@@ -1272,8 +1277,8 @@ int ldb_build_mod_req(struct ldb_request **ret_req,
   \param dn the DN to be deleted
   \param controls an array of controls
   \param context the callback function context
-  \param the callback function to handle the async replies
-  \param the parent request if any
+  \param callback the callback function to handle the async replies
+  \param parent the parent request if any
 
   \return result code (LDB_SUCCESS on success, or a failure code)
 */
@@ -1297,8 +1302,8 @@ int ldb_build_del_req(struct ldb_request **ret_req,
   \param newdn the new DN
   \param controls an array of controls
   \param context the callback function context
-  \param the callback function to handle the async replies
-  \param the parent request if any
+  \param callback the callback function to handle the async replies
+  \param parent the parent request if any
 
   \return result code (LDB_SUCCESS on success, or a failure code)
 */
@@ -1470,8 +1475,8 @@ int ldb_extended_default_callback(struct ldb_request *req, struct ldb_reply *are
   it needs to be NULL or a valid talloc pointer! talloc_get_type() will be used on it
   \param controls an array of controls
   \param context the callback function context
-  \param the callback function to handle the async replies
-  \param the parent request if any
+  \param callback the callback function to handle the async replies
+  \param parent the parent request if any
 
   \return result code (LDB_SUCCESS on success, or a failure code)
 */
@@ -1551,7 +1556,11 @@ const char *ldb_strerror(int ldb_err);
 void ldb_set_utf8_default(struct ldb_context *ldb);
 
 /**
-   Casefold a string
+   \brief Casefold a string
+
+   Note that the callback needs to be ASCII compatible. So first ASCII needs
+   to be handle before any UTF-8. This is needed to avoid issues with dottet
+   languages.
 
    \param ldb the ldb context
    \param mem_ctx the memory context to allocate the result string
@@ -1745,7 +1754,7 @@ char * ldb_ldif_write_string(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
 
    \return the string containing the LDIF, or NULL on error
 
-   \sa ldb_ldif_message_redacted_string for a safer version of this 
+   \sa ldb_ldif_message_redacted_string for a safer version of this
        function
 */
 char *ldb_ldif_message_string(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
@@ -1763,7 +1772,7 @@ char *ldb_ldif_message_string(struct ldb_context *ldb, TALLOC_CTX *mem_ctx,
    \return the string containing the LDIF, or NULL on error, but
            with secret attributes redacted
 
-   \note The secret attributes are specified in a 
+   \note The secret attributes are specified in a
          'const char * const *' within the LDB_SECRET_ATTRIBUTE_LIST
          opaque set on the ldb
 
@@ -1857,7 +1866,7 @@ struct ldb_dn *ldb_dn_new(TALLOC_CTX *mem_ctx, struct ldb_context *ldb, const ch
   \param mem_ctx TALLOC context to return resulting ldb_dn structure on
   \param new_fms The new DN as a format string (plus arguments)
 
-  \note The DN will not be parsed at this time.  Use ldb_dn_validate to tell if the DN is syntacticly correct
+  \note The DN will not be parsed at this time.  Use ldb_dn_validate to tell if the DN is syntactically correct
 */
 
 struct ldb_dn *ldb_dn_new_fmt(TALLOC_CTX *mem_ctx, struct ldb_context *ldb, const char *new_fmt, ...) PRINTF_ATTRIBUTE(3,4);
@@ -1949,7 +1958,7 @@ struct ldb_message *ldb_msg_new(TALLOC_CTX *mem_ctx);
 /**
    Find an element within an message
 */
-struct ldb_message_element *ldb_msg_find_element(const struct ldb_message *msg, 
+struct ldb_message_element *ldb_msg_find_element(const struct ldb_message *msg,
 						 const char *attr_name);
 
 /**
@@ -1970,7 +1979,7 @@ int ldb_val_equal_exact(const struct ldb_val *v1, const struct ldb_val *v2);
 
    \note This search is case sensitive
 */
-struct ldb_val *ldb_msg_find_val(const struct ldb_message_element *el, 
+struct ldb_val *ldb_msg_find_val(const struct ldb_message_element *el,
 				 struct ldb_val *val);
 
 /**
@@ -2186,7 +2195,9 @@ int ldb_set_debug(struct ldb_context *ldb,
 		  void *context);
 
 /**
-  this allows the user to set custom utf8 function for error reporting
+  this allows the user to set custom utf8 function for error reporting. make
+  sure it is able to handle ASCII first, so it prevents issues with dottet
+  languages.
 */
 void ldb_set_utf8_fns(struct ldb_context *ldb,
 		      void *context,
@@ -2296,7 +2307,9 @@ void ldb_qsort (void *const pbase, size_t total_elems, size_t size, void *opaque
 do { \
 	if (numel > 1) { \
 		ldb_qsort(base, numel, sizeof((base)[0]), discard_const(opaque), (ldb_qsort_cmp_fn_t)comparison); \
-		comparison(&((base)[0]), &((base)[1]), opaque);		\
+		if (0) { \
+			comparison(&((base)[0]), &((base)[1]), opaque); \
+		} \
 	} \
 } while (0)
 
@@ -2306,7 +2319,9 @@ do { \
 do { \
 	if (numel > 1) { \
 		qsort(base, numel, sizeof((base)[0]), (int (*)(const void *, const void *))comparison); \
-		comparison(&((base)[0]), &((base)[1])); \
+		if (0) { \
+			comparison(&((base)[0]), &((base)[1])); \
+		} \
 	} \
 } while (0)
 #endif
@@ -2333,7 +2348,7 @@ char* ldb_control_to_string(TALLOC_CTX *mem_ctx, const struct ldb_control *contr
 */
 struct ldb_control *ldb_parse_control_from_string(struct ldb_context *ldb, TALLOC_CTX *mem_ctx, const char *control_strings);
 /**
-   Convert an array of string represention of a control into an array of ldb_control structures
+   Convert an array of string representation of a control into an array of ldb_control structures
 
    \param ldb LDB context
    \param mem_ctx TALLOC context to return result on, and to allocate error_string on

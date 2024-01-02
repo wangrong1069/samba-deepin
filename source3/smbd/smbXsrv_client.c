@@ -39,6 +39,7 @@
 #include "lib/util/tevent_ntstatus.h"
 #include "lib/util/iov_buf.h"
 #include "lib/global_contexts.h"
+#include "source3/include/util_tdb.h"
 
 struct smbXsrv_client_table {
 	struct {
@@ -143,7 +144,7 @@ static struct db_record *smbXsrv_client_global_fetch_locked(
 		struct GUID_txt_buf buf;
 		DBG_DEBUG("Failed to lock guid [%s], key '%s'\n",
 			  GUID_buf_string(client_guid, &buf),
-			  hex_encode_talloc(talloc_tos(), key.dptr, key.dsize));
+			  tdb_data_dbg(key));
 	}
 
 	return rec;
@@ -190,7 +191,8 @@ static void smbXsrv_client_global_verify_record(struct db_record *db_rec,
 					bool *was_free,
 					TALLOC_CTX *mem_ctx,
 					const struct server_id *dead_server_id,
-					struct smbXsrv_client_global0 **_g)
+					struct smbXsrv_client_global0 **_g,
+					uint32_t *pseqnum)
 {
 	TDB_DATA key;
 	TDB_DATA val;
@@ -209,6 +211,9 @@ static void smbXsrv_client_global_verify_record(struct db_record *db_rec,
 	}
 	if (_g) {
 		*_g = NULL;
+	}
+	if (pseqnum) {
+		*pseqnum = 0;
 	}
 
 	key = dbwrap_record_get_key(db_rec);
@@ -230,7 +235,7 @@ static void smbXsrv_client_global_verify_record(struct db_record *db_rec,
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		NTSTATUS status = ndr_map_error2ntstatus(ndr_err);
 		DBG_WARNING("key '%s' ndr_pull_struct_blob - %s\n",
-			    hex_encode_talloc(frame, key.dptr, key.dsize),
+			    tdb_data_dbg(key),
 			    nt_errstr(status));
 		TALLOC_FREE(frame);
 		return;
@@ -243,7 +248,7 @@ static void smbXsrv_client_global_verify_record(struct db_record *db_rec,
 
 	if (global_blob.version != SMBXSRV_VERSION_0) {
 		DBG_ERR("key '%s' use unsupported version %u\n",
-			hex_encode_talloc(frame, key.dptr, key.dsize),
+			tdb_data_dbg(key),
 			global_blob.version);
 		NDR_PRINT_DEBUG(smbXsrv_client_globalB, &global_blob);
 		TALLOC_FREE(frame);
@@ -257,7 +262,7 @@ static void smbXsrv_client_global_verify_record(struct db_record *db_rec,
 		struct server_id_buf tmp;
 
 		DBG_NOTICE("key '%s' server_id %s is already dead.\n",
-			   hex_encode_talloc(frame, key.dptr, key.dsize),
+			   tdb_data_dbg(key),
 			   server_id_str_buf(global->server_id, &tmp));
 		if (DEBUGLVL(DBGLVL_NOTICE)) {
 			NDR_PRINT_DEBUG(smbXsrv_client_globalB, &global_blob);
@@ -273,7 +278,7 @@ static void smbXsrv_client_global_verify_record(struct db_record *db_rec,
 		struct server_id_buf tmp;
 
 		DBG_NOTICE("key '%s' server_id %s does not exist.\n",
-			   hex_encode_talloc(frame, key.dptr, key.dsize),
+			   tdb_data_dbg(key),
 			   server_id_str_buf(global->server_id, &tmp));
 		if (DEBUGLVL(DBGLVL_NOTICE)) {
 			NDR_PRINT_DEBUG(smbXsrv_client_globalB, &global_blob);
@@ -286,6 +291,9 @@ static void smbXsrv_client_global_verify_record(struct db_record *db_rec,
 
 	if (_g) {
 		*_g = talloc_move(mem_ctx, &global);
+	}
+	if (pseqnum) {
+		*pseqnum = global_blob.seqnum;
 	}
 	TALLOC_FREE(frame);
 }
@@ -447,7 +455,7 @@ static NTSTATUS smbXsrv_client_global_store(struct smbXsrv_client_global0 *globa
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
 		status = ndr_map_error2ntstatus(ndr_err);
 		DBG_WARNING("key '%s' ndr_push - %s\n",
-			hex_encode_talloc(global->db_rec, key.dptr, key.dsize),
+			tdb_data_dbg(key),
 			nt_errstr(status));
 		TALLOC_FREE(global->db_rec);
 		return status;
@@ -457,7 +465,7 @@ static NTSTATUS smbXsrv_client_global_store(struct smbXsrv_client_global0 *globa
 	status = dbwrap_record_store(global->db_rec, val, TDB_REPLACE);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("key '%s' store - %s\n",
-			hex_encode_talloc(global->db_rec, key.dptr, key.dsize),
+			tdb_data_dbg(key),
 			nt_errstr(status));
 		TALLOC_FREE(global->db_rec);
 		return status;
@@ -467,7 +475,7 @@ static NTSTATUS smbXsrv_client_global_store(struct smbXsrv_client_global0 *globa
 
 	if (DEBUGLVL(DBGLVL_DEBUG)) {
 		DBG_DEBUG("key '%s' stored\n",
-			hex_encode_talloc(global->db_rec, key.dptr, key.dsize));
+			  tdb_data_dbg(key));
 		NDR_PRINT_DEBUG(smbXsrv_client_globalB, &global_blob);
 	}
 
@@ -480,6 +488,9 @@ struct smb2srv_client_mc_negprot_state {
 	struct tevent_context *ev;
 	struct smbd_smb2_request *smb2req;
 	struct db_record *db_rec;
+	struct server_id sent_server_id;
+	uint64_t watch_instance;
+	uint32_t last_seqnum;
 	struct tevent_req *filter_subreq;
 };
 
@@ -490,7 +501,12 @@ static void smb2srv_client_mc_negprot_cleanup(struct tevent_req *req,
 		tevent_req_data(req,
 		struct smb2srv_client_mc_negprot_state);
 
-	TALLOC_FREE(state->db_rec);
+	if (state->db_rec != NULL) {
+		dbwrap_watched_watch_remove_instance(state->db_rec,
+						     state->watch_instance);
+		state->watch_instance = 0;
+		TALLOC_FREE(state->db_rec);
+	}
 }
 
 static void smb2srv_client_mc_negprot_next(struct tevent_req *req);
@@ -515,6 +531,8 @@ struct tevent_req *smb2srv_client_mc_negprot_send(TALLOC_CTX *mem_ctx,
 
 	tevent_req_set_cleanup_fn(req, smb2srv_client_mc_negprot_cleanup);
 
+	server_id_set_disconnected(&state->sent_server_id);
+
 	smb2srv_client_mc_negprot_next(req);
 
 	if (!tevent_req_is_in_progress(req)) {
@@ -537,9 +555,9 @@ static void smb2srv_client_mc_negprot_next(struct tevent_req *req)
 	bool is_free = false;
 	struct tevent_req *subreq = NULL;
 	NTSTATUS status;
+	uint32_t seqnum = 0;
 	struct server_id last_server_id = { .pid = 0, };
 
-	TALLOC_FREE(state->filter_subreq);
 	SMB_ASSERT(state->db_rec == NULL);
 	state->db_rec = smbXsrv_client_global_fetch_locked(table->global.db_ctx,
 							   &client_guid,
@@ -557,8 +575,13 @@ verify_again:
 					    NULL,
 					    state,
 					    &last_server_id,
-					    &global);
+					    &global,
+					    &seqnum);
 	if (is_free) {
+		dbwrap_watched_watch_remove_instance(state->db_rec,
+						     state->watch_instance);
+		state->watch_instance = 0;
+
 		/*
 		 * This stores the new client information in
 		 * smbXsrv_client_global.tdb
@@ -605,6 +628,30 @@ verify_again:
 		return;
 	}
 
+	if (server_id_equal(&state->sent_server_id, &global->server_id)) {
+		/*
+		 * We hit a race with other concurrent connections,
+		 * which have woken us.
+		 *
+		 * We already sent the pass or drop message to
+		 * the process, so we need to wait for a
+		 * response and not pass the connection
+		 * again! Otherwise the process would
+		 * receive the same tcp connection via
+		 * more than one file descriptor and
+		 * create more than one smbXsrv_connection
+		 * structure for the same tcp connection,
+		 * which means the client would see more
+		 * than one SMB2 negprot response to its
+		 * single SMB2 netprot request and we
+		 * as server get the session keys and
+		 * message id validation wrong
+		 */
+		goto watch_again;
+	}
+
+	server_id_set_disconnected(&state->sent_server_id);
+
 	/*
 	 * If last_server_id is set, we expect
 	 * smbXsrv_client_global_verify_record()
@@ -615,6 +662,7 @@ verify_again:
 	SMB_ASSERT(last_server_id.pid == 0);
 	last_server_id = global->server_id;
 
+	TALLOC_FREE(state->filter_subreq);
 	if (procid_is_local(&global->server_id)) {
 		subreq = messaging_filtered_read_send(state,
 						      state->ev,
@@ -639,6 +687,7 @@ verify_again:
 			 */
 			goto verify_again;
 		}
+		state->sent_server_id = global->server_id;
 		if (tevent_req_nterror(req, status)) {
 			return;
 		}
@@ -653,14 +702,39 @@ verify_again:
 			 */
 			goto verify_again;
 		}
+		state->sent_server_id = global->server_id;
 		if (tevent_req_nterror(req, status)) {
 			return;
 		}
 	}
 
+watch_again:
+
+	/*
+	 * If the record changed, but we are not happy with the change yet,
+	 * we better remove ourself from the waiter list
+	 * (most likely the first position)
+	 * and re-add us at the end of the list.
+	 *
+	 * This gives other waiters a change
+	 * to make progress.
+	 *
+	 * Otherwise we'll keep our waiter instance alive,
+	 * keep waiting (most likely at first position).
+	 * It means the order of watchers stays fair.
+	 */
+	if (state->last_seqnum != seqnum) {
+		state->last_seqnum = seqnum;
+		dbwrap_watched_watch_remove_instance(state->db_rec,
+						     state->watch_instance);
+		state->watch_instance =
+			dbwrap_watched_watch_add_instance(state->db_rec);
+	}
+
 	subreq = dbwrap_watched_watch_send(state,
 					   state->ev,
 					   state->db_rec,
+					   state->watch_instance,
 					   global->server_id);
 	if (tevent_req_nomem(subreq, req)) {
 		return;
@@ -790,13 +864,19 @@ static void smb2srv_client_mc_negprot_watched(struct tevent_req *subreq)
 	struct tevent_req *req =
 		tevent_req_callback_data(subreq,
 		struct tevent_req);
+	struct smb2srv_client_mc_negprot_state *state =
+		tevent_req_data(req,
+		struct smb2srv_client_mc_negprot_state);
 	NTSTATUS status;
+	uint64_t instance = 0;
 
-	status = dbwrap_watched_watch_recv(subreq, NULL, NULL);
+	status = dbwrap_watched_watch_recv(subreq, &instance, NULL, NULL);
 	TALLOC_FREE(subreq);
 	if (tevent_req_nterror(req, status)) {
 		return;
 	}
+
+	state->watch_instance = instance;
 
 	smb2srv_client_mc_negprot_next(req);
 }
@@ -826,14 +906,13 @@ static NTSTATUS smbXsrv_client_global_remove(struct smbXsrv_client_global0 *glob
 	status = dbwrap_record_delete(global->db_rec);
 	if (!NT_STATUS_IS_OK(status)) {
 		DBG_WARNING("key '%s' delete - %s\n",
-			hex_encode_talloc(global->db_rec, key.dptr, key.dsize),
+			tdb_data_dbg(key),
 			nt_errstr(status));
 		TALLOC_FREE(global->db_rec);
 		return status;
 	}
 	global->stored = false;
-	DBG_DEBUG("key '%s' delete\n",
-		  hex_encode_talloc(global->db_rec, key.dptr, key.dsize));
+	DBG_DEBUG("key '%s' delete\n", tdb_data_dbg(key));
 
 	TALLOC_FREE(global->db_rec);
 
@@ -1257,7 +1336,7 @@ static void smbXsrv_client_connection_drop_loop(struct tevent_req *subreq)
 	{
 		struct GUID_txt_buf buf1, buf2;
 
-		DBG_WARNING("client's client_guid [%s] != droped guid [%s]\n",
+		DBG_WARNING("client's client_guid [%s] != dropped guid [%s]\n",
 			    GUID_buf_string(&client->global->client_guid,
 					    &buf1),
 			    GUID_buf_string(&drop_info0->client_guid,
@@ -1272,7 +1351,7 @@ static void smbXsrv_client_connection_drop_loop(struct tevent_req *subreq)
 	    drop_info0->client_connect_time)
 	{
 		DBG_WARNING("client's initial connect time [%s] (%llu) != "
-			"droped initial connect time [%s] (%llu)\n",
+			"dropped initial connect time [%s] (%llu)\n",
 			nt_time_string(talloc_tos(),
 				       client->global->initial_connect_time),
 			(unsigned long long)client->global->initial_connect_time,

@@ -64,7 +64,7 @@ def configure(conf):
 """
 
         if conf.env.HEIMDAL_KRB5_CONFIG:
-            f.write(data.format("", ""))
+            f.write(data.format(""))
         else:
             modulesdir = "%s/krb5/plugins/kdb" % conf.env.LIBDIR
 
@@ -117,6 +117,7 @@ def build(bld):
                               samba-util
                               netif
                               ndr
+                              cmdline
                               %s
                               ''' % (pyparam_util, pytalloc_util),
                      realname='samba/_glue.so')

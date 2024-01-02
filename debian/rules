@@ -2,19 +2,27 @@
 SHELL = /bin/sh -e
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-DPKG_EXPORT_BUILDFLAGS = 1
 # Fast version of dpkg/architecture.mk defining all vars in one go
 ifeq (${DEB_HOST_MULTIARCH},)
    $(foreach d, $(shell dpkg-architecture | sed 's/=/?=/'), $(eval export $d))
 endif
+include /usr/share/dpkg/buildtools.mk
 include /usr/share/dpkg/buildflags.mk
 include /usr/share/dpkg/pkg-info.mk
 include /usr/share/dpkg/vendor.mk
-V = $(if $(filter terse, ${DEB_BUILD_OPTIONS}),,1)
-WAF = PYTHONHASHSEED=1 ./buildtools/bin/waf \
-	$(if $(filter parallel=%,${DEB_BUILD_OPTIONS}),\
-	  $(patsubst parallel=%,-j%,$(filter parallel=%,${DEB_BUILD_OPTIONS})))
-WAFv = ${WAF}$(if $V, -v)
+V := $(if $(filter terse, ${DEB_BUILD_OPTIONS}),,1)
+WAF := PYTHONHASHSEED=1 ./buildtools/bin/waf \
+	$(patsubst parallel=%,-j%,$(filter parallel=%,${DEB_BUILD_OPTIONS}))
+
+# stop python from generating .pyc caches
+export PYTHONDONTWRITEBYTECODE=1
+
+ifeq (linux,${DEB_HOST_ARCH_OS})
+ifneq (${DEB_HOST_GNU_TYPE},${DEB_BUILD_GNU_TYPE})
+# for cross-build or build with foreign python binary (it is _gnu0_i386-gnu on hurd)
+export _PYTHON_SYSCONFIGDATA_NAME=_sysconfigdata__${DEB_HOST_ARCH_OS}_${DEB_HOST_MULTIARCH}
+endif
+endif
 
 DESTDIR = ${CURDIR}/debian/tmp
 
@@ -24,34 +32,12 @@ LDB_DEB_VERSION = ${LDB_EPOCH}${LDB_VERSION}+samba${DEB_VERSION_UPSTREAM_REVISIO
 LDB_DEPENDS = libldb2 (= ${LDB_DEB_VERSION})
 LDB_PACKAGES = libldb2 libldb-dev ldb-tools python3-ldb python3-ldb-dev
 
-# #1021371: we only need the single "version" symbol LDB_2.4.4 in the library
-# should be removed for bookworm+. Also LDB_2.4.4 in d/libldb2.symbols
-EXTRA_ABI_VERSION_FILES = lib/ldb/ABI/ldb-2.4.4.sigs
+omit-pkgs =
+with-glusterfs =
+with-ceph =
+with-snapper =
 
-with_ceph = yes
-# Ceph is not available on all platforms
-ifeq (,$(filter amd64 arm64 armel armhf i386 mips64el mipsel ppc64el s390x, ${DEB_HOST_ARCH}))
-with_ceph =
-endif
-
-with_glusterfs = yes
-# GlusterFS is linux-only
-ifneq (${DEB_HOST_ARCH_OS}, linux)
-with_glusterfs =
-endif
-
-# Ubuntu i386 binary compatibility only effort: Disable some i386 packages
-ifeq (${DEB_VENDOR}-${DEB_HOST_ARCH}, Ubuntu-i386)
-export DH_OPTIONS += $(addprefix -N,\
-	ctdb libpam-winbind samba samba-testsuite samba-vfs-modules )
-with_ceph =
-with_glusterfs =
-endif
-
-# build_pakages will honour arch/indep and the above list in ${DH_OPTIONS}
-build_packages = $(shell dh_listpackages)
-
-conf_args = \
+config-args = \
 	--prefix=/usr \
 	--enable-fhs \
 	--sysconfdir=/etc \
@@ -72,7 +58,6 @@ conf_args = \
 	--with-syslog \
 	--with-utmp \
 	--with-winbind \
-	--with-quota \
 	--with-automount \
 	--with-ldap \
 	--with-ads \
@@ -88,18 +73,84 @@ conf_args = \
 	--enable-etcd-reclock \
 	--with-socketpath=/run/ctdb/ctdbd.socket \
 	--with-logdir=/var/log/ctdb \
-	$(if ${with_ceph},\
-	  --enable-cephfs --enable-ceph-reclock,\
-	  --disable-cephfs) \
 
-ifeq (${DEB_HOST_ARCH_OS}, linux)
-conf_args += \
+ifeq (${DEB_HOST_ARCH_OS}, linux) # extra linux-specific features
+with-glusterfs = $(if $(filter amd64 arm64 ppc64el ppc64 riscv64 mips64el s390x ia64 sparc64,${DEB_HOST_ARCH}),yes)
+with-ceph = $(if $(filter amd64 arm64 mips64el ppc64el riscv64 s390x, ${DEB_HOST_ARCH}),yes)
+with-snapper = yes
+
+config-args += \
+	--with-quota \
+	\
 	--with-systemd \
 	--systemd-install-services \
-	--with-systemddir=/lib/systemd/system
-else
-conf_args += --without-systemd
+	--with-systemddir=/lib/systemd/system \
+	--systemd-smb-extra='ExecCondition=/usr/share/samba/is-configured smb' \
+	--systemd-nmb-extra='ExecCondition=/usr/share/samba/is-configured nmb' \
+	--systemd-winbind-extra='ExecCondition=/usr/share/samba/is-configured winbind' \
+	--systemd-samba-extra='ExecCondition=/usr/share/samba/is-configured samba' \
+
 endif
+
+# Ubuntu i386 binary compatibility only effort: Disable some i386 packages and modules
+ifeq (${DEB_VENDOR}-${DEB_HOST_ARCH}, Ubuntu-i386)
+omit-pkgs += ctdb libpam-winbind samba samba-testsuite samba-vfs-modules
+endif
+
+ifneq (,$(filter armel mipsel m68k powerpc sh4,${DEB_HOST_ARCH}))
+# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=81358
+# on these platforms gcc does not link with -latomic, resulting in
+#   third_party/heimdal/lib/krb5/krcache.c.55.o: in function `krcc_get_principal':
+#   third_party/heimdal/lib/krb5/krcache.c:1395: undefined reference to `__atomic_load_8'
+#     ids.krcu_cache_and_princ_id = heim_base_atomic_load(&data->krc_cache_and_principal_id);
+#   third_party/heimdal/lib/base/heimbase-atomics.h:
+#     #include <stdatomic.h>
+#     #define heim_base_atomic_load(x)        atomic_load((x))
+# include a workaround for now
+# (-latomic and <stdatomic.h> comes from gcc, --as-needed is already in use)
+LDFLAGS += -latomic
+endif
+
+ifneq (,$(filter m68k ,${DEB_HOST_ARCH}))
+# without this, build fails with multiple messages like:
+# foo.s:NNN: Error: Adjusted signed .word (0xb64a) overflows: `switch'-statement too large.
+# when building third_party/heimdal/lib/asn1/asn1_rfc2459_asn1.c (generated)
+# It would be best to enable this switch for a single file only (where it is needed)
+CFLAGS += -mlong-jump-table-offsets
+endif
+
+# build is done in bin/default/ subdir
+CFLAGS += -ffile-prefix-map=../../=
+
+config-args += $(if ${with-ceph},\
+	  --enable-cephfs --enable-ceph-reclock,\
+	  --disable-cephfs)
+
+with_mitkrb5 = $(filter pkg.samba.mitkrb5, ${DEB_BUILD_PROFILES})
+ifneq (,${with_mitkrb5})
+config-args += \
+	--with-system-mitkrb5 \
+	--with-experimental-mit-ad-dc \
+	--with-system-mitkdc=/usr/sbin/krb5kdc
+# samba packages will have its own version suffix
+mitkrb5-samba-ver = ${DEB_VERSION}mitkrb5
+mitkrb5-dep-pkgs = samba-libs samba-dev
+mitkrb5-dep-pkgs += samba samba-common-bin python3-samba
+mitkrb5-dep-pkgs += samba-dsdb-modules samba-vfs-modules
+mitkrb5-dep-pkgs += libsmbclient smbclient
+mitkrb5-dep-pkgs += libnss-winbind libpam-winbind
+mitkrb5-dep-pkgs += winbind libwbclient0
+mitkrb5-dep-pkgs += samba-testsuite
+mitkrb5-dep-pkgs += ctdb
+else
+mitkrb5-dep-pkgs =
+endif
+
+ifneq (,${omit-pkgs})
+export DH_OPTIONS += $(addprefix -N, ${omit-pkgs})
+endif
+# ${build-pkgs} will honour arch/indep and the above list in ${DH_OPTIONS}
+build-pkgs := $(shell dh_listpackages)
 
 binary binary-arch binary-indep \
 install install-arch install-indep: %:
@@ -114,10 +165,17 @@ bin/configured.stamp:
 	  sed -r -e 's/^(SAMBA_VERSION_VENDOR_SUFFIX).*/\1=${DEB_VENDOR}/' \
 		VERSION.orig > VERSION; \
 	fi
-	${WAF} -j1 configure -C ${conf_args} || \
+	CC="${CC}" CPP="${CPP}" LD="${LD}" PKGCONFIG="${PKG_CONFIG}" \
+	CPPFLAGS="${CPPFLAGS}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" \
+	PYTHON=python3 PYTHON_CONFIG=${DEB_HOST_MULTIARCH}-python3-config \
+	    ${WAF} -j1 -C configure ${config-args} || \
 	  { $(if ${V},echo "==== contents of config.log:"; cat bin/config.log;) false; }
-# #1021371: we only need the single "version" symbol LDB_2.4.4 in the library
-	touch ${EXTRA_ABI_VERSION_FILES}
+# #1013205: https://lists.samba.org/archive/samba-technical/2022-November/137788.html
+	rm -f third_party/heimdal/lib/gssapi/gssapi.h
+ifneq (,${with_mitkrb5}) # ensure we do not use embedded heimdal in any way
+	[ -d third_party/heimdal-build-with-mitkrb5 ] || \
+		mv third_party/heimdal third_party/heimdal-build-with-mitkrb5
+endif
 	touch $@
 
 build-arch: bin/built.stamp
@@ -128,14 +186,11 @@ bin/built.stamp: bin/configured.stamp
 # recompilation/relinking is done again, to adopt to the actual install
 # paths. There's no need (for now) to build samba to be run from the build
 # directory, so we use `waf install' here instead of `waf build'.
-# However, as of 4.16, `waf install' without the build step fails, since
-# it tries to run two executables which are not built.
 # Build these two executables first, and build the install stage.
 # This will pefrorm unnecessary/extra install step (into d/tmp), which
 # we'll repeat during actual install stage, but this is definitely
 # better/faster than building whole thing for _not_ running from the build dir.
-	${WAFv} --targets=compile_et,asn1_compile
-	${WAFv} install --destdir="${DESTDIR}"
+	${WAF} $(if $V,-v) install --destdir="${DESTDIR}"
 	touch $@
 build-indep:
 build: build-arch build-indep
@@ -159,16 +214,21 @@ testbuild/configured.stamp: testbuild/copied.stamp
 # (libsocket-wrapper &Co), but let's just build the bundled ones. There's no
 # good reason to use externally-packaged wrappers, they're small to build and
 # we don't use them for production build, and extra versioned build-dep hurts.
-	cd testbuild && ${WAF} -j1 configure --enable-selftest -C \
-		$$(echo '${conf_args}' | \
+	cd testbuild && \
+	CPPFLAGS="${CPPFLAGS}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" \
+	    ${WAF} -j1 -C configure --enable-selftest \
+		$$(echo '${config-args}' | \
 		   sed 's|--bundled-libraries=NONE|&,nss_wrapper,pam_wrapper,resolv_wrapper,socket_wrapper,uid_wrapper|')
-# FIXME: some tests fail for now, handle them later
-# REASON: Exception: Exception: ../../source4/torture/smb2/session.c:5006: (&io1)->out.file_attr was 128 (0x80), expected 32 (0x20): out.file_attr incorrect
-	echo '^samba3.smb2.session enc.(reauth.|bind.|bind_negative.*|bind_invalid_auth|encryption-aes-.*)\(nt4_dc\)' >>testbuild/selftest/knownfail.d/mjt
-#REASON: Exception: Exception: ../../source4/torture/util_smb.c:856: Expression `torture_open_connection(&cli1, torture_ctx, 0)' failed: Failed to open connection
-# these fail anyway
-	echo '^samba4.ntvfs.cifs.ntlm.base.unlink.unlink\(rpc_proxy\)' >>testbuild/selftest/knownfail.d/mjt
-	echo '^samba4.ntvfs.cifs.krb5.base.unlink\(rpc_proxy\)' >>testbuild/selftest/knownfail.d/mjt
+# FIXME: some tests fail for now, handle them later (last check: 4.17.2, heimdal build)
+	rm -f testbuild/selftest/knownfail.d/debian
+	echo '^samba3.smb2.session\ enc.(reauth.|bind.|bind_negative.*|bind_invalid_auth|encryption-aes-.*)\(nt4_dc\)' \
+		>>testbuild/selftest/knownfail.d/debian
+#	echo '^samba3.rpc.schannel_anon_setpw\ anonymous\ password\ set\ \(schannel\ enforced\ server-side\)\(nt4_dc_schannel\)' \
+#		>>testbuild/selftest/knownfail.d/debian
+	echo '^samba4.ntvfs.cifs.ntlm.base.unlink.unlink\(rpc_proxy\)' \
+		>>testbuild/selftest/knownfail.d/debian
+	echo '^samba4.rpc.echo\ against\ rpc\ proxy\ with\ domain\ creds\(rpc_proxy\)' \
+		>>testbuild/selftest/knownfail.d/debian
 	touch $@
 selftest-quick: testbuild/configured.stamp
 	@echo "############## selftest run ##############"
@@ -181,11 +241,9 @@ override_dh_auto_install-arch:
 	${WAF} install --destdir="${DESTDIR}"
 	# get list of files in build log
 	find debian/tmp
-	# Included in python-tevent
+	# Included in python-tevent?
 	rm debian/tmp/usr/lib/python*/*-packages/_tevent.*
 	rm debian/tmp/usr/lib/python*/*-packages/tevent.py
-	# Already documented in debian/copyright
-	-rm debian/tmp/usr/share/samba/setup/ad-schema/licence.txt
 	# pam stuff
 	install -Dp -m0644 debian/winbind.pam-config debian/tmp/usr/share/pam-configs/winbind
 	mv debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libnss_* debian/tmp/lib/$(DEB_HOST_MULTIARCH)/
@@ -196,12 +254,16 @@ override_dh_auto_install-arch:
 	install -Dp -m0644 debian/samba.ufw.profile debian/tmp/etc/ufw/applications.d/samba
 	install -Dp -m0644 debian/source_samba.py -t debian/tmp/usr/share/apport/package-hooks/
 ifeq ($(DEB_HOST_ARCH_OS), linux)
-	# Install systemd configs
-	install -Dp -m0644 ctdb/config/ctdb.service -t debian/tmp/lib/systemd/system/
-	# Services fixups
+# Services fixups. Historically, debian used smbd, nmbd and samba-ad-dc service names.
+# Upstream samba used names smb, nmb and samba.
+# We can not easily rename them now (need to rename possible overrides and drop-ins),
+# but we can provide synonyms
 	mv debian/tmp/lib/systemd/system/nmb.service debian/tmp/lib/systemd/system/nmbd.service
+	ln -s nmbd.service debian/tmp/lib/systemd/system/nmb.service
 	mv debian/tmp/lib/systemd/system/smb.service debian/tmp/lib/systemd/system/smbd.service
+	ln -s smbd.service debian/tmp/lib/systemd/system/smb.service
 	mv debian/tmp/lib/systemd/system/samba.service debian/tmp/lib/systemd/system/samba-ad-dc.service
+	ln -s samba-ad-dc.service debian/tmp/lib/systemd/system/samba.service
 	sed -i \
 	  -e 's|/etc/sysconfig/|/etc/default/|' \
 	  -e 's|nmb\.service|nmbd.service|' \
@@ -234,6 +296,8 @@ endif
 	dh_link -plibldb2 /usr/lib/${DEB_HOST_MULTIARCH}/ldb/modules/ldb \
 	                  /usr/lib/${DEB_HOST_MULTIARCH}/samba/ldb/compat
 
+provision-dest := debian/samba-ad-provision/usr/share/samba/setup
+
 override_dh_auto_install-indep:
 # only arch-all package is samba-common containing a few debian-specific files
 # Most of files needs are renamed during install so lets put them
@@ -243,25 +307,32 @@ override_dh_auto_install-indep:
 ifeq (${DEB_VENDOR}, Ubuntu)
 	patch debian/samba-common/usr/share/samba/smb.conf debian/smb.conf.ubuntu.diff
 endif
-	install -Dp -m755 debian/panic-action -t debian/samba-common/usr/share/samba/
+	install -Dp -m0755 debian/panic-action  -t debian/samba-common/usr/share/samba/
+	install -Dp -m0755 debian/is-configured -t debian/samba-common/usr/share/samba/
 	install -Dp -m0644 debian/gdbcommands -t debian/samba-common/etc/samba/
-	install -Dp -m0755 debian/samba-common.dhcp debian/samba-common/etc/dhcp/dhclient-enter-hooks.d/samba
 	# we wrongly have pam file in samba-common instead of samba
 	install -Dp -m0644 debian/samba.pam debian/samba-common/etc/pam.d/samba
+
+# install provision files (samba-ad-provision, source4/setup/)
+	mkdir -p -m0755 ${provision-dest}
+	cp -r --preserve=timestamps source4/setup/. ${provision-dest}
+	rm -rf ${provision-dest}/tests
+	rm -f	${provision-dest}/wscript* \
+		${provision-dest}/adprep/samba-4.7-missing-for-schema45.ldif
 
 override_dh_installpam:
 
 # include a command only if the given package is being built
-ifpkg = $(if $(filter ${1},${build_packages}),${2})
+ifpkg = $(if $(filter ${1},${build-pkgs}),${2})
 
 override_dh_installinit:
-ifneq (,$(filter samba, ${build_packages}))
+ifneq (,$(filter samba, ${build-pkgs}))
 	dh_installinit -psamba --name smbd
 	dh_installinit -psamba --name nmbd --error-handler nmbd_error_handler
 	dh_installinit -psamba --name samba-ad-dc
 endif
 	$(call ifpkg, winbind, dh_installinit -pwinbind)
-ifneq (,$(filter ctdb, ${build_packages}))
+ifneq (,$(filter ctdb, ${build-pkgs}))
 	install -Dp -m755 ctdb/config/ctdb.init debian/ctdb/etc/init.d/ctdb
 	# Install dh scripts
 	dh_installinit -pctdb --no-start --no-stop-on-upgrade --onlyscripts
@@ -278,7 +349,7 @@ execute_after_dh_fixperms-arch:
 override_dh_makeshlibs:
 	# generate symbols file with correct cpython suffix in there
 	{ \
-	    suff=$$(python3-config --extension-suffix | tr _ -); \
+	    suff=$$(${DEB_HOST_MULTIARCH}-python3-config --extension-suffix | tr _ -); \
 	    SUFF=$$(echo "$${suff%.so}" | tr a-z- A-Z_); \
 	    echo "libpyldb-util$${suff}.2 python3-ldb #MINVER#"; \
 	    echo "* Build-Depends-Package: python3-ldb-dev" ; \
@@ -288,7 +359,9 @@ override_dh_makeshlibs:
 
 	# create symbols and shlibs files in separate wrapper script
 	# to deal with private libraries
-	debian/genshlibs $(addsuffix =${LDB_DEB_VERSION},${LDB_PACKAGES})
+	debian/genshlibs \
+		$(addsuffix =${LDB_DEB_VERSION},${LDB_PACKAGES}) \
+		$(addsuffix =${mitkrb5-samba-ver}, ${mitkrb5-dep-pkgs})
 
 	rm -f debian/python3-ldb.symbols
 
@@ -301,17 +374,21 @@ override_dh_shlibdeps:
 # to change Depends to Recommends for them in d/control
 	dh_shlibdeps -l/usr/lib/${DEB_HOST_MULTIARCH}/samba \
 	    -Xceph.so -Xglusterfs.so -Xsnapper.so -Xctdb_mutex_ceph_rados_helper
-ifneq (,$(filter ctdb, ${build_packages}))
-ifneq (${with_ceph},)
+ifneq (,$(filter ctdb, ${build-pkgs}))
+	echo "rados:Depends=" >> debian/ctdb.substvars
+ifneq (${with-ceph},)
 	dpkg-shlibdeps -Tdebian/ctdb.substvars -prados \
 	    debian/ctdb/usr/libexec/ctdb/ctdb_mutex_ceph_rados_helper
 endif
 endif
-ifneq (,$(filter samba-vfs-modules,${build_packages}))
+ifneq (,$(filter samba-vfs-modules,${build-pkgs}))
+	echo "vfsmods:Depends=" >> debian/samba-vfs-modules.substvars
+ifneq (${with-snapper}${with-ceph}${with-glusterfs},)
 	dpkg-shlibdeps -Tdebian/samba-vfs-modules.substvars -pvfsmods \
-	    debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so \
-	    $(if ${with_ceph}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so) \
-	    $(if ${with_glusterfs}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so)
+	    $(if ${with-snapper}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/snapper.so) \
+	    $(if ${with-ceph}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/ceph.so) \
+	    $(if ${with-glusterfs}, debian/samba-vfs-modules/usr/lib/*/samba/vfs/glusterfs.so)
+endif
 endif
 # after shlibdeps run, check that we don't have wrong depdendencies
 	$(call depcheck, samba-libs, samba|winbind|smbclient|ctdb)
@@ -323,11 +400,17 @@ endif
 	$(call depcheck, libsmbclient, samba|winbind|smbclient|ctdb)
 
 override_dh_gencontrol:
-	dh_gencontrol $(addprefix -p,${LDB_PACKAGES}) -- -v${LDB_DEB_VERSION}
+	dh_gencontrol $(addprefix -p, ${LDB_PACKAGES}) -- -v${LDB_DEB_VERSION}
+ifneq (,$(filter ${build-pkgs}, ${mitkrb5-dep-pkgs}))
+	dh_gencontrol $(addprefix -p, $(filter ${build-pkgs}, ${mitkrb5-dep-pkgs})) -- -v${mitkrb5-samba-ver} -Vldb:Depends="${LDB_DEPENDS}"
+endif
 	dh_gencontrol --remaining-packages -- -Vldb:Depends="${LDB_DEPENDS}"
 
 clean:
 	# see also debian/clean
 	dh_clean bin/ testbuild/
-	rm -f ${EXTRA_ABI_VERSION_FILES}
 	[ ! -f VERSION.orig ] || mv -f VERSION.orig VERSION
+ifneq (,${with_mitkrb5})
+	[ ! -d third_party/heimdal-build-with-mitkrb5 ] || \
+		mv third_party/heimdal-build-with-mitkrb5 third_party/heimdal
+endif

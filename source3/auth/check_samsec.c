@@ -73,6 +73,7 @@ static NTSTATUS sam_password_ok(TALLOC_CTX *mem_ctx,
 	switch (user_info->password_state) {
 	case AUTH_PASSWORD_HASH:
 		status = hash_password_check(mem_ctx, lp_lanman_auth(),
+					     lp_ntlm_auth(),
 					     user_info->password.hash.lanman,
 					     user_info->password.hash.nt,
 					     username,
@@ -82,19 +83,20 @@ static NTSTATUS sam_password_ok(TALLOC_CTX *mem_ctx,
 			if (nt_pw) {
 				*user_sess_key = data_blob_talloc(mem_ctx, NULL, 16);
 				if (!user_sess_key->data) {
-					return NT_STATUS_NO_MEMORY;
+					status = NT_STATUS_NO_MEMORY;
+					goto done;
 				}
 				SMBsesskeygen_ntv1(nt_pw, user_sess_key->data);
 			}
 		}
-		return status;
+		break;
 
 	/* Eventually we should test plaintext passwords in their own
 	 * function, not assuming the caller has done a
 	 * mapping */
 	case AUTH_PASSWORD_PLAIN:
 	case AUTH_PASSWORD_RESPONSE:
-		return ntlm_password_check(mem_ctx, lp_lanman_auth(),
+		status = ntlm_password_check(mem_ctx, lp_lanman_auth(),
 					   lp_ntlm_auth(),
 					   user_info->logon_parameters,
 					   challenge,
@@ -105,10 +107,15 @@ static NTSTATUS sam_password_ok(TALLOC_CTX *mem_ctx,
 					   lm_hash,
 					   nt_hash,
 					   user_sess_key, lm_sess_key);
+		break;
 	default:
 		DEBUG(0,("user_info constructed for user '%s' was invalid - password_state=%u invalid.\n", username, user_info->password_state));
-		return NT_STATUS_INTERNAL_ERROR;
+		status = NT_STATUS_INTERNAL_ERROR;
 	}
+done:
+	ZERO_STRUCTP(lm_hash);
+	ZERO_STRUCTP(nt_hash);
+	return status;
 }
 
 /****************************************************************************
@@ -422,7 +429,7 @@ NTSTATUS check_sam_security(const DATA_BLOB *challenge,
 				    user_info, &user_sess_key, &lm_sess_key);
 
 	/*
-	 * We must re-load the sam acount information under a mutex
+	 * We must re-load the sam account information under a mutex
 	 * lock to ensure we don't miss any concurrent account lockout
 	 * changes.
 	 */
@@ -582,7 +589,7 @@ NTSTATUS check_sam_security(const DATA_BLOB *challenge,
 
 done:
 	/*
-	 * Always flush the getpwsid cache or this will grow indefinetly for
+	 * Always flush the getpwsid cache or this will grow indefinitely for
 	 * each NTLM auththentication.
 	 */
 	memcache_flush(NULL, PDB_GETPWSID_CACHE);

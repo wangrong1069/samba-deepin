@@ -134,6 +134,21 @@ typedef struct {
 #define KRB5_ERROR_CODE(k)	((k)->error)
 #endif /* HAVE_E_DATA_POINTER_IN_KRB5_ERROR */
 
+#ifndef HAVE_KRB5_CONST_PAC
+#ifdef KRB5_CONST_PAC_GET_BUFFER
+typedef const struct krb5_pac_data *krb5_const_pac;
+#else
+/*
+ * Certain Heimdal versions include a version of krb5_pac_get_buffer() that is
+ * unusable in certain cases, taking a krb5_pac when a krb5_const_pac may be all
+ * that we can supply. Furthermore, MIT Kerberos doesn't declare krb5_const_pac
+ * at all. In such cases, we must declare krb5_const_pac as a non-const typedef
+ * so that the build can succeed.
+ */
+typedef struct krb5_pac_data *krb5_const_pac;
+#endif
+#endif
+
 krb5_error_code smb_krb5_parse_name(krb5_context context,
 				const char *name, /* in unix charset */
                                 krb5_principal *principal);
@@ -153,6 +168,14 @@ krb5_error_code krb5_auth_con_setuseruserkey(krb5_context context, krb5_auth_con
 
 #ifndef HAVE_KRB5_FREE_UNPARSED_NAME
 void krb5_free_unparsed_name(krb5_context ctx, char *val);
+#endif
+
+#if !defined(HAVE_KRB5_FREE_ENCTYPES)
+void krb5_free_enctypes(krb5_context context, krb5_enctype *val);
+#endif
+
+#if !defined(HAVE_KRB5_FREE_STRING)
+void krb5_free_string(krb5_context context, char *val);
 #endif
 
 /* Stub out initialize_krb5_error_table since it is not present in all
@@ -209,12 +232,13 @@ krb5_error_code smb_krb5_kt_get_name(TALLOC_CTX *mem_ctx,
 				     const char **keytab_name);
 krb5_error_code smb_krb5_kt_seek_and_delete_old_entries(krb5_context context,
 							krb5_keytab keytab,
+							bool keep_old_kvno,
 							krb5_kvno kvno,
+							bool enctype_only,
 							krb5_enctype enctype,
 							const char *princ_s,
 							krb5_principal princ,
-							bool flush,
-							bool keep_old_entries);
+							bool flush);
 krb5_error_code smb_krb5_kt_add_entry(krb5_context context,
 				      krb5_keytab keytab,
 				      krb5_kvno kvno,
@@ -222,8 +246,7 @@ krb5_error_code smb_krb5_kt_add_entry(krb5_context context,
 				      const char *salt_principal,
 				      krb5_enctype enctype,
 				      krb5_data *password,
-				      bool no_salt,
-				      bool keep_old_entries);
+				      bool no_salt);
 
 krb5_error_code smb_krb5_get_credentials(krb5_context context,
 					 krb5_ccache ccache,
@@ -252,7 +275,6 @@ krb5_error_code smb_krb5_kinit_password_ccache(krb5_context ctx,
 					       krb5_get_init_creds_opt *krb_options,
 					       time_t *expire_time,
 					       time_t *kdc_time);
-#ifdef SAMBA4_USES_HEIMDAL
 krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 					   krb5_ccache store_cc,
 					   krb5_principal init_principal,
@@ -263,7 +285,6 @@ krb5_error_code smb_krb5_kinit_s4u2_ccache(krb5_context ctx,
 					   krb5_get_init_creds_opt *krb_options,
 					   time_t *expire_time,
 					   time_t *kdc_time);
-#endif
 
 #if defined(HAVE_KRB5_MAKE_PRINCIPAL)
 #define smb_krb5_make_principal krb5_make_principal
@@ -290,7 +311,7 @@ krb5_error_code smb_krb5_cc_get_lifetime(krb5_context context,
 #elif defined (HAVE_FREE_CHECKSUM)
 void smb_krb5_free_checksum_contents(krb5_context ctx, krb5_checksum *cksum);
 #else
-#error krb5_free_checksum_contents/free_Checksum is not vailable
+#error krb5_free_checksum_contents/free_Checksum is not available
 #endif
 
 krb5_error_code smb_krb5_make_pac_checksum(TALLOC_CTX *mem_ctx,
@@ -307,6 +328,9 @@ char *smb_krb5_principal_get_realm(TALLOC_CTX *mem_ctx,
 void smb_krb5_principal_set_type(krb5_context context,
 				 krb5_principal principal,
 				 int type);
+
+int smb_krb5_principal_is_tgs(krb5_context context,
+			      krb5_const_principal principal);
 
 krb5_error_code smb_krb5_principal_set_realm(krb5_context context,
 					     krb5_principal principal,
@@ -360,8 +384,8 @@ int smb_krb5_salt_principal2data(krb5_context context,
 
 int smb_krb5_create_key_from_string(krb5_context context,
 				    krb5_const_principal host_princ,
-				    krb5_data *salt,
-				    krb5_data *password,
+				    const krb5_data *salt,
+				    const krb5_data *password,
 				    krb5_enctype enctype,
 				    krb5_keyblock *key);
 
@@ -381,6 +405,11 @@ char *smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
 krb5_error_code smb_krb5_copy_data_contents(krb5_data *p,
 					    const void *data,
 					    size_t len);
+
+krb5_data smb_krb5_make_data(void *data,
+			     size_t len);
+
+krb5_data smb_krb5_data_from_blob(DATA_BLOB blob);
 
 int smb_krb5_principal_get_type(krb5_context context,
 				krb5_const_principal principal);

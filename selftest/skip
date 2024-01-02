@@ -82,9 +82,6 @@
 ^samba4.smb2.zero-data-ioctl            # For manual testing, needs additional parameters.
 ^samba4.raw.ping.pong		# Needs second server to test
 ^samba4.rpc.samr.accessmask
-^samba4.rpc.samr.passwords.*ncacn_np\(ad_dc_ntvfs\) # currently fails, possibly config issue
-^samba4.rpc.samr.passwords.*ncacn_np\(ad_dc_slowtests\) # currently fails, possibly config issue
-^samba4.rpc.samr.passwords.*s4member       # currently fails, possibly config issue
 ^samba4.raw.scan.eamax
 ^samba4.smb2.samba3misc
 ^samba4.smb2.notify
@@ -110,8 +107,6 @@
 ^samba4.ntvfs.cifs.*.base.smb
 ^samba4.ntvfs.cifs.*.raw.
 ^samba4.rpc.samsync
-^samba4.rpc.remact							# Not provided by Samba 4
-^samba4.rpc.oxidresolve						# Not provided by Samba 4
 ^samba4.rpc.eventlog						# Not provided by Samba 4
 ^samba4.rpc.initshutdown					# Not provided by Samba 4
 ^samba4.rpc.spoolss						# Not provided by Samba 4
@@ -151,3 +146,6 @@ bench # don't run benchmarks in our selftest
 ^samba4.smb2.mangle.*\(ad_dc_ntvfs\)$ # Ignore ad_dc_ntvfs since this is a new test
 ^samba4.smb2.tcon.*\(ad_dc_ntvfs\)$ # Ignore ad_dc_ntvfs since this is a new test
 ^samba4.smb2.mkdir.*\(ad_dc_ntvfs\)$ # Ignore ad_dc_ntvfs since this is a new test
+^samba.tests.reparsepoints.*
+^samba.tests.smb2symlink.*
+^samba3.blackbox.open-eintr.*

@@ -958,7 +958,7 @@ static void merge_aces( canon_ace **pp_list_head, bool dir_acl)
 					 * Even after removing permissions, there
 					 * are still allow permissions - delete the deny.
 					 * It is safe to delete the deny here,
-					 * as we are guarenteed by the deny first
+					 * as we are guaranteed by the deny first
 					 * ordering that all the deny entries for
 					 * this SID have already been merged into one
 					 * before we can get to an allow ace.
@@ -1081,10 +1081,10 @@ static mode_t map_nt_perms( uint32_t *mask, int type)
  Unpack a struct security_descriptor into a UNIX owner and group.
 ****************************************************************************/
 
-NTSTATUS unpack_nt_owners(struct connection_struct *conn,
-			uid_t *puser, gid_t *pgrp,
-			uint32_t security_info_sent, const struct
-			security_descriptor *psd)
+static NTSTATUS unpack_nt_owners(struct connection_struct *conn,
+				 uid_t *puser, gid_t *pgrp,
+				 uint32_t security_info_sent,
+				 const struct security_descriptor *psd)
 {
 	*puser = (uid_t)-1;
 	*pgrp = (gid_t)-1;
@@ -2108,7 +2108,7 @@ static bool create_canon_ace_lists(files_struct *fsp,
  push to the end of the list. Note if the user was in no groups
  this maps to a specific allow nothing entry for this user.
 
- The common case from the NT ACL choser (userX deny all) is
+ The common case from the NT ACL chooser (userX deny all) is
  optimised so we don't do the group lookup - we just map to
  an allow nothing entry.
 
@@ -2137,7 +2137,7 @@ static bool create_canon_ace_lists(files_struct *fsp,
  If there is no group Everyone allow entry then convert the
  group1 entry to a allow nothing entry and push to the end of the list.
 
- Note that the common case from the NT ACL choser (groupX deny all)
+ Note that the common case from the NT ACL chooser (groupX deny all)
  cannot be optimised here as we need to modify user entries who are
  in the group to change them to a deny all also.
 
@@ -2163,7 +2163,7 @@ static bool create_canon_ace_lists(files_struct *fsp,
  group pass.
 
  The above algorithm took a *lot* of thinking about - hence this
- explaination :-). JRA.
+ explanation :-). JRA.
 ****************************************************************************/
 
 /****************************************************************************
@@ -2780,7 +2780,6 @@ static bool set_canon_ace_list(files_struct *fsp,
 	SMB_ACL_PERMSET_T mask_permset;
 	SMB_ACL_TYPE_T the_acl_type = (default_ace ? SMB_ACL_TYPE_DEFAULT : SMB_ACL_TYPE_ACCESS);
 	bool needs_mask = False;
-	mode_t mask_perms = 0;
 	int sret;
 
 	/* Use the psbuf that was passed in. */
@@ -2818,9 +2817,6 @@ static bool set_canon_ace_list(files_struct *fsp,
 
 		if (p_ace->type == SMB_ACL_USER || p_ace->type == SMB_ACL_GROUP) {
 			needs_mask = True;
-			mask_perms |= p_ace->perms;
-		} else if (p_ace->type == SMB_ACL_GROUP_OBJ) {
-			mask_perms |= p_ace->perms;
 		}
 
 		/*
@@ -3131,6 +3127,15 @@ static size_t merge_default_aces( struct security_ace *nt_ace_list, size_t num_a
 
 					DEBUG(10,("merge_default_aces: Merging zero access ACE %u onto ACE %u.\n",
 						(unsigned int)i, (unsigned int)j ));
+
+					/*
+					 * If we remove the i'th element, we
+					 * should decrement i so that we don't
+					 * skip over the succeeding element.
+					*/
+					i--;
+					num_aces--;
+					break;
 				} else {
 					/*
 					 * These are identical except for the flags.
@@ -3143,9 +3148,16 @@ static size_t merge_default_aces( struct security_ace *nt_ace_list, size_t num_a
 
 					DEBUG(10,("merge_default_aces: Merging ACE %u onto ACE %u.\n",
 						(unsigned int)j, (unsigned int)i ));
+
+					/*
+					 * If we remove the j'th element, we
+					 * should decrement j and continue
+					 * around the loop, so as not to skip
+					 * subsequent elements.
+					 */
+					j--;
+					num_aces--;
 				}
-				num_aces--;
-				break;
 			}
 		}
 	}
@@ -3392,7 +3404,7 @@ NTSTATUS posix_fget_nt_acl(struct files_struct *fsp, uint32_t security_info,
      then allow chown to the currently authenticated user.
 ****************************************************************************/
 
-NTSTATUS try_chown(files_struct *fsp, uid_t uid, gid_t gid)
+static NTSTATUS try_chown(files_struct *fsp, uid_t uid, gid_t gid)
 {
 	NTSTATUS status;
 	int ret;
@@ -3479,6 +3491,59 @@ NTSTATUS try_chown(files_struct *fsp, uid_t uid, gid_t gid)
 	return status;
 }
 
+/*
+ * Check whether a chown is needed and if so, attempt the chown
+ * A returned error indicates that the chown failed.
+ * NT_STATUS_OK with did_chown == false indicates that the chown was skipped.
+ * NT_STATUS_OK with did_chown == true indicates that the chown succeeded
+ */
+NTSTATUS chown_if_needed(files_struct *fsp, uint32_t security_info_sent,
+			 const struct security_descriptor *psd,
+			 bool *did_chown)
+{
+	NTSTATUS status;
+	uid_t uid = (uid_t)-1;
+	gid_t gid = (gid_t)-1;
+
+	status = unpack_nt_owners(fsp->conn, &uid, &gid, security_info_sent, psd);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	if (((uid == (uid_t)-1) || (fsp->fsp_name->st.st_ex_uid == uid)) &&
+	    ((gid == (gid_t)-1) || (fsp->fsp_name->st.st_ex_gid == gid))) {
+		/*
+		 * Skip chown
+		 */
+		*did_chown = false;
+		return NT_STATUS_OK;
+	}
+
+	DBG_NOTICE("chown %s. uid = %u, gid = %u.\n",
+		   fsp_str_dbg(fsp), (unsigned int) uid, (unsigned int)gid);
+
+	status = try_chown(fsp, uid, gid);
+	if (!NT_STATUS_IS_OK(status)) {
+		DBG_INFO("chown %s, %u, %u failed. Error = %s.\n",
+			 fsp_str_dbg(fsp), (unsigned int) uid,
+			 (unsigned int)gid, nt_errstr(status));
+		return status;
+	}
+
+	/*
+	 * Recheck the current state of the file, which may have changed.
+	 * (owner and suid/sgid bits, for instance)
+	 */
+
+	status = vfs_stat_fsp(fsp);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
+	}
+
+	*did_chown = true;
+	return NT_STATUS_OK;
+}
+
 /****************************************************************************
  Reply to set a security descriptor on an fsp. security_info_sent is the
  description of the following NT ACL.
@@ -3490,8 +3555,6 @@ NTSTATUS try_chown(files_struct *fsp, uid_t uid, gid_t gid)
 NTSTATUS set_nt_acl(files_struct *fsp, uint32_t security_info_sent, const struct security_descriptor *psd_orig)
 {
 	connection_struct *conn = fsp->conn;
-	uid_t user = (uid_t)-1;
-	gid_t grp = (gid_t)-1;
 	struct dom_sid file_owner_sid;
 	struct dom_sid file_grp_sid;
 	canon_ace *file_ace_list = NULL;
@@ -3563,51 +3626,17 @@ NTSTATUS set_nt_acl(files_struct *fsp, uint32_t security_info_sent, const struct
 		security_info_sent &= ~SECINFO_OWNER;
 	}
 
-	status = unpack_nt_owners( conn, &user, &grp, security_info_sent, psd);
-	if (!NT_STATUS_IS_OK(status)) {
-		return status;
-	}
-
 	/*
 	 * Do we need to chown ? If so this must be done first as the incoming
 	 * CREATOR_OWNER acl will be relative to the *new* owner, not the old.
 	 * Noticed by Simo.
+	 *
+	 * If we successfully chowned, we know we must be able to set
+	 * the acl, so do it as root (set_acl_as_root).
 	 */
-
-	if (((user != (uid_t)-1) && (fsp->fsp_name->st.st_ex_uid != user)) ||
-	    (( grp != (gid_t)-1) && (fsp->fsp_name->st.st_ex_gid != grp))) {
-
-		DEBUG(3,("set_nt_acl: chown %s. uid = %u, gid = %u.\n",
-			 fsp_str_dbg(fsp), (unsigned int)user,
-			 (unsigned int)grp));
-
-		status = try_chown(fsp, user, grp);
-		if(!NT_STATUS_IS_OK(status)) {
-			DEBUG(3,("set_nt_acl: chown %s, %u, %u failed. Error "
-				"= %s.\n", fsp_str_dbg(fsp),
-				(unsigned int)user,
-				(unsigned int)grp,
-				nt_errstr(status)));
-			return status;
-		}
-
-		/*
-		 * Recheck the current state of the file, which may have changed.
-		 * (suid/sgid bits, for instance)
-		 */
-
-		status = vfs_stat_fsp(fsp);
-		if (!NT_STATUS_IS_OK(status)) {
-			return status;
-		}
-
-		/* Save the original element we check against. */
-		orig_mode = fsp->fsp_name->st.st_ex_mode;
-
-		/* If we successfully chowned, we know we must
-		 * be able to set the acl, so do it as root.
-		 */
-		set_acl_as_root = true;
+	status = chown_if_needed(fsp, security_info_sent, psd, &set_acl_as_root);
+	if (!NT_STATUS_IS_OK(status)) {
+		return status;
 	}
 
 	create_file_sids(&fsp->fsp_name->st, &file_owner_sid, &file_grp_sid);
@@ -3839,16 +3868,16 @@ NTSTATUS set_nt_acl(files_struct *fsp, uint32_t security_info_sent, const struct
  the mask bits, not the real group bits, for a file with an ACL.
 ****************************************************************************/
 
-int get_acl_group_bits( connection_struct *conn,
-			const struct smb_filename *smb_fname,
-			mode_t *mode )
+int get_acl_group_bits(connection_struct *conn,
+		       struct files_struct *fsp,
+		       mode_t *mode )
 {
 	int entry_id = SMB_ACL_FIRST_ENTRY;
 	SMB_ACL_ENTRY_T entry;
 	SMB_ACL_T posix_acl;
 	int result = -1;
 
-	posix_acl = SMB_VFS_SYS_ACL_GET_FD(metadata_fsp(smb_fname->fsp),
+	posix_acl = SMB_VFS_SYS_ACL_GET_FD(metadata_fsp(fsp),
 					   SMB_ACL_TYPE_ACCESS,
 					   talloc_tos());
 	if (posix_acl == (SMB_ACL_T)NULL)
@@ -3885,7 +3914,7 @@ int get_acl_group_bits( connection_struct *conn,
  and set the mask to rwx. Needed to preserve complex ACLs set by NT.
 ****************************************************************************/
 
-static int chmod_acl_internals( connection_struct *conn, SMB_ACL_T posix_acl, mode_t mode)
+static int chmod_acl_internals(SMB_ACL_T posix_acl, mode_t mode)
 {
 	int entry_id = SMB_ACL_FIRST_ENTRY;
 	SMB_ACL_ENTRY_T entry;
@@ -3953,24 +3982,25 @@ static int chmod_acl_internals( connection_struct *conn, SMB_ACL_T posix_acl, mo
  resulting ACL on TO.  Note that name is in UNIX character set.
 ****************************************************************************/
 
-static int copy_access_posix_acl(connection_struct *conn,
-				const struct smb_filename *smb_fname_from,
-				const struct smb_filename *smb_fname_to,
-				mode_t mode)
+static int copy_access_posix_acl(struct files_struct *from,
+				 struct files_struct *to,
+				 mode_t mode)
 {
 	SMB_ACL_T posix_acl = NULL;
 	int ret = -1;
 
-	if ((posix_acl = SMB_VFS_SYS_ACL_GET_FD(smb_fname_from->fsp,
-						  SMB_ACL_TYPE_ACCESS,
-						  talloc_tos())) == NULL)
+	posix_acl = SMB_VFS_SYS_ACL_GET_FD(
+		from, SMB_ACL_TYPE_ACCESS, talloc_tos());
+	if (posix_acl == NULL) {
 		return -1;
+	}
 
-	if ((ret = chmod_acl_internals(conn, posix_acl, mode)) == -1)
+	ret = chmod_acl_internals(posix_acl, mode);
+	if (ret == -1) {
 		goto done;
+	}
 
-	ret = SMB_VFS_SYS_ACL_SET_FD(smb_fname_to->fsp,
-			SMB_ACL_TYPE_ACCESS, posix_acl);
+	ret = SMB_VFS_SYS_ACL_SET_FD(to, SMB_ACL_TYPE_ACCESS, posix_acl);
 
  done:
 
@@ -3982,12 +4012,10 @@ static int copy_access_posix_acl(connection_struct *conn,
  Check for an existing default POSIX ACL on a directory.
 ****************************************************************************/
 
-static bool directory_has_default_posix_acl(connection_struct *conn,
-			const struct smb_filename *smb_fname)
+static bool directory_has_default_posix_acl(struct files_struct *dirfsp)
 {
-	SMB_ACL_T def_acl = SMB_VFS_SYS_ACL_GET_FD(smb_fname->fsp,
-						     SMB_ACL_TYPE_DEFAULT,
-						     talloc_tos());
+	SMB_ACL_T def_acl = SMB_VFS_SYS_ACL_GET_FD(
+		dirfsp, SMB_ACL_TYPE_DEFAULT, talloc_tos());
 	bool has_acl = False;
 	SMB_ACL_ENTRY_T entry;
 
@@ -4007,14 +4035,18 @@ static bool directory_has_default_posix_acl(connection_struct *conn,
 ****************************************************************************/
 
 int inherit_access_posix_acl(connection_struct *conn,
-			struct smb_filename *inherit_from_dir,
-			const struct smb_filename *smb_fname,
-			mode_t mode)
+			     struct files_struct *inherit_from_dirfsp,
+			     const struct smb_filename *smb_fname,
+			     mode_t mode)
 {
-	if (directory_has_default_posix_acl(conn, inherit_from_dir))
+	int ret;
+
+	if (directory_has_default_posix_acl(inherit_from_dirfsp))
 		return 0;
 
-	return copy_access_posix_acl(conn, inherit_from_dir, smb_fname, mode);
+	ret = copy_access_posix_acl(
+		inherit_from_dirfsp, smb_fname->fsp, mode);
+	return ret;
 }
 
 /****************************************************************************

@@ -146,7 +146,7 @@ static struct {
 } while (0)
 
 #if defined(DEVELOPER) && defined(VALGRIND_MAKE_MEM_NOACCESS)
-/* Mark the whole chunk as not accessable */
+/* Mark the whole chunk as not accessible */
 #define TC_INVALIDATE_FULL_VALGRIND_CHUNK(_tc) do { \
 	size_t _flen = TC_HDR_SIZE + (_tc)->size; \
 	char *_fptr = (char *)(_tc); \
@@ -171,7 +171,7 @@ static struct {
 } while (0)
 
 #if defined(DEVELOPER) && defined(VALGRIND_MAKE_MEM_NOACCESS)
-/* Mark the unused bytes not accessable */
+/* Mark the unused bytes not accessible */
 #define TC_INVALIDATE_SHRINK_VALGRIND_CHUNK(_tc, _new_size) do { \
 	size_t _flen = (_tc)->size - (_new_size); \
 	char *_fptr = (char *)TC_PTR_FROM_CHUNK(_tc); \
@@ -661,7 +661,7 @@ static inline void *tc_pool_first_chunk(struct talloc_pool_hdr *pool_hdr)
 	return tc_next_chunk(tc);
 }
 
-/* Mark the whole remaining pool as not accessable */
+/* Mark the whole remaining pool as not accessible */
 static inline void tc_invalidate_pool(struct talloc_pool_hdr *pool_hdr)
 {
 	size_t flen = tc_pool_space_left(pool_hdr);
@@ -831,7 +831,7 @@ static inline void *__talloc(const void *context,
 
 static inline void *_talloc_pool(const void *context, size_t size)
 {
-	struct talloc_chunk *tc;
+	struct talloc_chunk *tc = NULL;
 	struct talloc_pool_hdr *pool_hdr;
 	void *result;
 
@@ -977,7 +977,7 @@ static inline void _tc_set_name_const(struct talloc_chunk *tc,
 static inline void *_talloc_named_const(const void *context, size_t size, const char *name)
 {
 	void *ptr;
-	struct talloc_chunk *tc;
+	struct talloc_chunk *tc = NULL;
 
 	ptr = __talloc(context, size, &tc);
 	if (unlikely(ptr == NULL)) {
@@ -1537,7 +1537,7 @@ _PUBLIC_ void *talloc_named(const void *context, size_t size, const char *fmt, .
 	va_list ap;
 	void *ptr;
 	const char *name;
-	struct talloc_chunk *tc;
+	struct talloc_chunk *tc = NULL;
 
 	ptr = __talloc(context, size, &tc);
 	if (unlikely(ptr == NULL)) return NULL;
@@ -1633,7 +1633,7 @@ _PUBLIC_ void *talloc_init(const char *fmt, ...)
 	va_list ap;
 	void *ptr;
 	const char *name;
-	struct talloc_chunk *tc;
+	struct talloc_chunk *tc = NULL;
 
 	ptr = __talloc(NULL, 0, &tc);
 	if (unlikely(ptr == NULL)) return NULL;
@@ -2449,7 +2449,7 @@ _PUBLIC_ void *_talloc_memdup(const void *t, const void *p, size_t size, const c
 static inline char *__talloc_strlendup(const void *t, const char *p, size_t len)
 {
 	char *ret;
-	struct talloc_chunk *tc;
+	struct talloc_chunk *tc = NULL;
 
 	ret = (char *)__talloc(t, len + 1, &tc);
 	if (unlikely(!ret)) return NULL;
@@ -2595,10 +2595,9 @@ static struct talloc_chunk *_vasprintf_tc(const void *t,
 	size_t len;
 	char *ret;
 	va_list ap2;
-	struct talloc_chunk *tc;
+	struct talloc_chunk *tc = NULL;
 	char buf[1024];
 
-	/* this call looks strange, but it makes it work on older solaris boxes */
 	va_copy(ap2, ap);
 	vlen = vsnprintf(buf, sizeof(buf), fmt, ap2);
 	va_end(ap2);
@@ -2662,6 +2661,7 @@ static inline char *__talloc_vaslenprintf_append(char *s, size_t slen,
 	char c;
 
 	va_copy(ap2, ap);
+	/* this call looks strange, but it makes it work on older solaris boxes */
 	alen = vsnprintf(&c, 1, fmt, ap2);
 	va_end(ap2);
 
@@ -2678,9 +2678,7 @@ static inline char *__talloc_vaslenprintf_append(char *s, size_t slen,
 	s = talloc_realloc(NULL, s, char, slen + alen + 1);
 	if (!s) return NULL;
 
-	va_copy(ap2, ap);
-	vsnprintf(s + slen, alen + 1, fmt, ap2);
-	va_end(ap2);
+	vsnprintf(s + slen, alen + 1, fmt, ap);
 
 	_tc_set_name_const(talloc_chunk_from_ptr(s), s);
 	return s;
@@ -2750,6 +2748,29 @@ _PUBLIC_ char *talloc_asprintf_append_buffer(char *s, const char *fmt, ...)
 	s = talloc_vasprintf_append_buffer(s, fmt, ap);
 	va_end(ap);
 	return s;
+}
+
+_PUBLIC_ void talloc_asprintf_addbuf(char **ps, const char *fmt, ...)
+{
+	va_list ap;
+	char *s = *ps;
+	char *t = NULL;
+
+	if (s == NULL) {
+		return;
+	}
+
+	va_start(ap, fmt);
+	t = talloc_vasprintf_append_buffer(s, fmt, ap);
+	va_end(ap);
+
+	if (t == NULL) {
+		/* signal failure to the next caller */
+		TALLOC_FREE(s);
+		*ps = NULL;
+	} else {
+		*ps = t;
+	}
 }
 
 /*

@@ -15,14 +15,15 @@ use IO::Poll qw(POLLIN);
 
 sub new($$$$$) {
 	my ($classname, $bindir, $srcdir, $server_maxtime,
-	    $opt_socket_wrapper_pcap, $opt_socket_wrapper_keep_pcap) = @_;
+	    $opt_socket_wrapper_pcap, $opt_socket_wrapper_keep_pcap,
+	    $default_ldb_backend) = @_;
 
 	my $self = {
 	    opt_socket_wrapper_pcap => $opt_socket_wrapper_pcap,
 	    opt_socket_wrapper_keep_pcap => $opt_socket_wrapper_keep_pcap,
 	};
 	$self->{samba3} = new Samba3($self, $bindir, $srcdir, $server_maxtime);
-	$self->{samba4} = new Samba4($self, $bindir, $srcdir, $server_maxtime);
+	$self->{samba4} = new Samba4($self, $bindir, $srcdir, $server_maxtime, $default_ldb_backend);
 	bless $self;
 	return $self;
 }
@@ -126,6 +127,10 @@ sub setup_env($$$)
 		warn("failed to start up environment '$envname'");
 		return undef;
 	}
+	if ($env eq "UNKNOWN") {
+		warn("unknown environment '$envname'");
+		return $env;
+	}
 
 	$target->{vars}->{$envname} = $env;
 	$target->{vars}->{$envname}->{target} = $target;
@@ -191,6 +196,7 @@ sub prepare_keyblobs($)
 
 	my $cadir = "$ENV{SRCDIR_ABS}/selftest/manage-ca/CA-samba.example.com";
 	my $cacert = "$cadir/Public/CA-samba.example.com-cert.pem";
+	# A file containing a CRL with no revocations.
 	my $cacrl_pem = "$cadir/Public/CA-samba.example.com-crl.pem";
 	my $dcdnsname = "$ctx->{hostname}.$ctx->{dnsname}";
 	my $dcdir = "$cadir/DCs/$dcdnsname";
@@ -361,7 +367,14 @@ sub mk_krb5_conf($$)
 	}
 
         if (defined($ctx->{tlsdir})) {
-	       print KRB5CONF "
+		if (defined($ENV{MITKRB5})) {
+			print KRB5CONF "
+ pkinit_anchors = FILE:$ctx->{tlsdir}/ca.pem
+ pkinit_kdc_hostname = $ctx->{hostname}.$ctx->{dnsname}
+
+";
+		} else {
+			print KRB5CONF "
 
 [appdefaults]
 	pkinit_anchors = FILE:$ctx->{tlsdir}/ca.pem
@@ -370,8 +383,10 @@ sub mk_krb5_conf($$)
 	enable-pkinit = true
 	pkinit_identity = FILE:$ctx->{tlsdir}/kdc.pem,$ctx->{tlsdir}/key.pem
 	pkinit_anchors = FILE:$ctx->{tlsdir}/ca.pem
+	pkinit_revoke = FILE:$ctx->{tlsdir}/crl.pem
 
 ";
+		}
         }
 
 	print KRB5CONF "
@@ -464,16 +479,31 @@ sub mk_mitkdc_conf($$)
 	$ctx->{realm} = {
 		master_key_type = aes256-cts
 		default_principal_flags = +preauth
+		pkinit_identity = FILE:$ctx->{tlsdir}/kdc.pem,$ctx->{tlsdir}/key.pem
+		pkinit_anchors = FILE:$ctx->{tlsdir}/ca.pem
+		pkinit_eku_checking = scLogin
+		pkinit_indicator = pkinit
+		pkinit_allow_upn = true
 	}
 
 	$ctx->{dnsname} = {
 		master_key_type = aes256-cts
 		default_principal_flags = +preauth
+		pkinit_identity = FILE:$ctx->{tlsdir}/kdc.pem,$ctx->{tlsdir}/key.pem
+		pkinit_anchors = FILE:$ctx->{tlsdir}/ca.pem
+		pkinit_eku_checking = scLogin
+		pkinit_indicator = pkinit
+		pkinit_allow_upn = true
 	}
 
 	$ctx->{domain} = {
 		master_key_type = aes256-cts
 		default_principal_flags = +preauth
+		pkinit_identity = FILE:$ctx->{tlsdir}/kdc.pem,$ctx->{tlsdir}/key.pem
+		pkinit_anchors = FILE:$ctx->{tlsdir}/ca.pem
+		pkinit_eku_checking = scLogin
+		pkinit_indicator = pkinit
+		pkinit_allow_upn = true
 	}
 
 [dbmodules]
@@ -620,6 +650,7 @@ sub get_interface($)
 		s2kmember         => 59,
 		admemidmapnss     => 60,
 		localadmember2    => 61,
+		admemautorid      => 62,
 
 		rootdnsforwarder  => 64,
 
@@ -934,6 +965,7 @@ my @exported_envvars = (
 	"UNACCEPTABLE_PASSWORD",
 	"LOCK_DIR",
 	"SMBD_TEST_LOG",
+	"KRB5_CRL_FILE",
 
 	# nss_wrapper
 	"NSS_WRAPPER_PASSWD",

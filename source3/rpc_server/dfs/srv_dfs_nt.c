@@ -59,10 +59,11 @@ WERROR _dfs_Add(struct pipes_struct *p, struct dfs_Add *r)
 	struct junction_map *jn = NULL;
 	struct referral *old_referral_list = NULL;
 	bool self_ref = False;
-	int consumedcnt = 0;
+	size_t consumedcnt = 0;
 	char *altpath = NULL;
 	NTSTATUS status;
 	TALLOC_CTX *ctx = talloc_tos();
+	const char *pathnamep = r->in.path;
 
 	if (session_info->unix_token->uid != sec_initial_uid()) {
 		DEBUG(10,("_dfs_add: uid != 0. Access denied.\n"));
@@ -84,13 +85,17 @@ WERROR _dfs_Add(struct pipes_struct *p, struct dfs_Add *r)
 		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
+	while (IS_DIRECTORY_SEP(pathnamep[0]) &&
+	       IS_DIRECTORY_SEP(pathnamep[1])) {
+		pathnamep++;
+	}
+
 	/* The following call can change the cwd. */
 	status = get_referred_path(ctx,
 				   session_info,
-				   r->in.path,
+				   pathnamep,
 				   remote_address,
 				   local_address,
-				   true, /*allow_broken_path */
 				   jn, &consumedcnt, &self_ref);
 	if(!NT_STATUS_IS_OK(status)) {
 		return ntstatus_to_werror(status);
@@ -137,11 +142,12 @@ WERROR _dfs_Remove(struct pipes_struct *p, struct dfs_Remove *r)
 		dcesrv_call_session_info(dce_call);
 	struct junction_map *jn = NULL;
 	bool self_ref = False;
-	int consumedcnt = 0;
+	size_t consumedcnt = 0;
 	bool found = False;
 	TALLOC_CTX *ctx = talloc_tos();
 	char *altpath = NULL;
 	NTSTATUS status;
+	const char *pathnamep = r->in.dfs_entry_path;
 
 	if (session_info->unix_token->uid != sec_initial_uid()) {
 		DEBUG(10,("_dfs_remove: uid != 0. Access denied.\n"));
@@ -167,12 +173,16 @@ WERROR _dfs_Remove(struct pipes_struct *p, struct dfs_Remove *r)
 			r->in.dfs_entry_path, r->in.servername, r->in.sharename));
 	}
 
+	while (IS_DIRECTORY_SEP(pathnamep[0]) &&
+	       IS_DIRECTORY_SEP(pathnamep[1])) {
+		pathnamep++;
+	}
+
 	status = get_referred_path(ctx,
 				   session_info,
-				   r->in.dfs_entry_path,
+				   pathnamep,
 				   remote_address,
 				   local_address,
-				   true, /*allow_broken_path */
 				   jn, &consumedcnt, &self_ref);
 	if(!NT_STATUS_IS_OK(status)) {
 		return WERR_NERR_DFSNOSUCHVOLUME;
@@ -392,21 +402,25 @@ WERROR _dfs_GetInfo(struct pipes_struct *p, struct dfs_GetInfo *r)
 		dcesrv_connection_get_remote_address(dcesrv_conn);
 	struct auth_session_info *session_info =
 		dcesrv_call_session_info(dce_call);
-	int consumedcnt = strlen(r->in.dfs_entry_path);
+	size_t consumedcnt = 0;
 	struct junction_map *jn = NULL;
 	bool self_ref = False;
 	TALLOC_CTX *ctx = talloc_tos();
 	bool ret;
 	NTSTATUS status;
+	const char *pathnamep = r->in.dfs_entry_path;
 
 	jn = talloc_zero(ctx, struct junction_map);
 	if (!jn) {
 		return WERR_NOT_ENOUGH_MEMORY;
 	}
 
-	ret = create_junction(ctx, r->in.dfs_entry_path,
-			      true, /* allow broken_path */
-			      jn);
+	while (IS_DIRECTORY_SEP(pathnamep[0]) &&
+	       IS_DIRECTORY_SEP(pathnamep[1])) {
+		pathnamep++;
+	}
+
+	ret = create_junction(ctx, pathnamep, jn);
 	if (!ret) {
 		return WERR_NERR_DFSNOSUCHSERVER;
 	}
@@ -414,13 +428,11 @@ WERROR _dfs_GetInfo(struct pipes_struct *p, struct dfs_GetInfo *r)
 	/* The following call can change the cwd. */
 	status = get_referred_path(ctx,
 				   session_info,
-				   r->in.dfs_entry_path,
+				   pathnamep,
 				   remote_address,
 				   local_address,
-				   true, /*allow_broken_path */
 				   jn, &consumedcnt, &self_ref);
-	if(!NT_STATUS_IS_OK(status) ||
-			consumedcnt < strlen(r->in.dfs_entry_path)) {
+	if(!NT_STATUS_IS_OK(status) || consumedcnt < strlen(pathnamep)) {
 		return WERR_NERR_DFSNOSUCHVOLUME;
 	}
 

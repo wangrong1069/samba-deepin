@@ -49,6 +49,7 @@ COMMON = [
     'gzip',
     'hostname',
     'htop',
+    'jq',
     'lcov',
     'make',
     'patch',
@@ -96,6 +97,7 @@ PKGS = [
     ('libgpgme11-dev', 'gpgme-devel'),
     # NOTE: Debian 8+ and Ubuntu 14.04+
     ('libgnutls28-dev', 'gnutls-devel'),
+    ('gnutls-bin', 'gnutls-utils'),
     ('libtasn1-bin', 'libtasn1-tools'),
     ('libtasn1-dev', 'libtasn1-devel'),
     ('', 'quota-devel'),
@@ -125,12 +127,16 @@ PKGS = [
     ('apt-utils', 'yum-utils'),
     ('pkg-config', 'pkgconfig'),
     ('procps', 'procps-ng'),  # required for the free cmd in tests
-    ('lsb-release', 'lsb-release'),  # we need lsb_relase to show info
+    ('lsb-release', 'lsb-release'),  # we need lsb_release to show info
     ('', 'rpcgen'),  # required for test
     # refer: https://fedoraproject.org/wiki/Changes/SunRPCRemoval
     ('', 'libtirpc-devel'),  # for <rpc/rpc.h> header on fedora
     ('', 'rpcsvc-proto-devel'), # for <rpcsvc/rquota.h> header
     ('mawk', 'gawk'),
+    ('', 'mold'),
+    ('', 'ShellCheck'),
+    ('', 'shfmt'),
+    ('', 'crypto-policies-scripts'),
 
     ('python3', 'python3'),
     ('python3-cryptography', 'python3-cryptography'), # for krb5 tests
@@ -139,11 +145,11 @@ PKGS = [
     ('python3-iso8601', 'python3-iso8601'),
     ('python3-gpg', 'python3-gpg'),  # defaults to ubuntu/fedora latest
     ('python3-markdown', 'python3-markdown'),
-    ('python3-matplotlib', ''),
     ('python3-dnspython', 'python3-dns'),
     ('python3-pexpect', ''),  # for wintest only
     ('python3-pyasn1', 'python3-pyasn1'), # for krb5 tests
     ('python3-setproctitle', 'python3-setproctitle'),
+    ('python3-requests', 'python3-requests'), # for cert auto enroll
 
     ('', 'python3-libsemanage'),
     ('', 'python3-policycoreutils'),
@@ -176,8 +182,9 @@ PKGS = [
     # rpm has no pkg for docbook-xml
     ('docbook-xml', 'docbook-dtds'),
     ('docbook-xsl', 'docbook-style-xsl'),
-    ('', 'keyutils-libs-devel'),
+    ('libkeyutils-dev', 'keyutils-libs-devel'),
     ('', 'which'),
+    ('xz-utils', 'xz')
 ]
 
 
@@ -230,7 +237,7 @@ if [ ! -f /usr/bin/python3 ]; then
 fi
 """
 
-CENTOS8_YUM_BOOTSTRAP = r"""
+CENTOS8S_YUM_BOOTSTRAP = r"""
 #!/bin/bash
 {GENERATED_MARKER}
 set -xueo pipefail
@@ -240,10 +247,8 @@ yum install -y dnf-plugins-core
 yum install -y epel-release
 
 yum -v repolist all
-yum config-manager --set-enabled PowerTools -y || \
-    yum config-manager --set-enabled powertools -y
-yum config-manager --set-enabled Devel -y || \
-    yum config-manager --set-enabled devel -y
+yum config-manager --set-enabled powertools -y
+
 yum update -y
 
 yum install -y \
@@ -258,6 +263,25 @@ DNF_BOOTSTRAP = r"""
 {GENERATED_MARKER}
 set -xueo pipefail
 
+dnf update -y
+
+dnf install -y \
+    --setopt=install_weak_deps=False \
+    {pkgs}
+
+dnf clean all
+
+update-crypto-policies --set DEFAULT:AD-SUPPORT
+"""
+
+DNF_BOOTSTRAP_MIT = r"""
+#!/bin/bash
+{GENERATED_MARKER}
+set -xueo pipefail
+
+dnf update -y
+dnf install -y dnf-plugins-core
+dnf copr -y enable abbra/krb5-test
 dnf update -y
 
 dnf install -y \
@@ -354,7 +378,9 @@ ADD *.sh /tmp/
 RUN /tmp/bootstrap.sh && /tmp/locale.sh
 
 # if ld.gold exists, force link it to ld
-RUN set -x; LD=$(which ld); LD_GOLD=$(which ld.gold); test -x $LD_GOLD && ln -sf $LD_GOLD $LD && test -x $LD && echo "$LD is now $LD_GOLD"
+RUN set -x; ! LD_GOLD=$(which ld.gold) || {{ LD=$(which ld) && ln -sf $LD_GOLD $LD && test -x $LD && echo "$LD is now $LD_GOLD"; }}
+# if ld.mold exists, force link it to ld (prefer mold over gold! ;-)
+RUN set -x; ! LD_MOLD=$(which ld.mold) || {{ LD=$(which ld) && ln -sf $LD_MOLD $LD && test -x $LD && echo "$LD is now $LD_MOLD"; }}
 
 # make test can not work with root, so we have to create a new user
 RUN useradd -m -U -s /bin/bash samba && \
@@ -364,7 +390,7 @@ RUN useradd -m -U -s /bin/bash samba && \
 USER samba
 WORKDIR /home/samba
 # samba tests rely on this
-ENV USER=samba LC_ALL=en_US.utf8 LANG=en_US.utf8
+ENV USER=samba LC_ALL=en_US.utf8 LANG=en_US.utf8 LANGUAGE=en_US
 """
 
 # Vagrantfile snippet for each dist
@@ -389,16 +415,7 @@ Vagrant.configure("2") do |config|
 end
 """
 
-
 DEB_DISTS = {
-    'debian10': {
-        'docker_image': 'debian:10',
-        'vagrant_box': 'debian/buster64',
-        'replace': {
-            'language-pack-en': '',   # included in locales
-            'liburing-dev': '',   # not available
-        }
-    },
     'debian11': {
         'docker_image': 'debian:11',
         'vagrant_box': 'debian/bullseye64',
@@ -406,9 +423,39 @@ DEB_DISTS = {
             'language-pack-en': '',   # included in locales
         }
     },
+    'debian11-32bit': {
+        'docker_image': 'registry-1.docker.io/i386/debian:11',
+        'vagrant_box': 'debian/bullseye32',
+        'replace': {
+            'language-pack-en': '',   # included in locales
+        }
+    },
+    'debian12': {
+        'docker_image': 'debian:12',
+        'vagrant_box': 'debian/bookworm64',
+        'replace': {
+            'language-pack-en': '',   # included in locales
+            'libtracker-sparql-2.0-dev': '',  # only tracker 3.x is available
+        }
+    },
+    'debian12-32bit': {
+        'docker_image': 'registry-1.docker.io/i386/debian:12',
+        'vagrant_box': 'debian/bookworm32',
+        'replace': {
+            'language-pack-en': '',   # included in locales
+            'libtracker-sparql-2.0-dev': '',  # only tracker 3.x is available
+        }
+    },
     'ubuntu1804': {
         'docker_image': 'ubuntu:18.04',
         'vagrant_box': 'ubuntu/bionic64',
+        'replace': {
+            'liburing-dev': '',   # not available
+        }
+    },
+    'ubuntu1804-32bit': {
+        'docker_image': 'registry-1.docker.io/i386/ubuntu:18.04',
+        'vagrant_box': 'ubuntu/bionic32',
         'replace': {
             'liburing-dev': '',   # not available
         }
@@ -420,6 +467,13 @@ DEB_DISTS = {
             'liburing-dev': '',   # not available
         }
     },
+    'ubuntu2204': {
+        'docker_image': 'ubuntu:22.04',
+        'vagrant_box': 'ubuntu/jammy64',
+        'replace': {
+            'libtracker-sparql-2.0-dev': '',  # only tracker 3.x is available
+        },
+    }
 }
 
 
@@ -438,11 +492,11 @@ RPM_DISTS = {
             'python3-gpg': 'python36-gpg',
             'python3-iso8601' : 'python36-iso8601',
             'python3-markdown': 'python36-markdown',
+            'python3-requests': 'python36-requests',
             # although python36-devel is available
             # after epel-release installed
             # however, all other python3 pkgs are still python36-ish
             'python2-gpg': 'pygpgme',
-            'python3-gpg': '',  # no python3-gpg yet
             '@development-tools': '"@Development Tools"',  # add quotes
             'glibc-langpack-en': '',  # included in glibc-common
             'glibc-locale-source': '',  # included in glibc-common
@@ -455,15 +509,19 @@ RPM_DISTS = {
             'glusterfs-devel': '',
             'libcephfs-devel': '',
             'gnutls-devel': 'compat-gnutls37-devel',
+            'gnutls-utils': 'compat-gnutls37-utils',
             'liburing-devel': '',   # not available
             'python3-setproctitle': 'python36-setproctitle',
             'tracker-devel': '', # do not install
+            'mold': '',
+            'ShellCheck': '',
+            'shfmt': '',
         }
     },
-    'centos8': {
-        'docker_image': 'centos:8',
-        'vagrant_box': 'centos/8',
-        'bootstrap': CENTOS8_YUM_BOOTSTRAP,
+    'centos8s': {
+        'docker_image': 'quay.io/centos/centos:stream8',
+        'vagrant_box': 'centos/stream8',
+        'bootstrap': CENTOS8S_YUM_BOOTSTRAP,
         'replace': {
             'lsb-release': 'redhat-lsb',
             '@development-tools': '"@Development Tools"',  # add quotes
@@ -472,11 +530,14 @@ RPM_DISTS = {
             'perl-Test-Base': 'perl-Test-Simple',
             'perl-FindBin': '',
             'liburing-devel': '', # not available yet, Add me back, once available!
+            'mold': '',
+            'ShellCheck': '',
+            'shfmt': '',
         }
     },
-    'fedora34': {
-        'docker_image': 'fedora:34',
-        'vagrant_box': 'fedora/34-cloud-base',
+    'fedora38': {
+        'docker_image': 'quay.io/fedora/fedora:38',
+        'vagrant_box': 'fedora/38-cloud-base',
         'bootstrap': DNF_BOOTSTRAP,
         'replace': {
             'lsb-release': 'redhat-lsb',
@@ -485,20 +546,9 @@ RPM_DISTS = {
             'libtracker-sparql-2.0-dev': '',  # only tracker 3.x is available
         }
     },
-    'fedora35': {
-        'docker_image': 'fedora:35',
-        'vagrant_box': 'fedora/35-cloud-base',
-        'bootstrap': DNF_BOOTSTRAP,
-        'replace': {
-            'lsb-release': 'redhat-lsb',
-            'perl-FindBin': '',
-            'python3-iso8601': 'python3-dateutil',
-            'libtracker-sparql-2.0-dev': '',  # only tracker 3.x is available
-        }
-    },
-    'opensuse151': {
-        'docker_image': 'opensuse/leap:15.1',
-        'vagrant_box': 'opensuse/openSUSE-15.1-x86_64',
+    'opensuse155': {
+        'docker_image': 'opensuse/leap:15.5',
+        'vagrant_box': 'opensuse/openSUSE-15.5-x86_64',
         'bootstrap': ZYPPER_BOOTSTRAP,
         'replace': {
             '@development-tools': '',
@@ -510,38 +560,7 @@ RPM_DISTS = {
             'jansson-devel': 'libjansson-devel',
             'keyutils-libs-devel': 'keyutils-devel',
             'krb5-workstation': 'krb5-client',
-            'python3-libsemanage': 'python2-semanage',
-            'openldap-devel': 'openldap2-devel',
-            'perl-Archive-Tar': 'perl-Archive-Tar-Wrapper',
-            'perl-JSON-Parse': 'perl-JSON-XS',
-            'perl-generators': '',
-            'perl-interpreter': '',
-            'perl-FindBin': '',
-            'procps-ng': 'procps',
-            'python3-dns': 'python3-dnspython',
-            'python3-markdown': 'python3-Markdown',
-            'quota-devel': '',
-            'glusterfs-api-devel': '',
-            'libtasn1-tools': '', # asn1Parser is part of libtasn1
-            'mingw64-gcc': '', # doesn't exist
-            'liburing-devel': '',   # not available
-        }
-    },
-    'opensuse152': {
-        'docker_image': 'opensuse/leap:15.2',
-        'vagrant_box': 'opensuse/openSUSE-15.2-x86_64',
-        'bootstrap': ZYPPER_BOOTSTRAP,
-        'replace': {
-            '@development-tools': '',
-            'dbus-devel': 'dbus-1-devel',
-            'docbook-style-xsl': 'docbook-xsl-stylesheets',
-            'glibc-common': 'glibc-locale',
-            'glibc-locale-source': 'glibc-i18ndata',
-            'glibc-langpack-en': '',
-            'jansson-devel': 'libjansson-devel',
-            'keyutils-libs-devel': 'keyutils-devel',
-            'krb5-workstation': 'krb5-client',
-            'python3-libsemanage': 'python2-semanage',
+            'python3-libsemanage': 'python3-semanage',
             'openldap-devel': 'openldap2-devel',
             'perl-Archive-Tar': 'perl-Archive-Tar-Wrapper',
             'perl-JSON-Parse': 'perl-JSON-XS',
@@ -554,7 +573,11 @@ RPM_DISTS = {
             'python3-markdown': 'python3-Markdown',
             'quota-devel': '',
             'glusterfs-api-devel': '',
+            'gnutls-utils': 'gnutls',
             'libtasn1-tools': '', # asn1Parser is part of libtasn1
+            'mold': '',
+            'shfmt': '',
+            'yum-utils': '',
         }
     }
 }

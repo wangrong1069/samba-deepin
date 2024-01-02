@@ -106,7 +106,7 @@ static uint32_t filter_mode_by_protocol(uint32_t mode)
 
 mode_t unix_mode(connection_struct *conn, int dosmode,
 		 const struct smb_filename *smb_fname,
-		 struct smb_filename *smb_fname_parent)
+		 struct files_struct *parent_dirfsp)
 {
 	mode_t result = (S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IWOTH);
 	mode_t dir_mode = 0; /* Mode of the inherit_from directory if
@@ -116,20 +116,24 @@ mode_t unix_mode(connection_struct *conn, int dosmode,
 		result &= ~(S_IWUSR | S_IWGRP | S_IWOTH);
 	}
 
-	if ((smb_fname_parent != NULL) && lp_inherit_permissions(SNUM(conn))) {
+	if ((parent_dirfsp != NULL) && lp_inherit_permissions(SNUM(conn))) {
+		struct stat_ex sbuf = { .st_ex_nlink = 0, };
+		int ret;
+
 		DBG_DEBUG("[%s] inheriting from [%s]\n",
 			  smb_fname_str_dbg(smb_fname),
-			  smb_fname_str_dbg(smb_fname_parent));
+			  smb_fname_str_dbg(parent_dirfsp->fsp_name));
 
-		if (SMB_VFS_STAT(conn, smb_fname_parent) != 0) {
-			DBG_ERR("stat failed [%s]: %s\n",
-				smb_fname_str_dbg(smb_fname_parent),
+		ret = SMB_VFS_FSTAT(parent_dirfsp, &sbuf);
+		if (ret != 0) {
+			DBG_ERR("fstat failed [%s]: %s\n",
+				smb_fname_str_dbg(parent_dirfsp->fsp_name),
 				strerror(errno));
 			return(0);      /* *** shouldn't happen! *** */
 		}
 
 		/* Save for later - but explicitly remove setuid bit for safety. */
-		dir_mode = smb_fname_parent->st.st_ex_mode & ~S_ISUID;
+		dir_mode = sbuf.st_ex_mode & ~S_ISUID;
 		DEBUG(2,("unix_mode(%s) inherit mode %o\n",
 			 smb_fname_str_dbg(smb_fname), (int)dir_mode));
 		/* Clear "result" */
@@ -185,44 +189,48 @@ mode_t unix_mode(connection_struct *conn, int dosmode,
 ****************************************************************************/
 
 static uint32_t dos_mode_from_sbuf(connection_struct *conn,
-				 const struct smb_filename *smb_fname)
+				   const struct stat_ex *st,
+				   struct files_struct *fsp)
 {
 	int result = 0;
-	enum mapreadonly_options ro_opts = (enum mapreadonly_options)lp_map_readonly(SNUM(conn));
+	enum mapreadonly_options ro_opts =
+		(enum mapreadonly_options)lp_map_readonly(SNUM(conn));
 
 #if defined(UF_IMMUTABLE) && defined(SF_IMMUTABLE)
 	/* if we can find out if a file is immutable we should report it r/o */
-	if (smb_fname->st.st_ex_flags & (UF_IMMUTABLE | SF_IMMUTABLE)) {
+	if (st->st_ex_flags & (UF_IMMUTABLE | SF_IMMUTABLE)) {
 		result |= FILE_ATTRIBUTE_READONLY;
 	}
 #endif
 	if (ro_opts == MAP_READONLY_YES) {
 		/* Original Samba method - map inverse of user "w" bit. */
-		if ((smb_fname->st.st_ex_mode & S_IWUSR) == 0) {
+		if ((st->st_ex_mode & S_IWUSR) == 0) {
 			result |= FILE_ATTRIBUTE_READONLY;
 		}
 	} else if (ro_opts == MAP_READONLY_PERMISSIONS) {
 		/* smb_fname->fsp can be NULL for an MS-DFS link. */
 		/* Check actual permissions for read-only. */
-		if (smb_fname->fsp != NULL) {
-			if (!can_write_to_fsp(smb_fname->fsp))
-			{
-				result |= FILE_ATTRIBUTE_READONLY;
-			}
+		if ((fsp != NULL) && !can_write_to_fsp(fsp)) {
+			result |= FILE_ATTRIBUTE_READONLY;
 		}
 	} /* Else never set the readonly bit. */
 
-	if (MAP_ARCHIVE(conn) && ((smb_fname->st.st_ex_mode & S_IXUSR) != 0))
+	if (MAP_ARCHIVE(conn) && ((st->st_ex_mode & S_IXUSR) != 0)) {
 		result |= FILE_ATTRIBUTE_ARCHIVE;
+	}
 
-	if (MAP_SYSTEM(conn) && ((smb_fname->st.st_ex_mode & S_IXGRP) != 0))
+	if (MAP_SYSTEM(conn) && ((st->st_ex_mode & S_IXGRP) != 0)) {
 		result |= FILE_ATTRIBUTE_SYSTEM;
+	}
 
-	if (MAP_HIDDEN(conn) && ((smb_fname->st.st_ex_mode & S_IXOTH) != 0))
+	if (MAP_HIDDEN(conn) && ((st->st_ex_mode & S_IXOTH) != 0)) {
 		result |= FILE_ATTRIBUTE_HIDDEN;
+	}
 
-	if (S_ISDIR(smb_fname->st.st_ex_mode))
-		result = FILE_ATTRIBUTE_DIRECTORY | (result & FILE_ATTRIBUTE_READONLY);
+	if (S_ISDIR(st->st_ex_mode)) {
+		result = FILE_ATTRIBUTE_DIRECTORY |
+			 (result & FILE_ATTRIBUTE_READONLY);
+	}
 
 	dos_mode_debug_print(__func__, result);
 
@@ -298,47 +306,34 @@ NTSTATUS parse_dos_attribute_blob(struct smb_filename *smb_fname,
 		}
 		break;
 	case 4:
+	case 5:
 	{
-		struct xattr_DosInfo4 *info = &dosattrib.info.info4;
+		uint32_t info_valid_flags;
+		NTTIME info_create_time;
 
-		dosattr = info->attrib;
+		if (dosattrib.version == 4) {
+			info_valid_flags = dosattrib.info.info4.valid_flags;
+			info_create_time = dosattrib.info.info4.create_time;
+			dosattr = dosattrib.info.info4.attrib;
+		} else {
+			info_valid_flags = dosattrib.info.info5.valid_flags;
+			info_create_time = dosattrib.info.info5.create_time;
+			dosattr = dosattrib.info.info5.attrib;
+		}
 
-		if ((info->valid_flags & XATTR_DOSINFO_CREATE_TIME) &&
-		    !null_nttime(info->create_time))
+		if ((info_valid_flags & XATTR_DOSINFO_CREATE_TIME) &&
+		    !null_nttime(info_create_time))
 		{
 			struct timespec creat_time;
 
-			creat_time = nt_time_to_full_timespec(info->create_time);
+			creat_time = nt_time_to_full_timespec(info_create_time);
 			update_stat_ex_create_time(&smb_fname->st, creat_time);
 
 			DBG_DEBUG("file [%s] creation time [%s]\n",
 				smb_fname_str_dbg(smb_fname),
-				nt_time_string(talloc_tos(), info->create_time));
+				nt_time_string(talloc_tos(), info_create_time));
 		}
 
-		if (info->valid_flags & XATTR_DOSINFO_ITIME) {
-			struct timespec itime;
-			uint64_t file_id;
-
-			itime = nt_time_to_unix_timespec(info->itime);
-			if (smb_fname->st.st_ex_iflags &
-			    ST_EX_IFLAG_CALCULATED_ITIME)
-			{
-				update_stat_ex_itime(&smb_fname->st, itime);
-			}
-
-			file_id = make_file_id_from_itime(&smb_fname->st);
-			if (smb_fname->st.st_ex_iflags &
-			    ST_EX_IFLAG_CALCULATED_FILE_ID)
-			{
-				update_stat_ex_file_id(&smb_fname->st, file_id);
-			}
-
-			DBG_DEBUG("file [%s] itime [%s] fileid [%"PRIx64"]\n",
-				smb_fname_str_dbg(smb_fname),
-				nt_time_string(talloc_tos(), info->itime),
-				file_id);
-		}
 		break;
 	}
 	default:
@@ -416,12 +411,13 @@ NTSTATUS fget_ea_dos_attribute(struct files_struct *fsp,
 ****************************************************************************/
 
 NTSTATUS set_ea_dos_attribute(connection_struct *conn,
-			      const struct smb_filename *smb_fname,
+			      struct smb_filename *smb_fname,
 			      uint32_t dosmode)
 {
-	struct xattr_DOSATTRIB dosattrib;
+	struct xattr_DOSATTRIB dosattrib = { .version = 0, };
 	enum ndr_err_code ndr_err;
-	DATA_BLOB blob;
+	DATA_BLOB blob = { .data = NULL, };
+	struct timespec btime;
 	int ret;
 
 	if (!lp_store_dos_attributes(SNUM(conn))) {
@@ -438,21 +434,12 @@ NTSTATUS set_ea_dos_attribute(connection_struct *conn,
 	 */
 	dosmode &= ~FILE_ATTRIBUTE_OFFLINE;
 
-	ZERO_STRUCT(dosattrib);
-	ZERO_STRUCT(blob);
-
-	dosattrib.version = 4;
-	dosattrib.info.info4.valid_flags = XATTR_DOSINFO_ATTRIB |
+	dosattrib.version = 5;
+	dosattrib.info.info5.valid_flags = XATTR_DOSINFO_ATTRIB |
 					XATTR_DOSINFO_CREATE_TIME;
-	dosattrib.info.info4.attrib = dosmode;
-	dosattrib.info.info4.create_time = full_timespec_to_nt_time(
+	dosattrib.info.info5.attrib = dosmode;
+	dosattrib.info.info5.create_time = full_timespec_to_nt_time(
 		&smb_fname->st.st_ex_btime);
-
-	if (!(smb_fname->st.st_ex_iflags & ST_EX_IFLAG_CALCULATED_ITIME)) {
-		dosattrib.info.info4.valid_flags |= XATTR_DOSINFO_ITIME;
-		dosattrib.info.info4.itime = full_timespec_to_nt_time(
-			&smb_fname->st.st_ex_itime);
-	}
 
 	DEBUG(10,("set_ea_dos_attributes: set attribute 0x%x, btime = %s on file %s\n",
 		(unsigned int)dosmode,
@@ -530,11 +517,11 @@ NTSTATUS set_ea_dos_attribute(connection_struct *conn,
 	 * We correctly stored the create time.
 	 * We *always* set XATTR_DOSINFO_CREATE_TIME,
 	 * so now it can no longer be considered
-	 * calculated.
+	 * calculated. Make sure to use the value rounded
+	 * to NTTIME granularity we've stored in the xattr.
 	 */
-	update_stat_ex_create_time(
-		&smb_fname->fsp->fsp_name->st,
-		smb_fname->st.st_ex_btime);
+	btime = nt_time_to_full_timespec(dosattrib.info.info5.create_time);
+	update_stat_ex_create_time(&smb_fname->st, btime);
 
 	DEBUG(10,("set_ea_dos_attribute: set EA 0x%x on file %s\n",
 		(unsigned int)dosmode,
@@ -542,46 +529,53 @@ NTSTATUS set_ea_dos_attribute(connection_struct *conn,
 	return NT_STATUS_OK;
 }
 
+static uint32_t
+dos_mode_from_name(connection_struct *conn, const char *name, uint32_t dosmode)
+{
+	const char *p = NULL;
+	uint32_t result = dosmode;
+
+	if (!(result & FILE_ATTRIBUTE_HIDDEN) &&
+	    lp_hide_dot_files(SNUM(conn)))
+	{
+		p = strrchr_m(name, '/');
+		if (p) {
+			p++;
+		} else {
+			p = name;
+		}
+
+		/* Only . and .. are not hidden. */
+		if ((p[0] == '.') && !(ISDOT(p) || ISDOTDOT(p))) {
+			result |= FILE_ATTRIBUTE_HIDDEN;
+		}
+	}
+
+	if (!(result & FILE_ATTRIBUTE_HIDDEN) && IS_HIDDEN_PATH(conn, name)) {
+		result |= FILE_ATTRIBUTE_HIDDEN;
+	}
+
+	return result;
+}
+
 /****************************************************************************
  Change a unix mode to a dos mode for an ms dfs link.
 ****************************************************************************/
 
 uint32_t dos_mode_msdfs(connection_struct *conn,
-		      const struct smb_filename *smb_fname)
+			const char *name,
+			const struct stat_ex *st)
 {
 	uint32_t result = 0;
 
-	DEBUG(8,("dos_mode_msdfs: %s\n", smb_fname_str_dbg(smb_fname)));
+	DEBUG(8, ("dos_mode_msdfs: %s\n", name));
 
-	if (!VALID_STAT(smb_fname->st)) {
+	if (!VALID_STAT(*st)) {
 		return 0;
 	}
 
-	/* First do any modifications that depend on the path name. */
-	/* hide files with a name starting with a . */
-	if (lp_hide_dot_files(SNUM(conn))) {
-		const char *p = strrchr_m(smb_fname->base_name, '/');
-		if (p) {
-			p++;
-		} else {
-			p = smb_fname->base_name;
-		}
-
-		/* Only . and .. are not hidden. */
-		if (p[0] == '.' && !((p[1] == '\0') ||
-				(p[1] == '.' && p[2] == '\0'))) {
-			result |= FILE_ATTRIBUTE_HIDDEN;
-		}
-	}
-
-	result |= dos_mode_from_sbuf(conn, smb_fname);
-
-	/* Optimization : Only call is_hidden_path if it's not already
-	   hidden. */
-	if (!(result & FILE_ATTRIBUTE_HIDDEN) &&
-	    IS_HIDDEN_PATH(conn, smb_fname->base_name)) {
-		result |= FILE_ATTRIBUTE_HIDDEN;
-	}
+	result = dos_mode_from_name(conn, name, result);
+	result |= dos_mode_from_sbuf(conn, st, NULL);
 
 	if (result == 0) {
 		result = FILE_ATTRIBUTE_NORMAL;
@@ -607,16 +601,11 @@ static NTSTATUS dos_mode_check_compressed(struct files_struct *fsp,
 {
 	NTSTATUS status;
 	uint16_t compression_fmt;
-	TALLOC_CTX *tmp_ctx = talloc_new(NULL);
-	if (tmp_ctx == NULL) {
-		status = NT_STATUS_NO_MEMORY;
-		goto err_out;
-	}
 
-	status = SMB_VFS_FGET_COMPRESSION(fsp->conn, tmp_ctx, fsp,
-					 &compression_fmt);
+	status = SMB_VFS_FGET_COMPRESSION(
+		fsp->conn, talloc_tos(), fsp, &compression_fmt);
 	if (!NT_STATUS_IS_OK(status)) {
-		goto err_ctx_free;
+		return status;
 	}
 
 	if (compression_fmt == COMPRESSION_FORMAT_LZNT1) {
@@ -624,46 +613,7 @@ static NTSTATUS dos_mode_check_compressed(struct files_struct *fsp,
 	} else {
 		*is_compressed = false;
 	}
-	status = NT_STATUS_OK;
-
-err_ctx_free:
-	talloc_free(tmp_ctx);
-err_out:
-	return status;
-}
-
-static uint32_t dos_mode_from_name(connection_struct *conn,
-				   const struct smb_filename *smb_fname,
-				   uint32_t dosmode)
-{
-	const char *p = NULL;
-	uint32_t result = dosmode;
-
-	if (!(result & FILE_ATTRIBUTE_HIDDEN) &&
-	    lp_hide_dot_files(SNUM(conn)))
-	{
-		p = strrchr_m(smb_fname->base_name, '/');
-		if (p) {
-			p++;
-		} else {
-			p = smb_fname->base_name;
-		}
-
-		/* Only . and .. are not hidden. */
-		if ((p[0] == '.') &&
-		    !((p[1] == '\0') || (p[1] == '.' && p[2] == '\0')))
-		{
-			result |= FILE_ATTRIBUTE_HIDDEN;
-		}
-	}
-
-	if (!(result & FILE_ATTRIBUTE_HIDDEN) &&
-	    IS_HIDDEN_PATH(conn, smb_fname->base_name))
-	{
-		result |= FILE_ATTRIBUTE_HIDDEN;
-	}
-
-	return result;
+	return NT_STATUS_OK;
 }
 
 static uint32_t dos_mode_post(uint32_t dosmode,
@@ -704,7 +654,7 @@ static uint32_t dos_mode_post(uint32_t dosmode,
 		}
 	}
 
-	dosmode |= dos_mode_from_name(fsp->conn, smb_fname, dosmode);
+	dosmode |= dos_mode_from_name(fsp->conn, smb_fname->base_name, dosmode);
 
 	if (S_ISDIR(smb_fname->st.st_ex_mode)) {
 		dosmode |= FILE_ATTRIBUTE_DIRECTORY;
@@ -753,6 +703,10 @@ uint32_t fdos_mode(struct files_struct *fsp)
 		return FILE_ATTRIBUTE_NORMAL;
 	}
 
+	if (fsp->fsp_name->st.cached_dos_attributes != FILE_ATTRIBUTES_INVALID) {
+		return fsp->fsp_name->st.cached_dos_attributes;
+	}
+
 	/* Get the DOS attributes via the VFS if we can */
 	status = vfs_fget_dos_attributes(fsp, &result);
 	if (!NT_STATUS_IS_OK(status)) {
@@ -760,12 +714,14 @@ uint32_t fdos_mode(struct files_struct *fsp)
 		 * Only fall back to using UNIX modes if we get NOT_IMPLEMENTED.
 		 */
 		if (NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
-			result |= dos_mode_from_sbuf(fsp->conn, fsp->fsp_name);
+			result |= dos_mode_from_sbuf(fsp->conn,
+						     &fsp->fsp_name->st,
+						     fsp);
 		}
 	}
 
-	result = dos_mode_post(result, fsp, __func__);
-	return result;
+	fsp->fsp_name->st.cached_dos_attributes = dos_mode_post(result, fsp, __func__);
+	return fsp->fsp_name->st.cached_dos_attributes;
 }
 
 struct dos_mode_at_state {
@@ -932,7 +888,7 @@ int file_set_dosmode(connection_struct *conn,
 	int mask=0;
 	mode_t tmp;
 	mode_t unixmode;
-	int ret = -1, lret = -1;
+	int ret = -1;
 	NTSTATUS status;
 
 	if (!CAN_WRITE(conn)) {
@@ -955,8 +911,8 @@ int file_set_dosmode(connection_struct *conn,
 	unixmode = smb_fname->st.st_ex_mode;
 
 	if (smb_fname->fsp != NULL) {
-		get_acl_group_bits(conn, smb_fname,
-			&smb_fname->st.st_ex_mode);
+		get_acl_group_bits(
+			conn, smb_fname->fsp, &smb_fname->st.st_ex_mode);
 	}
 
 	if (S_ISDIR(smb_fname->st.st_ex_mode))
@@ -973,26 +929,26 @@ int file_set_dosmode(connection_struct *conn,
 	}
 
 	if (NT_STATUS_IS_OK(status)) {
-		if (!newfile) {
-			notify_fname(conn, NOTIFY_ACTION_MODIFIED,
-				FILE_NOTIFY_CHANGE_ATTRIBUTES,
-				smb_fname->base_name);
-		}
-		smb_fname->st.st_ex_mode = unixmode;
-		return 0;
-	} else {
-		/*
-		 * Only fall back to using UNIX modes if
-		 * we get NOT_IMPLEMENTED.
-		 */
-		if (!NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
-			errno = map_errno_from_nt_status(status);
-			return -1;
-		}
+		smb_fname->st.cached_dos_attributes = dosmode;
+		ret = 0;
+		goto done;
+	}
+
+	/*
+	 * Only fall back to using UNIX modes if
+	 * we get NOT_IMPLEMENTED.
+	 */
+	if (!NT_STATUS_EQUAL(status, NT_STATUS_NOT_IMPLEMENTED)) {
+		errno = map_errno_from_nt_status(status);
+		return -1;
 	}
 
 	/* Fall back to UNIX modes. */
-	unixmode = unix_mode(conn, dosmode, smb_fname, parent_dir);
+	unixmode = unix_mode(
+		conn,
+		dosmode,
+		smb_fname,
+		parent_dir != NULL ? parent_dir->fsp : NULL);
 
 	/* preserve the file type bits */
 	mask |= S_IFMT;
@@ -1038,9 +994,11 @@ int file_set_dosmode(connection_struct *conn,
 	 * Simply refuse to do the chmod in this case.
 	 */
 
-	if (S_ISDIR(smb_fname->st.st_ex_mode) && (unixmode & S_ISGID) &&
-			geteuid() != sec_initial_uid() &&
-			!current_user_in_group(conn, smb_fname->st.st_ex_gid)) {
+	if (S_ISDIR(smb_fname->st.st_ex_mode) &&
+	    (unixmode & S_ISGID) &&
+	    geteuid() != sec_initial_uid() &&
+	    !current_user_in_group(conn, smb_fname->st.st_ex_gid))
+	{
 		DEBUG(3,("file_set_dosmode: setgid bit cannot be "
 			"set for directory %s\n",
 			smb_fname_str_dbg(smb_fname)));
@@ -1050,13 +1008,7 @@ int file_set_dosmode(connection_struct *conn,
 
 	ret = SMB_VFS_FCHMOD(smb_fname->fsp, unixmode);
 	if (ret == 0) {
-		if(!newfile || (lret != -1)) {
-			notify_fname(conn, NOTIFY_ACTION_MODIFIED,
-				     FILE_NOTIFY_CHANGE_ATTRIBUTES,
-				     smb_fname->base_name);
-		}
-		smb_fname->st.st_ex_mode = unixmode;
-		return 0;
+		goto done;
 	}
 
 	if((errno != EPERM) && (errno != EACCES))
@@ -1079,6 +1031,7 @@ int file_set_dosmode(connection_struct *conn,
 	ret = SMB_VFS_FCHMOD(smb_fname->fsp, unixmode);
 	unbecome_root();
 
+done:
 	if (!newfile) {
 		notify_fname(conn, NOTIFY_ACTION_MODIFIED,
 			     FILE_NOTIFY_CHANGE_ATTRIBUTES,
@@ -1144,7 +1097,7 @@ NTSTATUS file_set_sparse(connection_struct *conn,
 		 * MS-FSA 2.1.1.5 IsSparse
 		 *
 		 * This is a per stream attribute, but our backends don't
-		 * support it a consistent way, therefor just pretend
+		 * support it a consistent way, therefore just pretend
 		 * success and ignore the request.
 		 */
 		DBG_DEBUG("Ignoring request to set FILE_ATTRIBUTE_SPARSE on "
@@ -1184,6 +1137,7 @@ NTSTATUS file_set_sparse(connection_struct *conn,
 		     FILE_NOTIFY_CHANGE_ATTRIBUTES,
 		     fsp->fsp_name->base_name);
 
+	fsp->fsp_name->st.cached_dos_attributes = new_dosmode;
 	fsp->fsp_flags.is_sparse = sparse;
 
 	return NT_STATUS_OK;

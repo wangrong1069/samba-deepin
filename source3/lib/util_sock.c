@@ -30,6 +30,7 @@
 #include "../lib/tsocket/tsocket.h"
 #include "lib/util/sys_rw.h"
 #include "lib/util/sys_rw_data.h"
+#include "source3/lib/util_tsock.h"
 
 /****************************************************************************
  Determine if a file descriptor is in fact a socket.
@@ -44,7 +45,7 @@ bool is_a_socket(int fd)
 }
 
 /****************************************************************************
- Read data from a file descriptor with a timout in msec.
+ Read data from a file descriptor with a timeout in msec.
  mincount = if timeout, minimum to read before returning
  maxcount = number to be read.
  time_out = timeout in milliseconds

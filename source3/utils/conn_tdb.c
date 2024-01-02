@@ -122,12 +122,13 @@ static int traverse_tcon_fn(struct smbXsrv_tcon_global0 *global,
 
 	data.pid = global->server_id;
 	data.cnum = global->tcon_global_id;
+	data.sess_id = sess_id;
 	fstrcpy(data.servicename, global->share_name);
 	data.uid = sess.uid;
 	data.gid = sess.gid;
 	fstrcpy(data.addr, sess.addr);
 	fstrcpy(data.machine, sess.machine);
-	data.start = nt_time_to_unix(global->creation_time);
+	data.start = global->creation_time;
 	data.encryption_flags = global->encryption_flags;
 	data.cipher = sess.cipher;
 	data.dialect = sess.dialect;

@@ -649,7 +649,7 @@ bool virusfilter_io_readl(TALLOC_CTX *ctx,
 		}
 
 		/*
-		 * We read read_size bytes. Extend the useable
+		 * We read read_size bytes. Extend the usable
 		 * buffer length.
 		 */
 		io_h->r_len += read_size;
@@ -956,10 +956,6 @@ int virusfilter_shell_set_conn_env(
 	fstring pidstr;
 	int ret;
 
-	if (local_machine_name == NULL || *local_machine_name == '\0') {
-		local_machine_name = lp_netbios_name();
-	}
-
 	server_addr_p = tsocket_address_inet_addr_string(
 				conn->sconn->local_address, talloc_tos());
 
@@ -1009,7 +1005,7 @@ int virusfilter_shell_set_conn_env(
 	virusfilter_env_set(mem_ctx, env_list, "VIRUSFILTER_USER_NAME",
 			    get_current_username());
 	virusfilter_env_set(mem_ctx, env_list, "VIRUSFILTER_USER_DOMAIN",
-			    current_user_info.domain);
+			    get_current_user_info_domain());
 
 	return 0;
 }

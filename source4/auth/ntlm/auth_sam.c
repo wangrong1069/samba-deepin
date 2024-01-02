@@ -3,7 +3,7 @@
    Password and authentication handling
    Copyright (C) Andrew Bartlett <abartlet@samba.org> 2001-2009
    Copyright (C) Gerald Carter                             2003
-   Copyright (C) Stefan Metzmacher                         2005
+   Copyright (C) Stefan Metzmacher                         2005-2010
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include "auth/ntlm/auth_proto.h"
 #include "auth/auth_sam.h"
 #include "dsdb/samdb/samdb.h"
+#include "dsdb/samdb/ldb_modules/util.h"
 #include "dsdb/common/util.h"
 #include "param/param.h"
 #include "librpc/gen_ndr/ndr_irpc_c.h"
@@ -37,6 +38,10 @@
 #include "libcli/auth/libcli_auth.h"
 #include "libds/common/roles.h"
 #include "lib/util/tevent_ntstatus.h"
+#include "system/kerberos.h"
+#include "auth/kerberos/kerberos.h"
+#include "kdc/authn_policy_util.h"
+#include "kdc/db-glue.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_AUTH
@@ -52,9 +57,10 @@ extern const char *domain_ref_attrs[];
 ****************************************************************************/
 static NTSTATUS authsam_password_ok(struct auth4_context *auth_context,
 				    TALLOC_CTX *mem_ctx,
-				    uint16_t acct_flags,
-				    const struct samr_Password *lm_pwd, 
 				    const struct samr_Password *nt_pwd,
+				    struct smb_krb5_context *smb_krb5_context,
+				    const DATA_BLOB *stored_aes_256_key,
+				    const krb5_data *salt,
 				    const struct auth_usersupplied_info *user_info, 
 				    DATA_BLOB *user_sess_key, 
 				    DATA_BLOB *lm_sess_key)
@@ -65,6 +71,46 @@ static NTSTATUS authsam_password_ok(struct auth4_context *auth_context,
 	case AUTH_PASSWORD_PLAIN: 
 	{
 		const struct auth_usersupplied_info *user_info_temp;	
+
+		if (nt_pwd == NULL && stored_aes_256_key != NULL && user_info->password.plaintext != NULL) {
+			bool pw_equal;
+			int krb5_ret;
+			DATA_BLOB supplied_aes_256_key;
+			krb5_keyblock key;
+			krb5_data cleartext_data = {
+				.data = user_info->password.plaintext,
+				.length = strlen(user_info->password.plaintext)
+			};
+
+			*lm_sess_key = data_blob_null;
+			*user_sess_key = data_blob_null;
+
+			krb5_ret = smb_krb5_create_key_from_string(smb_krb5_context->krb5_context,
+								   NULL,
+								   salt,
+								   &cleartext_data,
+								   ENCTYPE_AES256_CTS_HMAC_SHA1_96,
+								   &key);
+			if (krb5_ret) {
+				DBG_ERR("generation of a aes256-cts-hmac-sha1-96 key for password comparison failed: %s\n",
+					smb_get_krb5_error_message(smb_krb5_context->krb5_context,
+								   krb5_ret, mem_ctx));
+				return NT_STATUS_INTERNAL_ERROR;
+			}
+
+			supplied_aes_256_key = data_blob_const(KRB5_KEY_DATA(&key),
+							       KRB5_KEY_LENGTH(&key));
+
+			pw_equal = data_blob_equal_const_time(&supplied_aes_256_key,
+							      stored_aes_256_key);
+
+			krb5_free_keyblock_contents(smb_krb5_context->krb5_context, &key);
+			if (!pw_equal) {
+				return NT_STATUS_WRONG_PASSWORD;
+			}
+			return NT_STATUS_OK;
+		}
+
 		status = encrypt_user_info(mem_ctx, auth_context, 
 					   AUTH_PASSWORD_HASH, 
 					   user_info, &user_info_temp);
@@ -80,18 +126,19 @@ static NTSTATUS authsam_password_ok(struct auth4_context *auth_context,
 		*lm_sess_key = data_blob(NULL, 0);
 		*user_sess_key = data_blob(NULL, 0);
 		status = hash_password_check(mem_ctx, 
-					     lpcfg_lanman_auth(auth_context->lp_ctx),
-					     user_info->password.hash.lanman,
+					     false,
+					     lpcfg_ntlm_auth(auth_context->lp_ctx),
+					     NULL,
 					     user_info->password.hash.nt,
 					     user_info->mapped.account_name,
-					     lm_pwd, nt_pwd);
+					     NULL, nt_pwd);
 		NT_STATUS_NOT_OK_RETURN(status);
 		break;
 		
 	case AUTH_PASSWORD_RESPONSE:
 		status = ntlm_password_check(mem_ctx, 
-					     lpcfg_lanman_auth(auth_context->lp_ctx),
-						 lpcfg_ntlm_auth(auth_context->lp_ctx),
+					     false,
+					     lpcfg_ntlm_auth(auth_context->lp_ctx),
 					     user_info->logon_parameters, 
 					     &auth_context->challenge.data, 
 					     &user_info->password.response.lanman, 
@@ -99,7 +146,7 @@ static NTSTATUS authsam_password_ok(struct auth4_context *auth_context,
 					     user_info->mapped.account_name,
 					     user_info->client.account_name, 
 					     user_info->client.domain_name, 
-					     lm_pwd, nt_pwd,
+					     NULL, nt_pwd,
 					     user_sess_key, lm_sess_key);
 		NT_STATUS_NOT_OK_RETURN(status);
 		break;
@@ -199,6 +246,47 @@ static void auth_sam_trigger_repl_secret(TALLOC_CTX *mem_ctx,
 	TALLOC_FREE(tmp_ctx);
 }
 
+static const struct samr_Password *hide_invalid_nthash(const struct samr_Password *in)
+{
+	/*
+	 * This is the result of:
+	 *
+	 * E_md4hash("", zero_string_hash.hash);
+	 */
+	static const struct samr_Password zero_string_hash = {
+		.hash = {
+			0x31, 0xd6, 0xcf, 0xe0, 0xd1, 0x6a, 0xe9, 0x31,
+			0xb7, 0x3c, 0x59, 0xd7, 0xe0, 0xc0, 0x89, 0xc0,
+		}
+	};
+
+	if (in == NULL) {
+		return NULL;
+	}
+
+	/*
+	 * Skip over any all-zero hashes in the history.  No known software
+	 * stores these but just to be sure
+	 */
+	if (all_zero(in->hash, sizeof(in->hash))) {
+		return NULL;
+	}
+
+	/*
+	 * This looks odd, but the password_hash module in the past has written
+	 * this in the rare situation where (somehow) we didn't have an old NT
+	 * hash (one of the old LM-only set paths)
+	 *
+	 * mem_equal_const_time() is used to avoid a timing attack
+	 * when comparing secret data in the server with this constant
+	 * value.
+	 */
+	if (mem_equal_const_time(in->hash, zero_string_hash.hash, 16)) {
+		in = NULL;
+	}
+
+	return in;
+}
 
 /*
  * Check that a password is OK, and update badPwdCount if required.
@@ -208,7 +296,6 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 						  TALLOC_CTX *mem_ctx,
 						  struct ldb_dn *domain_dn,
 						  struct ldb_message *msg,
-						  uint16_t acct_flags,
 						  const struct auth_usersupplied_info *user_info,
 						  DATA_BLOB *user_sess_key,
 						  DATA_BLOB *lm_sess_key,
@@ -222,8 +309,16 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 	struct ldb_context *sam_ctx = auth_context->sam_ctx;
 	const char * const attrs[] = { "pwdHistoryLength", NULL };
 	struct ldb_message *dom_msg;
-	struct samr_Password *lm_pwd;
 	struct samr_Password *nt_pwd;
+	DATA_BLOB _aes_256_key = data_blob_null;
+	DATA_BLOB *aes_256_key = NULL;
+	krb5_data _salt = { .data = NULL, .length = 0 };
+	krb5_data *salt = NULL;
+	DATA_BLOB salt_data = data_blob_null;
+	struct smb_krb5_context *smb_krb5_context = NULL;
+	const struct ldb_val *sc_val;
+	uint32_t userAccountControl = 0;
+	uint32_t current_kvno = 0;
 	bool am_rodc;
 
 	tmp_ctx = talloc_new(mem_ctx);
@@ -240,13 +335,19 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 	 * locked out, to avoid mistakes like CVE-2013-4496.
 	 */
 	nt_status = samdb_result_passwords(tmp_ctx, auth_context->lp_ctx,
-					   msg, &lm_pwd, &nt_pwd);
+					   msg, &nt_pwd);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		TALLOC_FREE(tmp_ctx);
 		return nt_status;
 	}
 
-	if (lm_pwd == NULL && nt_pwd == NULL) {
+	userAccountControl = ldb_msg_find_attr_as_uint(msg,
+						       "userAccountControl",
+						       0);
+
+	sc_val = ldb_msg_find_ldb_val(msg, "supplementalCredentials");
+
+	if (nt_pwd == NULL && sc_val == NULL) {
 		if (samdb_rodc(auth_context->sam_ctx, &am_rodc) == LDB_SUCCESS && am_rodc) {
 			/*
 			 * we don't have passwords for this
@@ -274,11 +375,55 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 		}
 	}
 
-	auth_status = authsam_password_ok(auth_context, tmp_ctx,
-					  acct_flags,
-					  lm_pwd, nt_pwd,
+	/*
+	 * If we don't have an NT password, pull a kerberos key
+	 * instead for plaintext.
+	 */
+	if (nt_pwd == NULL &&
+	    sc_val != NULL &&
+	    user_info->password_state == AUTH_PASSWORD_PLAIN)
+	{
+		krb5_error_code krb5_ret;
+
+		krb5_ret = smb_krb5_init_context(tmp_ctx,
+						 auth_context->lp_ctx,
+						 &smb_krb5_context);
+		if (krb5_ret != 0) {
+			DBG_ERR("Failed to setup krb5_context: %s!\n",
+				error_message(krb5_ret));
+			return NT_STATUS_INTERNAL_ERROR;
+		}
+
+		/*
+		 * Get the current salt from the record
+		 */
+
+		krb5_ret = dsdb_extract_aes_256_key(smb_krb5_context->krb5_context,
+						    tmp_ctx,
+						    msg,
+						    userAccountControl,
+						    NULL, /* kvno */
+						    &current_kvno, /* kvno_out */
+						    &_aes_256_key,
+						    &salt_data);
+		if (krb5_ret == 0) {
+			aes_256_key = &_aes_256_key;
+
+			_salt.data = (char *)salt_data.data;
+			_salt.length = salt_data.length;
+			salt = &_salt;
+		}
+	}
+
+	auth_status = authsam_password_ok(auth_context,
+					  tmp_ctx,
+					  nt_pwd,
+					  smb_krb5_context,
+					  aes_256_key,
+					  salt,
 					  user_info,
 					  user_sess_key, lm_sess_key);
+
 	if (NT_STATUS_IS_OK(auth_status)) {
 		if (user_sess_key->data) {
 			talloc_steal(mem_ctx, user_sess_key->data);
@@ -319,71 +464,127 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 	}
 
 	for (i = 1; i < MIN(history_len, 3); i++) {
-		struct samr_Password zero_string_hash;
-		struct samr_Password zero_string_des_hash;
-		struct samr_Password *nt_history_pwd = NULL;
-		struct samr_Password *lm_history_pwd = NULL;
+		const struct samr_Password *nt_history_pwd = NULL;
 		NTTIME pwdLastSet;
 		struct timeval tv_now;
 		NTTIME now;
 		int allowed_period_mins;
 		NTTIME allowed_period;
 
+		/* Reset these variables back to starting as empty */
+		aes_256_key = NULL;
+		salt = NULL;
+
+		/*
+		 * Obtain the i'th old password from the NT password
+		 * history for this user.
+		 *
+		 * We avoid issues with salts (which are not
+		 * recorded for historical AES256 keys) by using the
+		 * ntPwdHistory in preference.
+		 */
 		nt_status = samdb_result_passwords_from_history(tmp_ctx,
 							auth_context->lp_ctx,
 							msg, i,
-							&lm_history_pwd,
+							NULL,
 							&nt_history_pwd);
+
+		/*
+		 * Belts and braces: note that
+		 * samdb_result_passwords_from_history() currently
+		 * does not fail for missing attributes, it only sets
+		 * nt_history_pwd = NULL, so "break" and fall down to
+		 * the bad password count upate if this happens
+		 */
 		if (!NT_STATUS_IS_OK(nt_status)) {
-			/*
-			 * If we don't find element 'i' we won't find
-			 * 'i+1' ...
-			 */
 			break;
 		}
 
+		nt_history_pwd = hide_invalid_nthash(nt_history_pwd);
+
 		/*
-		 * We choose to avoid any issues
-		 * around different LM and NT history
-		 * lengths by only checking the NT
-		 * history
+		 * We don't have an NT hash from the
+		 * ntPwdHistory, but we can still perform the
+		 * password check with the AES256
+		 * key.
+		 *
+		 * However, this is the second preference as
+		 * it will fail if the account was renamed
+		 * prior to a password change (as we won't
+		 * have the correct salt available to
+		 * calculate the AES256 key).
 		 */
-		if (nt_history_pwd == NULL) {
+
+		if (nt_history_pwd == NULL && sc_val != NULL &&
+		    user_info->password_state == AUTH_PASSWORD_PLAIN &&
+		    current_kvno >= i)
+		{
+			krb5_error_code krb5_ret;
+			const uint32_t request_kvno = current_kvno - i;
+
 			/*
-			 * If we don't find element 'i' we won't find
-			 * 'i+1' ...
+			 * Confirm we have a krb5_context set up
+			 */
+			if (smb_krb5_context == NULL) {
+				/*
+				 * We get here if we had a unicodePwd
+				 * for the current password, no
+				 * ntPwdHistory, a valid previous
+				 * Kerberos history AND are processing
+				 * a simple bind.
+				 *
+				 * This really is a corner case so
+				 * favour cleaner code over trying to
+				 * allow for an old password.  It is
+				 * more likely this is just a new
+				 * account.
+				 *
+				 * "break" out of the loop and fall down
+				 * to the bad password update
+				 */
+				break;
+			}
+
+			/*
+			 * Get the current salt from the record
+			 */
+
+			krb5_ret = dsdb_extract_aes_256_key(smb_krb5_context->krb5_context,
+							    tmp_ctx,
+							    msg,
+							    userAccountControl,
+							    &request_kvno, /* kvno */
+							    NULL, /* kvno_out */
+							    &_aes_256_key,
+							    &salt_data);
+			if (krb5_ret != 0) {
+				break;
+			}
+
+			aes_256_key = &_aes_256_key;
+
+			_salt.data = (char *)salt_data.data;
+			_salt.length = salt_data.length;
+			salt = &_salt;
+
+		} else if (nt_history_pwd == NULL) {
+			/*
+			 * If we don't find element 'i' in the
+			 * ntPwdHistory and can not fall back to the
+			 * kerberos hash, we won't find 'i+1' ...
 			 */
 			break;
-		}
-
-		/* Skip over all-zero hashes in the history */
-		if (all_zero(nt_history_pwd->hash,
-			     sizeof(nt_history_pwd->hash))) {
-			continue;
-		}
-
-		/*
-		 * This looks odd, but the password_hash module writes this in if
-		 * (somehow) we didn't have an old NT hash
-		 */
-
-		E_md4hash("", zero_string_hash.hash);
-		if (memcmp(nt_history_pwd->hash, zero_string_hash.hash, 16) == 0) {
-			continue;
-		}
-
-		E_deshash("", zero_string_des_hash.hash);
-		if (!lm_history_pwd || memcmp(lm_history_pwd->hash, zero_string_des_hash.hash, 16) == 0) {
-			lm_history_pwd = NULL;
 		}
 
 		auth_status = authsam_password_ok(auth_context, tmp_ctx,
-						  acct_flags,
-						  lm_history_pwd,
 						  nt_history_pwd,
+						  smb_krb5_context,
+						  aes_256_key,
+						  salt,
 						  user_info,
 						  user_sess_key,
 						  lm_sess_key);
+
 		if (!NT_STATUS_IS_OK(auth_status)) {
 			/*
 			 * If this was not a correct password, try the next
@@ -525,18 +726,133 @@ static NTSTATUS authsam_password_check_and_record(struct auth4_context *auth_con
 	return nt_status;
 }
 
+static NTSTATUS authsam_check_netlogon_trust(TALLOC_CTX *mem_ctx,
+					     struct ldb_context *sam_ctx,
+					     struct loadparm_context *lp_ctx,
+					     const struct auth_usersupplied_info *user_info,
+					     const struct auth_user_info_dc *user_info_dc,
+					     struct authn_audit_info **server_audit_info_out)
+{
+	TALLOC_CTX *tmp_ctx = NULL;
+
+	static const char *authn_policy_silo_attrs[] = {
+		"msDS-AssignedAuthNPolicy",
+		"msDS-AssignedAuthNPolicySilo",
+		"objectClass", /* used to determine which set of policy
+				* attributes apply. */
+		NULL,
+	};
+
+	const struct authn_server_policy *authn_server_policy = NULL;
+
+	struct dom_sid_buf netlogon_trust_sid_buf;
+	const char *netlogon_trust_sid_str = NULL;
+	struct ldb_dn *netlogon_trust_dn = NULL;
+	struct ldb_message *netlogon_trust_msg = NULL;
+
+	int ret;
+
+	/* Have we established a secure channel? */
+	if (user_info->netlogon_trust_account.secure_channel_type == SEC_CHAN_NULL) {
+		return NT_STATUS_OK;
+	}
+
+	if (!authn_policy_silos_and_policies_in_effect(sam_ctx)) {
+		return NT_STATUS_OK;
+	}
+
+	/*
+	 * We have established a secure channel, and we should have the machine
+	 * account’s SID.
+	 */
+	SMB_ASSERT(user_info->netlogon_trust_account.sid != NULL);
+
+	tmp_ctx = talloc_new(mem_ctx);
+	if (tmp_ctx == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	netlogon_trust_sid_str = dom_sid_str_buf(user_info->netlogon_trust_account.sid,
+						 &netlogon_trust_sid_buf);
+
+	netlogon_trust_dn = ldb_dn_new_fmt(tmp_ctx, sam_ctx,
+					   "<SID=%s>",
+					   netlogon_trust_sid_str);
+	if (netlogon_trust_dn == NULL) {
+		talloc_free(tmp_ctx);
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	/*
+	 * Look up the machine account to see if it has an applicable
+	 * authentication policy.
+	 */
+	ret = dsdb_search_one(sam_ctx,
+			      tmp_ctx,
+			      &netlogon_trust_msg,
+			      netlogon_trust_dn,
+			      LDB_SCOPE_BASE,
+			      authn_policy_silo_attrs,
+			      0,
+			      NULL);
+	if (ret) {
+		talloc_free(tmp_ctx);
+		return dsdb_ldb_err_to_ntstatus(ret);
+	}
+
+	ret = authn_policy_server(sam_ctx,
+				  tmp_ctx,
+				  netlogon_trust_msg,
+				  &authn_server_policy);
+	if (ret) {
+		talloc_free(tmp_ctx);
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	if (authn_server_policy != NULL) {
+		struct authn_audit_info *server_audit_info = NULL;
+		NTSTATUS status;
+
+		/*
+		 * An authentication policy applies to the machine
+		 * account. Carry out the access check.
+		 */
+		status = authn_policy_authenticate_to_service(tmp_ctx,
+							      sam_ctx,
+							      lp_ctx,
+							      AUTHN_POLICY_AUTH_TYPE_NTLM,
+							      user_info_dc,
+							      authn_server_policy,
+							      &server_audit_info);
+		if (server_audit_info != NULL) {
+			*server_audit_info_out = talloc_move(mem_ctx, &server_audit_info);
+		}
+		if (!NT_STATUS_IS_OK(status)) {
+			talloc_free(tmp_ctx);
+			return status;
+		}
+	}
+
+	return NT_STATUS_OK;
+}
+
 static NTSTATUS authsam_authenticate(struct auth4_context *auth_context,
-				     TALLOC_CTX *mem_ctx, struct ldb_context *sam_ctx,
+				     TALLOC_CTX *mem_ctx,
 				     struct ldb_dn *domain_dn,
 				     struct ldb_message *msg,
 				     const struct auth_usersupplied_info *user_info,
+				     const struct auth_user_info_dc *user_info_dc,
 				     DATA_BLOB *user_sess_key, DATA_BLOB *lm_sess_key,
+				     struct authn_audit_info **client_audit_info_out,
+				     struct authn_audit_info **server_audit_info_out,
 				     bool *authoritative)
 {
 	NTSTATUS nt_status;
+	int ret;
 	bool interactive = (user_info->password_state == AUTH_PASSWORD_HASH);
 	uint32_t acct_flags = samdb_result_acct_flags(msg, NULL);
 	struct netr_SendToSamBase *send_to_sam = NULL;
+	const struct authn_ntlm_client_policy *authn_client_policy = NULL;
 	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
 	if (!tmp_ctx) {
 		return NT_STATUS_NO_MEMORY;
@@ -564,11 +880,45 @@ static NTSTATUS authsam_authenticate(struct auth4_context *auth_context,
 		}
 	}
 
+	/* See whether an authentication policy applies to the client. */
+	ret = authn_policy_ntlm_client(auth_context->sam_ctx,
+				       tmp_ctx,
+				       msg,
+				       &authn_client_policy);
+	if (ret) {
+		TALLOC_FREE(tmp_ctx);
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
+	nt_status = authn_policy_ntlm_apply_device_restriction(mem_ctx,
+							       authn_client_policy,
+							       client_audit_info_out);
+	if (!NT_STATUS_IS_OK(nt_status)) {
+		/*
+		 * As we didn’t get far enough to check the server policy, only
+		 * the client policy will be referenced in the authentication
+		 * log message.
+		 */
+		TALLOC_FREE(tmp_ctx);
+		return nt_status;
+	}
+
 	nt_status = authsam_password_check_and_record(auth_context, tmp_ctx,
-						      domain_dn, msg, acct_flags,
+						      domain_dn, msg,
 						      user_info,
 						      user_sess_key, lm_sess_key,
 						      authoritative);
+	if (!NT_STATUS_IS_OK(nt_status)) {
+		TALLOC_FREE(tmp_ctx);
+		return nt_status;
+	}
+
+	nt_status = authsam_check_netlogon_trust(mem_ctx,
+						 auth_context->sam_ctx,
+						 auth_context->lp_ctx,
+						 user_info,
+						 user_info_dc,
+						 server_audit_info_out);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		TALLOC_FREE(tmp_ctx);
 		return nt_status;
@@ -621,15 +971,21 @@ static NTSTATUS authsam_check_password_internals(struct auth_method_context *ctx
 						 TALLOC_CTX *mem_ctx,
 						 const struct auth_usersupplied_info *user_info, 
 						 struct auth_user_info_dc **user_info_dc,
+						 struct authn_audit_info **client_audit_info_out,
+						 struct authn_audit_info **server_audit_info_out,
 						 bool *authoritative)
 {
 	NTSTATUS nt_status;
+	int result;
 	const char *account_name = user_info->mapped.account_name;
 	struct ldb_message *msg;
 	struct ldb_dn *domain_dn;
 	DATA_BLOB user_sess_key, lm_sess_key;
 	TALLOC_CTX *tmp_ctx;
 	const char *p = NULL;
+	struct auth_user_info_dc *reparented = NULL;
+	struct authn_audit_info *client_audit_info = NULL;
+	struct authn_audit_info *server_audit_info = NULL;
 
 	if (ctx->auth_ctx->sam_ctx == NULL) {
 		DEBUG(0, ("No SAM available, cannot log in users\n"));
@@ -714,27 +1070,83 @@ static NTSTATUS authsam_check_password_internals(struct auth_method_context *ctx
 		return nt_status;
 	}
 
-	nt_status = authsam_authenticate(ctx->auth_ctx, tmp_ctx, ctx->auth_ctx->sam_ctx, domain_dn, msg, user_info,
-					 &user_sess_key, &lm_sess_key, authoritative);
-	if (!NT_STATUS_IS_OK(nt_status)) {
-		talloc_free(tmp_ctx);
-		return nt_status;
-	}
-
 	nt_status = authsam_make_user_info_dc(tmp_ctx, ctx->auth_ctx->sam_ctx,
 					     lpcfg_netbios_name(ctx->auth_ctx->lp_ctx),
 					     lpcfg_sam_name(ctx->auth_ctx->lp_ctx),
 					     lpcfg_sam_dnsname(ctx->auth_ctx->lp_ctx),
 					     domain_dn,
 					     msg,
-					     user_sess_key, lm_sess_key,
+					     data_blob_null, data_blob_null,
 					     user_info_dc);
 	if (!NT_STATUS_IS_OK(nt_status)) {
 		talloc_free(tmp_ctx);
 		return nt_status;
 	}
 
-	talloc_steal(mem_ctx, *user_info_dc);
+	result = dsdb_is_protected_user(ctx->auth_ctx->sam_ctx,
+					(*user_info_dc)->sids,
+					(*user_info_dc)->num_sids);
+	/*
+	 * We also consider an error result (a negative value) as denying the
+	 * authentication.
+	 */
+	if (result != 0) {
+		talloc_free(tmp_ctx);
+		return NT_STATUS_ACCOUNT_RESTRICTION;
+	}
+
+	nt_status = authsam_authenticate(ctx->auth_ctx,
+					 tmp_ctx,
+					 domain_dn,
+					 msg,
+					 user_info,
+					 *user_info_dc,
+					 &user_sess_key,
+					 &lm_sess_key,
+					 &client_audit_info,
+					 &server_audit_info,
+					 authoritative);
+	if (client_audit_info != NULL) {
+		*client_audit_info_out = talloc_move(mem_ctx, &client_audit_info);
+	}
+	if (server_audit_info != NULL) {
+		*server_audit_info_out = talloc_move(mem_ctx, &server_audit_info);
+	}
+	if (!NT_STATUS_IS_OK(nt_status)) {
+		talloc_free(tmp_ctx);
+		return nt_status;
+	}
+
+	(*user_info_dc)->user_session_key = data_blob_talloc(*user_info_dc,
+							     user_sess_key.data,
+							     user_sess_key.length);
+	if (user_sess_key.data) {
+		if ((*user_info_dc)->user_session_key.data == NULL) {
+			TALLOC_FREE(tmp_ctx);
+			return NT_STATUS_NO_MEMORY;
+		}
+	}
+
+	(*user_info_dc)->lm_session_key = data_blob_talloc(*user_info_dc,
+							   lm_sess_key.data,
+							   lm_sess_key.length);
+	if (lm_sess_key.data) {
+		if ((*user_info_dc)->lm_session_key.data == NULL) {
+			TALLOC_FREE(tmp_ctx);
+			return NT_STATUS_NO_MEMORY;
+		}
+	}
+
+	/*
+	 * Release our handle to *user_info_dc. {client,server}_audit_info_out,
+	 * if non-NULL, becomes the new parent.
+	 */
+	reparented = talloc_reparent(tmp_ctx, mem_ctx, *user_info_dc);
+	if (reparented == NULL) {
+		talloc_free(tmp_ctx);
+		return NT_STATUS_INTERNAL_ERROR;
+	}
+
 	talloc_free(tmp_ctx);
 
 	return NT_STATUS_OK;
@@ -742,6 +1154,8 @@ static NTSTATUS authsam_check_password_internals(struct auth_method_context *ctx
 
 struct authsam_check_password_state {
 	struct auth_user_info_dc *user_info_dc;
+	struct authn_audit_info *client_audit_info;
+	struct authn_audit_info *server_audit_info;
 	bool authoritative;
 };
 
@@ -772,6 +1186,8 @@ static struct tevent_req *authsam_check_password_send(
 		state,
 		user_info,
 		&state->user_info_dc,
+		&state->client_audit_info,
+		&state->server_audit_info,
 		&state->authoritative);
 	if (tevent_req_nterror(req, status)) {
 		return tevent_req_post(req, ev);
@@ -785,6 +1201,8 @@ static NTSTATUS authsam_check_password_recv(
 	struct tevent_req *req,
 	TALLOC_CTX *mem_ctx,
 	struct auth_user_info_dc **interim_info,
+	const struct authn_audit_info **client_audit_info,
+	const struct authn_audit_info **server_audit_info,
 	bool *authoritative)
 {
 	struct authsam_check_password_state *state = tevent_req_data(
@@ -793,11 +1211,23 @@ static NTSTATUS authsam_check_password_recv(
 
 	*authoritative = state->authoritative;
 
+	*client_audit_info = talloc_reparent(state, mem_ctx, state->client_audit_info);
+	state->client_audit_info = NULL;
+
+	*server_audit_info = talloc_reparent(state, mem_ctx, state->server_audit_info);
+	state->server_audit_info = NULL;
+
 	if (tevent_req_is_nterror(req, &status)) {
 		tevent_req_received(req);
 		return status;
 	}
-	*interim_info = talloc_move(mem_ctx, &state->user_info_dc);
+	/*
+	 * Release our handle to state->user_info_dc.
+	 * {client,server}_audit_info, if non-NULL, becomes the new parent.
+	 */
+	*interim_info = talloc_reparent(state, mem_ctx, state->user_info_dc);
+	state->user_info_dc = NULL;
+
 	tevent_req_received(req);
 	return NT_STATUS_OK;
 }

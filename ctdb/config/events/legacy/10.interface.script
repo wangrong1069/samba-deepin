@@ -6,7 +6,7 @@
 # public interface
 
 [ -n "$CTDB_BASE" ] || \
-    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
+	CTDB_BASE=$(d=$(dirname "$0") && cd -P "$d" && dirname "$PWD")
 
 . "${CTDB_BASE}/functions"
 
@@ -158,6 +158,10 @@ startup)
 	monitor_interfaces
 	;;
 
+shutdown)
+	drop_all_public_ips
+	;;
+
 takeip)
 	iface=$2
 	ip=$3
@@ -246,7 +250,7 @@ updateip)
 	$CTDB gratarp "$ip" "$niface"
 
 	# tickle all existing connections, so that dropped packets
-	# are retransmited and the tcp streams work
+	# are retransmitted and the tcp streams work
 	tickle_tcp_connections "$ip"
 	;;
 

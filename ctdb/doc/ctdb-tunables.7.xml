@@ -45,6 +45,11 @@
       <literallayout>
 <replaceable>TUNABLE</replaceable>=<replaceable>VALUE</replaceable>
       </literallayout>
+
+      Comment lines beginning with '#' are permitted.  Whitespace may
+      be used for formatting/alignment.  VALUE must be a non-negative
+      integer and must be the last thing on a line (i.e. no trailing
+      garbage, trailing comments are not permitted).
     </para>
 
     <para>
@@ -126,7 +131,7 @@ MonitorInterval=20
       <title>DatabaseMaxDead</title>
       <para>Default: 5</para>
       <para>
-	Maximum number of dead records per hash chain for the tdb databses
+	Maximum number of dead records per hash chain for the tdb databases
 	managed by ctdb.
       </para>
     </refsect2>

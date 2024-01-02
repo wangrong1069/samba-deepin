@@ -17,7 +17,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include "python/py3compat.h"
 #include "includes.h"
 #include "python/modules.h"
@@ -55,7 +55,9 @@ static bool ndr_syntax_from_py_object(PyObject *object, struct ndr_syntax_id *sy
 
 	if (PyUnicode_Check(object)) {
 		return PyString_AsGUID(object, &syntax_id->uuid);
-	} else if (PyTuple_Check(object)) {
+	}
+
+	if (PyTuple_Check(object)) {
 		PyObject *item = NULL;
 		if (PyTuple_Size(object) < 1 || PyTuple_Size(object) > 2) {
 			PyErr_SetString(PyExc_ValueError, "Syntax ID tuple has invalid size");
@@ -101,15 +103,12 @@ static PyObject *py_iface_server_name(PyObject *obj, void *closure)
 static PyObject *py_ndr_syntax_id(struct ndr_syntax_id *syntax_id)
 {
 	PyObject *ret;
-	char *uuid_str;
+	struct GUID_txt_buf buf;
 
-	uuid_str = GUID_string(NULL, &syntax_id->uuid);
-	if (uuid_str == NULL)
-		return NULL;
-
-	ret = Py_BuildValue("(s,i)", uuid_str, syntax_id->if_version);
-
-	talloc_free(uuid_str);
+	ret = Py_BuildValue(
+		"(s,i)",
+		GUID_buf_string(&syntax_id->uuid, &buf),
+		syntax_id->if_version);
 
 	return ret;
 }
@@ -493,8 +492,7 @@ static void py_dcerpc_ndr_pointer_dealloc(PyObject* self)
 	struct py_dcerpc_ndr_pointer *obj =
 		pytalloc_get_type(self, struct py_dcerpc_ndr_pointer);
 
-	Py_DECREF(obj->value);
-	obj->value = NULL;
+	Py_CLEAR(obj->value);
 
 	self->ob_type->tp_free(self);
 }
@@ -513,7 +511,7 @@ static int py_dcerpc_ndr_pointer_set_value(PyObject *self, PyObject *value, void
 	struct py_dcerpc_ndr_pointer *obj =
 		pytalloc_get_type(self, struct py_dcerpc_ndr_pointer);
 
-	Py_DECREF(obj->value);
+	Py_CLEAR(obj->value);
 	obj->value = value;
 	Py_INCREF(obj->value);
 	return 0;

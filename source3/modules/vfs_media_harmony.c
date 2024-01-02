@@ -817,10 +817,8 @@ err:
  * End of data: return NULL
  * Failure: set errno, return NULL
  */
-static struct dirent *mh_readdir(vfs_handle_struct *handle,
-				 struct files_struct *dirfsp,
-				 DIR *dirp,
-				 SMB_STRUCT_STAT *sbuf)
+static struct dirent *
+mh_readdir(vfs_handle_struct *handle, struct files_struct *dirfsp, DIR *dirp)
 {
 	mh_dirinfo_struct* dirInfo = (mh_dirinfo_struct*)dirp;
 	struct dirent *d = NULL;
@@ -843,7 +841,7 @@ static struct dirent *mh_readdir(vfs_handle_struct *handle,
 
 	if (! dirInfo->isInMediaFiles)
 	{
-		d = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream, sbuf);
+		d = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream);
 		goto out;
 	}
 
@@ -853,7 +851,7 @@ static struct dirent *mh_readdir(vfs_handle_struct *handle,
 		bool isAppleDouble;
 
 		skip = False;
-		d = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream, sbuf);
+		d = SMB_VFS_NEXT_READDIR(handle, dirfsp, dirInfo->dirstream);
 
 		if (d == NULL)
 		{
@@ -952,31 +950,6 @@ out:
  * Success: no success result defined.
  * Failure: no failure result defined.
  */
-static void mh_seekdir(vfs_handle_struct *handle,
-		DIR *dirp,
-		long offset)
-{
-	DEBUG(MH_INFO_DEBUG, ("Entering and leaving mh_seekdir\n"));
-	SMB_VFS_NEXT_SEEKDIR(handle,
-			((mh_dirinfo_struct*)dirp)->dirstream, offset);
-}
-
-/*
- * Success: return long
- * Failure: no failure result defined.
- */
-static long mh_telldir(vfs_handle_struct *handle,
-		DIR *dirp)
-{
-	DEBUG(MH_INFO_DEBUG, ("Entering and leaving mh_telldir\n"));
-	return SMB_VFS_NEXT_TELLDIR(handle,
-			((mh_dirinfo_struct*)dirp)->dirstream);
-}
-
-/*
- * Success: no success result defined.
- * Failure: no failure result defined.
- */
 static void mh_rewinddir(vfs_handle_struct *handle,
 		DIR *dirp)
 {
@@ -1061,8 +1034,7 @@ static int mh_openat(struct vfs_handle_struct *handle,
 		     const struct files_struct *dirfsp,
 		     const struct smb_filename *smb_fname,
 		     files_struct *fsp,
-		     int flags,
-		     mode_t mode)
+		     const struct vfs_open_how *how)
 {
 	int ret;
 	struct smb_filename *clientFname;
@@ -1076,8 +1048,7 @@ static int mh_openat(struct vfs_handle_struct *handle,
 					  dirfsp,
 					  smb_fname,
 					  fsp,
-					  flags,
-					  mode);
+					  how);
 		goto out;
 	}
 
@@ -1101,7 +1072,7 @@ static int mh_openat(struct vfs_handle_struct *handle,
 			      ctime(&(smb_fname->st.st_ex_mtime.tv_sec)),
 			      ctime(&(fsp->fsp_name->st.st_ex_mtime.tv_sec))));
 
-	ret = SMB_VFS_NEXT_OPENAT(handle, dirfsp, clientFname, fsp, flags, mode);
+	ret = SMB_VFS_NEXT_OPENAT(handle, dirfsp, clientFname, fsp, how);
 err:
 	TALLOC_FREE(clientFname);
 out:
@@ -1116,6 +1087,7 @@ out:
  */
 static NTSTATUS mh_create_file(vfs_handle_struct *handle,
 		struct smb_request *req,
+		struct files_struct *dirfsp,
 		struct smb_filename *smb_fname,
 		uint32_t access_mask,
 		uint32_t share_access,
@@ -1145,6 +1117,7 @@ static NTSTATUS mh_create_file(vfs_handle_struct *handle,
 		status = SMB_VFS_NEXT_CREATE_FILE(
 			handle,
 			req,
+			dirfsp,
 			smb_fname,
 			access_mask,
 			share_access,
@@ -1183,6 +1156,7 @@ static NTSTATUS mh_create_file(vfs_handle_struct *handle,
 	status = SMB_VFS_NEXT_CREATE_FILE(
 		handle,
 		req,
+		dirfsp,
 		clientFname,
 		access_mask,
 		share_access,
@@ -1844,8 +1818,6 @@ static struct vfs_fn_pointers vfs_mh_fns = {
 
 	.fdopendir_fn = mh_fdopendir,
 	.readdir_fn = mh_readdir,
-	.seekdir_fn = mh_seekdir,
-	.telldir_fn = mh_telldir,
 	.rewind_dir_fn = mh_rewinddir,
 	.mkdirat_fn = mh_mkdirat,
 	.closedir_fn = mh_closedir,

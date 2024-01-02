@@ -10,7 +10,9 @@ files in /etc/default/nfs-*
 
 Bug-Debian: https://bugs.debian.org/929931
 Bug-Ubuntu: https://bugs.launchpad.net/bugs/722201
-Last-Update: 2022-03-16
+Last-Update: 2022-09-09
+diff --git a/ctdb/config/events/legacy/06.nfs.script b/ctdb/config/events/legacy/06.nfs.script
+index b937d433254..943b5005bd9 100755
 --- a/ctdb/config/events/legacy/06.nfs.script
 +++ b/ctdb/config/events/legacy/06.nfs.script
 @@ -6,7 +6,7 @@
@@ -22,6 +24,8 @@ Last-Update: 2022-03-16
  
  load_script_options "service" "60.nfs"
  
+diff --git a/ctdb/config/events/legacy/60.nfs.script b/ctdb/config/events/legacy/60.nfs.script
+index 8e496f73cc5..f47b91bff2d 100755
 --- a/ctdb/config/events/legacy/60.nfs.script
 +++ b/ctdb/config/events/legacy/60.nfs.script
 @@ -6,9 +6,11 @@
@@ -38,18 +42,20 @@ Last-Update: 2022-03-16
  
  load_script_options
  
+diff --git a/ctdb/config/nfs-linux-kernel-callout b/ctdb/config/nfs-linux-kernel-callout
+index f2f3e3824d0..4e3b1e21c04 100755
 --- a/ctdb/config/nfs-linux-kernel-callout
 +++ b/ctdb/config/nfs-linux-kernel-callout
-@@ -14,7 +14,7 @@
+@@ -14,7 +14,7 @@ nfs_exports_file="${CTDB_NFS_EXPORTS_FILE:-/var/lib/nfs/etab}"
  
  # As above, edit the default value below.  CTDB_NFS_DISTRO_STYLE is a
  # test variable only.
 -nfs_distro_style="${CTDB_NFS_DISTRO_STYLE:-systemd-redhat}"
 +nfs_distro_style="${CTDB_NFS_DISTRO_STYLE:-systemd-debian}"
  
- case "$nfs_distro_style" in
- systemd-*)
-@@ -32,7 +32,22 @@
+ # As above, edit the default value below.  CTDB_SYS_ETCDIR is a
+ # test variable only.
+@@ -42,7 +42,22 @@ systemd-*)
  		: # Defaults only
  		;;
  	*-debian)
@@ -73,9 +79,11 @@ Last-Update: 2022-03-16
  		;;
  	*)
  		echo "Internal error"
+diff --git a/ctdb/config/statd-callout b/ctdb/config/statd-callout
+index 38c155e4793..c138e71c7b1 100755
 --- a/ctdb/config/statd-callout
 +++ b/ctdb/config/statd-callout
-@@ -29,7 +29,9 @@
+@@ -29,7 +29,9 @@ die ()
  }
  
  # Try different variables to find config file for NFS_HOSTNAME
@@ -85,4 +93,4 @@ Last-Update: 2022-03-16
 +fi
  
  # If NFS_HOSTNAME not set then try to pull it out of /etc/nfs.conf
- if [ -z "$NFS_HOSTNAME" ] && type nfsconf >/dev/null 2>&1 ; then
+ if [ -z "$NFS_HOSTNAME" ]; then

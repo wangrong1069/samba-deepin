@@ -235,10 +235,9 @@ write_and_free_token(gss_buffer_t out, int negotiate)
 			printf("\n");
 		if (len < inc)
 			inc = len;
-		ret = rk_base64_encode(p, inc, &outstr);
-		if (ret < 0) {
+		if (rk_base64_encode(p, inc, &outstr) < 0) {
 			fprintf(stderr, "Out of memory.\n");
-			ret = 1;
+			ret = errno;
 			goto bail;
 		}
                 ret = 0;
@@ -247,6 +246,7 @@ write_and_free_token(gss_buffer_t out, int negotiate)
 		p   += inc;
 		len -= inc;
 	} while (len > 0);
+        ret = 0;
 
 bail:
 	gss_release_buffer(&min, out);
@@ -472,8 +472,13 @@ accept_one(gss_name_t service, const char *ccname, int negotiate)
 		    NULL, NULL, &deleg_creds);
 
 		ret = write_and_free_token(&out, negotiate);
-		if (ret)
+		if (ret) {
+			OM_uint32 junk;
+
+			(void) gss_delete_sec_context(&junk, &ctx,
+						      GSS_C_NO_BUFFER);
 			return ret;
+		}
 		GBAIL("gss_accept_sec_context", maj, min);
 	} while (maj & GSS_S_CONTINUE_NEEDED);
 
@@ -491,6 +496,7 @@ accept_one(gss_name_t service, const char *ccname, int negotiate)
 		    (char *)dname.value);
 	(void) gss_release_buffer(&min, &dname);
 	(void) gss_release_name(&min, &client);
+	(void) gss_delete_sec_context(&min, &ctx, GSS_C_NO_BUFFER);
 
 	if (ccname) {
 #ifdef HAVE_GSS_STORE_CRED_INTO

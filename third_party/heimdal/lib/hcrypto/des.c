@@ -344,14 +344,14 @@ load(const unsigned char *b, uint32_t v[2])
 static void
 store(const uint32_t v[2], unsigned char *b)
 {
-    b[0] = (v[0] >> 24) & 0xff;
-    b[1] = (v[0] >> 16) & 0xff;
-    b[2] = (v[0] >>  8) & 0xff;
-    b[3] = (v[0] >>  0) & 0xff;
-    b[4] = (v[1] >> 24) & 0xff;
-    b[5] = (v[1] >> 16) & 0xff;
-    b[6] = (v[1] >>  8) & 0xff;
-    b[7] = (v[1] >>  0) & 0xff;
+    b[0] = (v[0] >> 24) & 0xffU;
+    b[1] = (v[0] >> 16) & 0xffU;
+    b[2] = (v[0] >>  8) & 0xffU;
+    b[3] = (v[0] >>  0) & 0xffU;
+    b[4] = (v[1] >> 24) & 0xffU;
+    b[5] = (v[1] >> 16) & 0xffU;
+    b[6] = (v[1] >>  8) & 0xffU;
+    b[7] = (v[1] >>  0) & 0xffU;
 }
 
 /**
@@ -851,7 +851,7 @@ DES_string_to_key(const char *str, DES_cblock *key)
 	k[7] ^= 0xF0;
     DES_set_key(key, &ks);
     DES_cbc_cksum(s, key, len, &ks, key);
-    memset(&ks, 0, sizeof(ks));
+    memset_s(&ks, sizeof(ks), 0, sizeof(ks));
     DES_set_odd_parity(key);
     if (DES_is_weak_key(key))
 	k[7] ^= 0xF0;

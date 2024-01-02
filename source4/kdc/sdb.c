@@ -24,53 +24,55 @@
 #include "includes.h"
 #include "system/kerberos.h"
 #include "sdb.h"
+#include "samba_kdc.h"
 #include "lib/krb5_wrap/krb5_samba.h"
 
-void sdb_free_entry(struct sdb_entry_ex *ent)
-{
-	struct sdb_key *k;
-	size_t i;
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_KERBEROS
 
-	if (ent->free_entry) {
-		(*ent->free_entry)(ent);
-	}
-
-	for (i = 0; i < ent->entry.keys.len; i++) {
-		k = &ent->entry.keys.val[i];
-
-		/*
-		 * Passing NULL as the Kerberos context is intentional here, as
-		 * both Heimdal and MIT libraries don't use the context when
-		 * clearing the keyblocks.
-		 */
-		krb5_free_keyblock_contents(NULL, &k->key);
-	}
-
-	free_sdb_entry(&ent->entry);
-}
-
-static void free_sdb_key(struct sdb_key *k)
+void sdb_key_free(struct sdb_key *k)
 {
 	if (k == NULL) {
 		return;
 	}
 
-	if (k->mkvno) {
-		free(k->mkvno);
-	}
-
-	/* keyblock not alloced */
+	/*
+	 * Passing NULL as the Kerberos context is intentional here, as
+	 * both Heimdal and MIT libraries don't use the context when
+	 * clearing the keyblocks.
+	 */
+	krb5_free_keyblock_contents(NULL, &k->key);
 
 	if (k->salt) {
 		smb_krb5_free_data_contents(NULL, &k->salt->salt);
+		SAFE_FREE(k->salt);
 	}
 
 	ZERO_STRUCTP(k);
 }
 
-void free_sdb_entry(struct sdb_entry *s)
+void sdb_keys_free(struct sdb_keys *keys)
 {
 	unsigned int i;
+
+	if (keys == NULL) {
+		return;
+	}
+
+	for (i=0; i < keys->len; i++) {
+		sdb_key_free(&keys->val[i]);
+	}
+
+	SAFE_FREE(keys->val);
+	ZERO_STRUCTP(keys);
+}
+
+void sdb_entry_free(struct sdb_entry *s)
+{
+	if (s->skdc_entry != NULL) {
+		s->skdc_entry->db_entry = NULL;
+		TALLOC_FREE(s->skdc_entry);
+	}
 
 	/*
 	 * Passing NULL as the Kerberos context is intentional here, as both
@@ -79,12 +81,9 @@ void free_sdb_entry(struct sdb_entry *s)
 	 */
 	krb5_free_principal(NULL, s->principal);
 
-	if (s->keys.len) {
-		for (i=0; i < s->keys.len; i++) {
-			free_sdb_key(&s->keys.val[i]);
-		}
-		free(s->keys.val);
-	}
+	sdb_keys_free(&s->keys);
+	sdb_keys_free(&s->old_keys);
+	sdb_keys_free(&s->older_keys);
 	krb5_free_principal(NULL, s->created_by.principal);
 	if (s->modified_by) {
 		krb5_free_principal(NULL, s->modified_by->principal);

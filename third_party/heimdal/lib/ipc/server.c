@@ -122,26 +122,19 @@ mach_complete_sync(heim_sipc_call ctx, int returnvalue, heim_idata *reply)
 {
     struct mach_call_ctx *s = (struct mach_call_ctx *)ctx;
     heim_ipc_message_inband_t replyin;
-    mach_msg_type_number_t replyinCnt;
-    heim_ipc_message_outband_t replyout;
-    mach_msg_type_number_t replyoutCnt;
-    kern_return_t kr;
+    mach_msg_type_number_t replyinCnt = 0;
+    heim_ipc_message_outband_t replyout = 0;
+    mach_msg_type_number_t replyoutCnt = 0;
 
     if (returnvalue) {
 	/* on error, no reply */
-	replyinCnt = 0;
-	replyout = 0; replyoutCnt = 0;
-	kr = KERN_SUCCESS;
     } else if (reply->length < 2048) {
 	replyinCnt = reply->length;
 	memcpy(replyin, reply->data, replyinCnt);
-	replyout = 0; replyoutCnt = 0;
-	kr = KERN_SUCCESS;
     } else {
-	replyinCnt = 0;
-	kr = vm_read(mach_task_self(),
-		     (vm_address_t)reply->data, reply->length,
-		     (vm_address_t *)&replyout, &replyoutCnt);
+	vm_read(mach_task_self(),
+		(vm_address_t)reply->data, reply->length,
+		(vm_address_t *)&replyout, &replyoutCnt);
     }
 
     mheim_ripc_call_reply(s->reply_port, returnvalue,
@@ -159,31 +152,24 @@ mach_complete_async(heim_sipc_call ctx, int returnvalue, heim_idata *reply)
 {
     struct mach_call_ctx *s = (struct mach_call_ctx *)ctx;
     heim_ipc_message_inband_t replyin;
-    mach_msg_type_number_t replyinCnt;
-    heim_ipc_message_outband_t replyout;
-    mach_msg_type_number_t replyoutCnt;
-    kern_return_t kr;
+    mach_msg_type_number_t replyinCnt = 0;
+    heim_ipc_message_outband_t replyout = 0;
+    mach_msg_type_number_t replyoutCnt = 0;
 
     if (returnvalue) {
 	/* on error, no reply */
-	replyinCnt = 0;
-	replyout = 0; replyoutCnt = 0;
-	kr = KERN_SUCCESS;
     } else if (reply->length < 2048) {
 	replyinCnt = reply->length;
 	memcpy(replyin, reply->data, replyinCnt);
-	replyout = 0; replyoutCnt = 0;
-	kr = KERN_SUCCESS;
     } else {
-	replyinCnt = 0;
-	kr = vm_read(mach_task_self(),
-		     (vm_address_t)reply->data, reply->length,
-		     (vm_address_t *)&replyout, &replyoutCnt);
+	vm_read(mach_task_self(),
+		(vm_address_t)reply->data, reply->length,
+		(vm_address_t *)&replyout, &replyoutCnt);
     }
 
-    kr = mheim_aipc_acall_reply(s->reply_port, returnvalue,
-				replyin, replyinCnt,
-				replyout, replyoutCnt);
+    mheim_aipc_acall_reply(s->reply_port, returnvalue,
+			   replyin, replyinCnt,
+			   replyout, replyoutCnt);
     heim_ipc_free_cred(s->cred);
     free(s->req.data);
     free(s);
@@ -620,7 +606,6 @@ add_new_socket(int fd,
 	       void *userctx)
 {
     struct client *c;
-    int fileflags;
 
     c = calloc(1, sizeof(*c));
     if (c == NULL)
@@ -642,8 +627,7 @@ add_new_socket(int fd,
     c->callback = callback;
     c->userctx = userctx;
 
-    fileflags = fcntl(c->fd, F_GETFL, 0);
-    fcntl(c->fd, F_SETFL, fileflags | O_NONBLOCK);
+    socket_set_nonblocking(fd, 1);
 
 #ifdef HAVE_GCD
     init_globals();
@@ -700,6 +684,7 @@ maybe_close(struct client *c)
     dispatch_release(c->out);
 #endif
     close(c->fd); /* ref count fd close */
+    free(c->inmsg);
     free(c);
     return 1;
 }
@@ -1098,6 +1083,9 @@ heim_sipc_service_unix(const char *service,
     const char *d = secure_getenv("HEIM_IPC_DIR");
     int fd, ret;
 
+    if (strncasecmp(service, "UNIX:", sizeof("UNIX:") - 1) == 0)
+        service += sizeof("UNIX:") - 1;
+
     un.sun_family = AF_UNIX;
 
     if (snprintf(un.sun_path, sizeof(un.sun_path),
@@ -1128,7 +1116,7 @@ heim_sipc_service_unix(const char *service,
 	return errno;
     }
 
-    chmod(un.sun_path, 0666);
+    (void) chmod(un.sun_path, 0666);
 
     ret = heim_sipc_stream_listener(fd, HEIM_SIPC_TYPE_IPC,
 				    callback, user, ctx);
@@ -1297,7 +1285,7 @@ heim_sipc_service_door(const char *service,
         ret = errno;
         goto cleanup;
     }
-    fchmod(dfd, 0666); /* XXX */
+    (void) fchmod(dfd, 0666); /* XXX */
 
     if (fattach(fd, path) < 0) {
         ret = errno;
@@ -1382,4 +1370,3 @@ heim_ipc_main(void)
     process_loop();
 #endif
 }
-

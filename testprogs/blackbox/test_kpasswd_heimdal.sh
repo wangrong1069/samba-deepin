@@ -5,11 +5,11 @@
 # Copyright (C) 2006-2008 Andrew Bartlett <abartlet@samba.org>
 # Copyright (C) 2016      Andreas Schneider <asn@samba.org>
 
-if [ $# -lt 6 ]; then
-cat <<EOF
-Usage: test_kpasswd_heimdal.sh SERVER USERNAME PASSWORD REALM DOMAIN PREFIX SMBCLIENT
+if [ $# -lt 7 ]; then
+	cat <<EOF
+Usage: test_kpasswd_heimdal.sh SERVER USERNAME PASSWORD REALM DOMAIN PREFIX SMBCLIENT CONFIGURATION
 EOF
-exit 1;
+	exit 1
 fi
 
 SERVER=$1
@@ -18,7 +18,8 @@ PASSWORD=$3
 REALM=$4
 DOMAIN=$5
 PREFIX=$6
-shift 6
+CONFIGURATION=${7}
+shift 7
 failed=0
 
 samba_bindir="$BINDIR"
@@ -30,31 +31,26 @@ samba_kpasswd=$samba_bindir/samba4kpasswd
 mit_kpasswd="$(command -v kpasswd)"
 
 samba_tool="$samba_bindir/samba-tool"
-net_tool="$samba_bindir/net"
+net_tool="$samba_bindir/net ${CONFIGURATION}"
 texpect="$samba_bindir/texpect"
 
 newuser="$samba_tool user create"
 SMB_UNC="//$SERVER/tmp"
 
-. `dirname $0`/subunit.sh
-. `dirname $0`/common_test_fns.inc
+. $(dirname $0)/subunit.sh
+. $(dirname $0)/common_test_fns.inc
 
-do_kinit() {
+do_kinit()
+{
 	principal="$1"
 	password="$2"
 	shift
 	shift
-	kerberos_kinit "$samba_kinit" "$principal" "$password" $@
+	kerberos_kinit "$samba_kinit" "$principal" "$password" "$@"
 }
 
-UID_WRAPPER_ROOT=1
-export UID_WRAPPER_ROOT
-
-CONFIG="--configfile=$PREFIX/etc/smb.conf"
-export CONFIG
-
 testit "reset password policies beside of minimum password age of 0 days" \
-	$VALGRIND $PYTHON $samba_tool domain passwordsettings set $CONFIG --complexity=default --history-length=default --min-pwd-length=default --min-pwd-age=0 --max-pwd-age=default || failed=`expr $failed + 1`
+	$VALGRIND $PYTHON $samba_tool domain passwordsettings set "${CONFIGURATION}" --complexity=default --history-length=default --min-pwd-length=default --min-pwd-age=0 --max-pwd-age=default || failed=$(expr $failed + 1)
 
 TEST_USERNAME="$(mktemp -u alice-XXXXXX)"
 TEST_PRINCIPAL="$TEST_USERNAME@$REALM"
@@ -64,35 +60,35 @@ TEST_PASSWORD_SHORT="secret"
 TEST_PASSWORD_WEAK="Supersecret"
 
 testit "create user locally" \
-	$VALGRIND $PYTHON $newuser $CONFIG $TEST_USERNAME $TEST_PASSWORD || failed=`expr $failed + 1`
+	$VALGRIND $PYTHON $newuser "${CONFIGURATION}" $TEST_USERNAME $TEST_PASSWORD || failed=$(expr $failed + 1)
 
 KRB5CCNAME="$PREFIX/tmpuserccache"
 export KRB5CCNAME
 
 testit "kinit with user password" \
-	do_kinit $TEST_PRINCIPAL $TEST_PASSWORD || failed=`expr $failed + 1`
+	do_kinit $TEST_PRINCIPAL $TEST_PASSWORD || failed=$(expr $failed + 1)
 
 test_smbclient "Test login with user kerberos ccache" \
-	"ls" "$SMB_UNC" --use-krb5-ccache=${KRB5CCNAME} || failed=`expr $failed + 1`
+	"ls" "$SMB_UNC" --use-krb5-ccache=${KRB5CCNAME} || failed=$(expr $failed + 1)
 
 testit "change user password with 'samba-tool user password' (unforced)" \
-	$VALGRIND $PYTHON $samba_tool user password -W$DOMAIN -U$TEST_USERNAME%$TEST_PASSWORD --use-kerberos=off --newpassword=$TEST_PASSWORD_NEW || failed=`expr $failed + 1`
+	$VALGRIND $PYTHON $samba_tool user password "${CONFIGURATION}" -W$DOMAIN -U$TEST_USERNAME%$TEST_PASSWORD --use-kerberos=off --newpassword=$TEST_PASSWORD_NEW || failed=$(expr $failed + 1)
 
 TEST_PASSWORD_OLD=$TEST_PASSWORD
 TEST_PASSWORD=$TEST_PASSWORD_NEW
 TEST_PASSWORD_NEW="testPaSS@02%"
 
 testit "kinit with user password" \
-	do_kinit $TEST_PRINCIPAL $TEST_PASSWORD || failed=`expr $failed + 1`
+	do_kinit $TEST_PRINCIPAL $TEST_PASSWORD || failed=$(expr $failed + 1)
 
 test_smbclient "Test login with user kerberos ccache" \
-	"ls" "$SMB_UNC" --use-krb5-ccache=${KRB5CCNAME} || failed=`expr $failed + 1`
+	"ls" "$SMB_UNC" --use-krb5-ccache=${KRB5CCNAME} || failed=$(expr $failed + 1)
 
 ###########################################################
 ### check that a short password is rejected
 ###########################################################
 
-cat > $PREFIX/tmpkpasswdscript <<EOF
+cat >$PREFIX/tmpkpasswdscript <<EOF
 expect Password
 password ${TEST_PASSWORD}\n
 expect New password
@@ -103,14 +99,14 @@ expect Password too short
 EOF
 
 testit "kpasswd check short user password" \
-	$texpect $PREFIX/tmpkpasswdscript $samba_kpasswd $TEST_PRINCIPAL || failed=`expr $failed + 1`
+	$texpect $PREFIX/tmpkpasswdscript $samba_kpasswd $TEST_PRINCIPAL || failed=$(expr $failed + 1)
 
 ###########################################################
 ### check that a weak password is rejected
 ###########################################################
 
 echo "check that a short password is rejected"
-cat > $PREFIX/tmpkpasswdscript <<EOF
+cat >$PREFIX/tmpkpasswdscript <<EOF
 expect Password
 password ${TEST_PASSWORD}\n
 expect New password
@@ -121,13 +117,13 @@ expect Password does not meet complexity requirements
 EOF
 
 testit "kpasswd check weak user password" \
-	$texpect $PREFIX/tmpkpasswdscript $samba_kpasswd $TEST_PRINCIPAL || failed=`expr $failed + 1`
+	$texpect $PREFIX/tmpkpasswdscript $samba_kpasswd $TEST_PRINCIPAL || failed=$(expr $failed + 1)
 
 ###########################################################
 ### check that a strong password is accepted
 ###########################################################
 
-cat > $PREFIX/tmpkpasswdscript <<EOF
+cat >$PREFIX/tmpkpasswdscript <<EOF
 expect Password
 password ${TEST_PASSWORD}\n
 expect New password
@@ -138,13 +134,13 @@ expect Success
 EOF
 
 testit "kpasswd change user password" \
-	$texpect $PREFIX/tmpkpasswdscript $samba_kpasswd $TEST_PRINCIPAL || failed=`expr $failed + 1`
+	$texpect $PREFIX/tmpkpasswdscript $samba_kpasswd $TEST_PRINCIPAL || failed=$(expr $failed + 1)
 
 TEST_PASSWORD=$TEST_PASSWORD_NEW
 TEST_PASSWORD_NEW="testPaSS@03%"
 
 ###########################################################
-### CVE-2022-XXXXX
+### CVE-2022-2031
 ###########################################################
 
 if [ -n "${mit_kpasswd}" ]; then
@@ -179,14 +175,14 @@ TEST_PASSWORD_NEW="testPaSS@03force%"
 ###########################################################
 
 testit "set password on user locally" \
-	$VALGRIND $PYTHON $samba_tool user setpassword $TEST_USERNAME $CONFIG --newpassword=$TEST_PASSWORD_NEW --must-change-at-next-login || failed=`expr $failed + 1`
+	$VALGRIND $PYTHON $samba_tool user setpassword $TEST_USERNAME "${CONFIGURATION}" --newpassword=$TEST_PASSWORD_NEW --must-change-at-next-login || failed=$(expr $failed + 1)
 
 TEST_PASSWORD=$TEST_PASSWORD_NEW
 TEST_PASSWORD_NEW="testPaSS@04%"
 
 rm -f $PREFIX/tmpuserccache
 
-cat > $PREFIX/tmpkinitscript <<EOF
+cat >$PREFIX/tmpkinitscript <<EOF
 expect Password
 password ${TEST_PASSWORD}\n
 expect Changing password
@@ -198,13 +194,13 @@ expect Success
 EOF
 
 testit "kinit and change user password" \
-	$texpect $PREFIX/tmpkinitscript $samba_kinit $TEST_PRINCIPAL || failed=`expr $failed + 1`
+	$texpect $PREFIX/tmpkinitscript $samba_kinit $TEST_PRINCIPAL || failed=$(expr $failed + 1)
 
 TEST_PASSWORD=$TEST_PASSWORD_NEW
 TEST_PASSWORD_NEW="testPaSS@07%"
 
 test_smbclient "Test login with user (kerberos)" \
-	"ls" "$SMB_UNC" -k yes -U$TEST_PRINCIPAL%$TEST_PASSWORD || failed=`expr $failed + 1`
+	"ls" "$SMB_UNC" -k yes -U$TEST_PRINCIPAL%$TEST_PASSWORD || failed=$(expr $failed + 1)
 
 ###########################################################
 ### Test kpasswd service via 'net ads password'
@@ -214,36 +210,36 @@ test_smbclient "Test login with user (kerberos)" \
 # set_password call first and falls back to change_password if it doesn't
 # succeed.
 testit "change user password with 'net ads password', admin: $DOMAIN/$TEST_USERNAME, target: $TEST_PRINCIPAL" \
-	$VALGRIND $net_tool ads password -W$DOMAIN -U$TEST_PRINCIPAL%$TEST_PASSWORD $TEST_PRINCIPAL "$TEST_PASSWORD_NEW" || failed=`expr $failed + 1`
+	$VALGRIND $net_tool ads password -W$DOMAIN -U$TEST_PRINCIPAL%$TEST_PASSWORD $TEST_PRINCIPAL "$TEST_PASSWORD_NEW" || failed=$(expr $failed + 1)
 
 TEST_PASSWORD=$TEST_PASSWORD_NEW
 TEST_PASSWORD_NEW="testPaSS@08%"
 
 test_smbclient "Test login with smbclient (ntlm)" \
-	"ls" "$SMB_UNC" -k no -U$TEST_PRINCIPAL%$TEST_PASSWORD || failed=`expr $failed + 1`
+	"ls" "$SMB_UNC" -k no -U$TEST_PRINCIPAL%$TEST_PASSWORD || failed=$(expr $failed + 1)
 
 ###########################################################
 ### Test kpasswd service via 'net ads password' as admin
 ###########################################################
 
 testit "set user password with 'net ads password', admin: $DOMAIN/$USERNAME, target: $TEST_PRINCIPAL" \
-	$VALGRIND $net_tool ads password -W$DOMAIN -U$USERNAME@$REALM%$PASSWORD $TEST_PRINCIPAL "$TEST_PASSWORD_NEW" || failed=`expr $failed + 1`
+	$VALGRIND $net_tool ads password -W$DOMAIN -U$USERNAME@$REALM%$PASSWORD $TEST_PRINCIPAL "$TEST_PASSWORD_NEW" || failed=$(expr $failed + 1)
 
 TEST_PASSWORD=$TEST_PASSWORD_NEW
 TEST_PASSWORD_NEW="testPaSS@07%"
 
 test_smbclient "Test login with smbclient (ntlm)" \
-	"ls" "$SMB_UNC" -k no -U$TEST_PRINCIPAL%$TEST_PASSWORD || failed=`expr $failed + 1`
+	"ls" "$SMB_UNC" -k no -U$TEST_PRINCIPAL%$TEST_PASSWORD || failed=$(expr $failed + 1)
 
 ###########################################################
 ### Cleanup
 ###########################################################
 
 testit "reset password policies" \
-	$VALGRIND $PYTHON $samba_tool domain passwordsettings set $CONFIG --complexity=default --history-length=default --min-pwd-length=default --min-pwd-age=default --max-pwd-age=default || failed=`expr $failed + 1`
+	$VALGRIND $PYTHON $samba_tool domain passwordsettings set "${CONFIGURATION}" --complexity=default --history-length=default --min-pwd-length=default --min-pwd-age=default --max-pwd-age=default || failed=$(expr $failed + 1)
 
 testit "delete user" \
-	$VALGRIND $PYTHON $samba_tool user delete $TEST_USERNAME -U"$USERNAME%$PASSWORD" $CONFIG -k no  || failed=`expr $failed + 1`
+	$VALGRIND $PYTHON $samba_tool user delete $TEST_USERNAME -U"$USERNAME%$PASSWORD" "${CONFIGURATION}" -k no || failed=$(expr $failed + 1)
 
 rm -f $PREFIX/tmpuserccache $PREFIX/tmpkpasswdscript $PREFIX/tmpkinitscript
 exit $failed

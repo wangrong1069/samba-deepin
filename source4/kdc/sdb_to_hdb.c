@@ -29,6 +29,9 @@
 #include "librpc/gen_ndr/security.h"
 #include "kdc/samba_kdc.h"
 
+#undef DBGC_CLASS
+#define DBGC_CLASS DBGC_KERBEROS
+
 static void sdb_flags_to_hdb_flags(const struct SDBFlags *s,
 				   HDBFlags *h)
 {
@@ -58,7 +61,7 @@ static void sdb_flags_to_hdb_flags(const struct SDBFlags *s,
 	h->virtual = s->virtual;
 	h->synthetic = s->synthetic;
 	h->no_auth_data_reqd = s->no_auth_data_reqd;
-	h->_unused24 = s->_unused24;
+	h->auth_data_reqd = s->auth_data_reqd;
 	h->_unused25 = s->_unused25;
 	h->_unused26 = s->_unused26;
 	h->_unused27 = s->_unused27;
@@ -87,15 +90,7 @@ static int sdb_key_to_Key(const struct sdb_key *s, Key *h)
 {
 	int rc;
 
-	if (s->mkvno != NULL) {
-		h->mkvno = malloc(sizeof(unsigned int));
-		if (h->mkvno == NULL) {
-			goto error_nomem;
-		}
-		*h->mkvno = *s->mkvno;
-	} else {
-		h->mkvno = NULL;
-	}
+	ZERO_STRUCTP(h);
 
 	h->key.keytype = s->key.keytype;
 	rc = smb_krb5_copy_data_contents(&h->key.keyvalue,
@@ -152,6 +147,31 @@ static int sdb_keys_to_Keys(const struct sdb_keys *s, Keys *h)
 	return 0;
 }
 
+static int sdb_keys_to_HistKeys(krb5_context context,
+				const struct sdb_keys *s,
+				krb5_kvno kvno,
+				hdb_entry *h)
+{
+	unsigned int i;
+
+	for (i = 0; i < s->len; i++) {
+		Key k = { 0, };
+		int ret;
+
+		ret = sdb_key_to_Key(&s->val[i], &k);
+		if (ret != 0) {
+			return ENOMEM;
+		}
+		ret = hdb_add_history_key(context, h, kvno, &k);
+		free_Key(&k);
+		if (ret != 0) {
+			return ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
 static int sdb_event_to_Event(krb5_context context,
 			      const struct sdb_event *s, Event *h)
 {
@@ -173,13 +193,15 @@ static int sdb_event_to_Event(krb5_context context,
 	return 0;
 }
 
-
-static int sdb_entry_to_hdb_entry(krb5_context context,
-				  const struct sdb_entry *s,
-				  hdb_entry *h)
+int sdb_entry_to_hdb_entry(krb5_context context,
+			   const struct sdb_entry *s,
+			   hdb_entry *h)
 {
+	struct samba_kdc_entry *ske = s->skdc_entry;
 	unsigned int i;
 	int rc;
+
+	ZERO_STRUCTP(h);
 
 	rc = krb5_copy_principal(context,
 				 s->principal,
@@ -193,6 +215,26 @@ static int sdb_entry_to_hdb_entry(krb5_context context,
 	rc = sdb_keys_to_Keys(&s->keys, &h->keys);
 	if (rc != 0) {
 		goto error;
+	}
+
+	if (h->kvno > 1) {
+		rc = sdb_keys_to_HistKeys(context,
+					  &s->old_keys,
+					  h->kvno - 1,
+					  h);
+		if (rc != 0) {
+			goto error;
+		}
+	}
+
+	if (h->kvno > 2) {
+		rc = sdb_keys_to_HistKeys(context,
+					  &s->older_keys,
+					  h->kvno - 2,
+					  h);
+		if (rc != 0) {
+			goto error;
+		}
 	}
 
 	rc = sdb_event_to_Event(context,
@@ -253,7 +295,7 @@ static int sdb_entry_to_hdb_entry(krb5_context context,
 	}
 
 	if (s->max_life != NULL) {
-		h->max_life = malloc(sizeof(unsigned int));
+		h->max_life = malloc(sizeof(*h->max_life));
 		if (h->max_life == NULL) {
 			rc = ENOMEM;
 			goto error;
@@ -264,7 +306,7 @@ static int sdb_entry_to_hdb_entry(krb5_context context,
 	}
 
 	if (s->max_renew != NULL) {
-		h->max_renew = malloc(sizeof(unsigned int));
+		h->max_renew = malloc(sizeof(*h->max_renew));
 		if (h->max_renew == NULL) {
 			rc = ENOMEM;
 			goto error;
@@ -318,39 +360,12 @@ static int sdb_entry_to_hdb_entry(krb5_context context,
 		}
 	}
 
-	h->generation = NULL;
-	h->extensions = NULL; /* really sure ? FIXME */
-
+	h->context = ske;
+	if (ske != NULL) {
+		ske->kdc_entry = h;
+	}
 	return 0;
 error:
 	free_hdb_entry(h);
 	return rc;
-}
-
-static int samba_kdc_hdb_entry_destructor(struct samba_kdc_entry *p)
-{
-	hdb_entry *entry_ex = p->entry_ex;
-	free_hdb_entry(entry_ex);
-
-	return 0;
-}
-
-int sdb_entry_ex_to_hdb_entry_ex(krb5_context context,
-				 const struct sdb_entry_ex *s,
-				 hdb_entry *h)
-{
-	struct samba_kdc_entry *skdc_entry;
-
-	ZERO_STRUCTP(h);
-
-	if (s->ctx != NULL) {
-		skdc_entry = talloc_get_type(s->ctx, struct samba_kdc_entry);
-
-		h->context = skdc_entry;
-
-		talloc_set_destructor(skdc_entry,
-				      samba_kdc_hdb_entry_destructor);
-	}
-
-	return sdb_entry_to_hdb_entry(context, &s->entry, h);
 }

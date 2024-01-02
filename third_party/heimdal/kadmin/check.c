@@ -73,7 +73,7 @@ do_check_entry(krb5_principal principal, void *data)
 	return 1;
 
     memset (&princ, 0, sizeof(princ));
-    ret = kadm5_get_principal(kadm_handle, principal, &princ,
+    ret = kadm5_get_principal(data, principal, &princ,
 			      KADM5_PRINCIPAL | KADM5_KEY_DATA);
     if(ret) {
 	krb5_warn(context, ret, "Failed to get principal: %s", name);
@@ -95,7 +95,7 @@ do_check_entry(krb5_principal principal, void *data)
     }
 
     free(name);
-    kadm5_free_principal_ent(kadm_handle, &princ);
+    kadm5_free_principal_ent(data, &princ);
 
     return 0;
 }
@@ -106,6 +106,7 @@ check(void *opt, int argc, char **argv)
     kadm5_principal_ent_rec ent;
     krb5_error_code ret;
     char *realm = NULL, *p, *p2;
+    void *inner_kadm_handle = NULL;
     int found;
 
     if (argc == 0) {
@@ -135,8 +136,9 @@ check(void *opt, int argc, char **argv)
 
     ret = get_check_entry(p, &ent);
     if (ret) {
-	printf("%s doesn't exist, are you sure %s is a realm in your database",
-	       p, realm);
+	fprintf(stderr,
+	        "%s does not exist, are you sure %s is a realm in your database?\n",
+	        p, realm);
 	free(p);
 	goto fail;
     }
@@ -155,8 +157,9 @@ check(void *opt, int argc, char **argv)
 
     ret = get_check_entry(p, &ent);
     if (ret) {
-	printf("%s doesn't exist, "
-	       "there is no way to do remote administration", p);
+	fprintf(stderr,
+	        "%s does not exist, there is no way to do remote administration.\n",
+	        p);
 	free(p);
 	goto fail;
     }
@@ -175,8 +178,9 @@ check(void *opt, int argc, char **argv)
 
     ret = get_check_entry(p, &ent);
     if (ret) {
-	printf("%s doesn't exist, "
-	       "there is no way to do change password", p);
+	fprintf(stderr,
+	        "%s does not exist, there is no way to do change password.\n",
+	        p);
 	free(p);
 	goto fail;
     }
@@ -188,7 +192,7 @@ check(void *opt, int argc, char **argv)
      * Check default@REALM
      *
      * Check that disallow-all-tix is set on the default principal
-     * (or that the entry doesn't exists)
+     * (or that the entry does not exist)
      */
 
     if (asprintf(&p, "default@%s", realm) == -1) {
@@ -199,7 +203,7 @@ check(void *opt, int argc, char **argv)
     ret = get_check_entry(p, &ent);
     if (ret == 0) {
 	if ((ent.attributes & KRB5_KDB_DISALLOW_ALL_TIX) == 0) {
-	    printf("default template entry is not disabled\n");
+	    fprintf(stderr, "default template entry is not disabled\n");
 	    ret = EINVAL;
 	}
 	kadm5_free_principal_ent(kadm_handle, &ent);
@@ -254,7 +258,15 @@ check(void *opt, int argc, char **argv)
 	}
     }
 
-    foreach_principal("*", do_check_entry, "check", NULL);
+    ret = kadm5_dup_context(kadm_handle, &inner_kadm_handle);
+    if (ret == 0)
+        ret = foreach_principal("*", do_check_entry, "check", inner_kadm_handle);
+    if (inner_kadm_handle)
+        kadm5_destroy(inner_kadm_handle);
+    if (ret) {
+        krb5_warn(context, ret, "Could not iterate principals in realm");
+        goto fail;
+    }
 
     free(realm);
     return 0;

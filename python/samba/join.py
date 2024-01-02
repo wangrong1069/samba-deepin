@@ -50,6 +50,7 @@ import tempfile
 from collections import OrderedDict
 from samba.common import get_string
 from samba.netcmd import CommandError
+from samba import dsdb, functional_level
 
 
 class DCJoinException(Exception):
@@ -553,7 +554,12 @@ class DCJoinContext(object):
         nc_list = [ctx.base_dn, ctx.config_dn, ctx.schema_dn]
 
         if ctx.behavior_version >= samba.dsdb.DS_DOMAIN_FUNCTION_2003:
-            rec["msDS-Behavior-Version"] = str(samba.dsdb.DS_DOMAIN_FUNCTION_2008_R2)
+            # This allows an override via smb.conf or --option using
+            # "ad dc functional level" to make us seem like 2016 to
+            # join such a domain for (say) a migration, or to test the
+            # partially implemented 2016 support.
+            domainControllerFunctionality = functional_level.dc_level_from_lp(ctx.lp)
+            rec["msDS-Behavior-Version"] = str(domainControllerFunctionality)
 
         if ctx.behavior_version >= samba.dsdb.DS_DOMAIN_FUNCTION_2003:
             rec["msDS-HasDomainNCs"] = ctx.base_dn
@@ -920,11 +926,38 @@ class DCJoinContext(object):
 
         provision_fill(ctx.local_samdb, secrets_ldb,
                        ctx.logger, ctx.names, ctx.paths,
-                       dom_for_fun_level=DS_DOMAIN_FUNCTION_2003,
+                       dom_for_fun_level=ctx.behavior_version,
                        targetdir=ctx.targetdir, samdb_fill=FILL_SUBDOMAIN,
                        machinepass=ctx.acct_pass, serverrole="active directory domain controller",
                        lp=ctx.lp, hostip=ctx.names.hostip, hostip6=ctx.names.hostip6,
                        dns_backend=ctx.dns_backend, adminpass=ctx.adminpass)
+
+        if ctx.behavior_version >= samba.dsdb.DS_DOMAIN_FUNCTION_2012:
+            adprep_level = ctx.behavior_version
+
+            updates_allowed_overridden = False
+            if lp.get("dsdb:schema update allowed") is None:
+                lp.set("dsdb:schema update allowed", "yes")
+                print("Temporarily overriding 'dsdb:schema update allowed' setting")
+                updates_allowed_overridden = True
+
+            samdb.transaction_start()
+            try:
+                from samba.domain_update import DomainUpdate
+
+                domain = DomainUpdate(ctx.local_samdb, fix=True)
+                domain.check_updates_functional_level(adprep_level,
+                                                      samba.dsdb.DS_DOMAIN_FUNCTION_2008,
+                                                      update_revision=True)
+
+                samdb.transaction_commit()
+            except Exception as e:
+                samdb.transaction_cancel()
+                raise DCJoinException("DomainUpdate() failed: %s" % e)
+
+            if updates_allowed_overridden:
+                lp.set("dsdb:schema update allowed", "no")
+
         print("Provision OK for domain %s" % ctx.names.dnsdomain)
 
     def create_replicator(ctx, repl_creds, binding_options):
@@ -936,7 +969,11 @@ class DCJoinContext(object):
     def join_replicate(ctx):
         """Replicate the SAM."""
 
-        print("Starting replication")
+        ctx.logger.info("Starting replication")
+
+        # A global transaction is started so that linked attributes
+        # are applied at the very end, once all partitions are
+        # replicated.  This helps get all cross-partition links.
         ctx.local_samdb.transaction_start()
         try:
             source_dsa_invocation_id = misc.GUID(ctx.samdb.get_invocation_id())
@@ -987,7 +1024,7 @@ class DCJoinContext(object):
                                            "not possible due to a missing parent object.  "
                                            "This is typical of a Samba "
                                            "4.5 or earlier server. "
-                                           "We will replicate the all objects instead.")
+                                           "We will replicate all the objects instead.")
                     else:
                         raise
 
@@ -1018,7 +1055,7 @@ class DCJoinContext(object):
             print("Done with always replicated NC (base, config, schema)")
 
             # At this point we should already have an entry in the ForestDNS
-            # and DomainDNS NC (those under CN=Partions,DC=...) in order to
+            # and DomainDNS NC (those under CN=Partitions,DC=...) in order to
             # indicate that we hold a replica for this NC.
             for nc in (ctx.domaindns_zone, ctx.forestdns_zone):
                 if nc in ctx.nc_list:
@@ -1052,12 +1089,27 @@ class DCJoinContext(object):
             ctx.source_dsa_invocation_id = source_dsa_invocation_id
             ctx.destination_dsa_guid = destination_dsa_guid
 
-            print("Committing SAM database")
+            ctx.logger.info("Committing SAM database - this may take some time")
         except:
             ctx.local_samdb.transaction_cancel()
             raise
         else:
+
+            # This is a special case, we have completed a full
+            # replication so if a link comes to us that points to a
+            # deleted object, and we asked for all objects already, we
+            # just have to ignore it, the chance to re-try the
+            # replication with GET_TGT has long gone.  This can happen
+            # if the object is deleted and sent to us after the link
+            # was sent, as we are processing all links in the
+            # transaction_commit().
+            if not ctx.domain_replica_flags & drsuapi.DRSUAPI_DRS_CRITICAL_ONLY:
+                ctx.local_samdb.set_opaque_integer(dsdb.DSDB_FULL_JOIN_REPLICATION_COMPLETED_OPAQUE_NAME,
+                                                   1)
             ctx.local_samdb.transaction_commit()
+            ctx.local_samdb.set_opaque_integer(dsdb.DSDB_FULL_JOIN_REPLICATION_COMPLETED_OPAQUE_NAME,
+                                               0)
+            ctx.logger.info("Committed SAM database")
 
         # A large replication may have caused our LDB connection to the
         # remote DC to timeout, so check the connection is still alive
@@ -1166,7 +1218,6 @@ class DCJoinContext(object):
         except WERRORError as e:
             if e.args[0] == werror.WERR_DNS_ERROR_NAME_DOES_NOT_EXIST:
                 name_found = False
-                pass
 
         if name_found:
             for rec in res.rec:
@@ -1289,7 +1340,7 @@ class DCJoinContext(object):
             # Note: as RODC the invocationId is only stored
             # on the RODC itself, the other DCs never see it.
             #
-            # Thats is why we fix up the replPropertyMetaData stamp
+            # That's is why we fix up the replPropertyMetaData stamp
             # for the 'invocationId' attribute, we need to change
             # the 'version' to '0', this is what windows 2008r2 does as RODC
             #

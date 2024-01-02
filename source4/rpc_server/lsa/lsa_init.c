@@ -30,13 +30,14 @@
 	"O:BAG:SY" \
 	"D:" \
 	"(D;;0x00000800;;;AN)" \
-	"(A;;GA;;;BA)" \
-	"(A;;GX;;;WD)" \
+	"(A;;0x000f1fff;;;BA)" \
+	"(A;;0x00020801;;;WD)" \
 	"(A;;0x00000801;;;AN)" \
 	"(A;;0x00001000;;;LS)" \
 	"(A;;0x00001000;;;NS)" \
-	"(A;;0x00001000;;;IS)" \
-	"(A;;0x00000801;;;S-1-15-2-1)"
+	"(A;;0x00001000;;;S-1-5-17)" \
+	"(A;;0x00000801;;;AC)" \
+	"(A;;0x00000801;;;S-1-15-2-2)"
 
 static const struct generic_mapping dcesrv_lsa_policy_mapping = {
 	LSA_POLICY_READ,
@@ -145,10 +146,9 @@ NTSTATUS dcesrv_lsa_get_policy_state(struct dcesrv_call_state *dce_call,
 
 	/* work out the system_dn - useful for so many calls its worth
 	   fetching here */
-	state->system_dn = samdb_search_dn(state->sam_ldb, state,
-					   state->domain_dn, "(&(objectClass=container)(cn=System))");
-	if (!state->system_dn) {
-		return NT_STATUS_NO_SUCH_DOMAIN;		
+	state->system_dn = samdb_system_container_dn(state->sam_ldb, state);
+	if (state->system_dn == NULL) {
+		return NT_STATUS_NO_MEMORY;
 	}
 
 	state->builtin_sid = dom_sid_parse_talloc(state, SID_BUILTIN);

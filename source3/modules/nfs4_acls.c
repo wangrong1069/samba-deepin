@@ -116,6 +116,155 @@ int smbacl4_get_vfs_params(struct connection_struct *conn,
 	return 0;
 }
 
+static int fstatat_with_cap_dac_override(int fd,
+					 const char *pathname,
+					 SMB_STRUCT_STAT *sbuf,
+					 int flags,
+					 bool fake_dir_create_times)
+{
+	int ret;
+
+	set_effective_capability(DAC_OVERRIDE_CAPABILITY);
+	ret = sys_fstatat(fd,
+			  pathname,
+			  sbuf,
+			  flags,
+			  fake_dir_create_times);
+	drop_effective_capability(DAC_OVERRIDE_CAPABILITY);
+
+	return ret;
+}
+
+static int stat_with_cap_dac_override(struct vfs_handle_struct *handle,
+				      struct smb_filename *smb_fname, int flag)
+{
+	bool fake_dctime = lp_fake_directory_create_times(SNUM(handle->conn));
+	int fd = -1;
+	NTSTATUS status;
+	struct smb_filename *dir_name = NULL;
+	struct smb_filename *rel_name = NULL;
+	int ret = -1;
+#ifdef O_PATH
+	int open_flags = O_PATH;
+#else
+	int open_flags = O_RDONLY;
+#endif
+
+	status = SMB_VFS_PARENT_PATHNAME(handle->conn,
+					 talloc_tos(),
+					 smb_fname,
+					 &dir_name,
+					 &rel_name);
+	if (!NT_STATUS_IS_OK(status)) {
+		errno = map_errno_from_nt_status(status);
+		return -1;
+	}
+
+	fd = open(dir_name->base_name, open_flags, 0);
+	if (fd == -1) {
+		TALLOC_FREE(dir_name);
+		return -1;
+	}
+
+	ret = fstatat_with_cap_dac_override(fd,
+					    rel_name->base_name,
+					    &smb_fname->st,
+					    flag,
+					    fake_dctime);
+
+	TALLOC_FREE(dir_name);
+	close(fd);
+
+	return ret;
+}
+
+int nfs4_acl_stat(struct vfs_handle_struct *handle,
+		  struct smb_filename *smb_fname)
+{
+	int ret;
+
+	ret = SMB_VFS_NEXT_STAT(handle, smb_fname);
+	if (ret == -1 && errno == EACCES) {
+		DEBUG(10, ("Trying stat with capability for %s\n",
+			   smb_fname->base_name));
+		ret = stat_with_cap_dac_override(handle, smb_fname, 0);
+	}
+	return ret;
+}
+
+static int fstat_with_cap_dac_override(int fd, SMB_STRUCT_STAT *sbuf,
+				       bool fake_dir_create_times)
+{
+	int ret;
+
+	set_effective_capability(DAC_OVERRIDE_CAPABILITY);
+	ret = sys_fstat(fd, sbuf, fake_dir_create_times);
+	drop_effective_capability(DAC_OVERRIDE_CAPABILITY);
+
+	return ret;
+}
+
+int nfs4_acl_fstat(struct vfs_handle_struct *handle,
+		   struct files_struct *fsp,
+		   SMB_STRUCT_STAT *sbuf)
+{
+	int ret;
+
+	ret = SMB_VFS_NEXT_FSTAT(handle, fsp, sbuf);
+	if (ret == -1 && errno == EACCES) {
+		bool fake_dctime =
+			lp_fake_directory_create_times(SNUM(handle->conn));
+
+		DBG_DEBUG("fstat for %s failed with EACCES. Trying with "
+			  "CAP_DAC_OVERRIDE.\n", fsp->fsp_name->base_name);
+		ret = fstat_with_cap_dac_override(fsp_get_pathref_fd(fsp),
+						  sbuf,
+						  fake_dctime);
+	}
+
+	return ret;
+}
+
+int nfs4_acl_lstat(struct vfs_handle_struct *handle,
+		   struct smb_filename *smb_fname)
+{
+	int ret;
+
+	ret = SMB_VFS_NEXT_LSTAT(handle, smb_fname);
+	if (ret == -1 && errno == EACCES) {
+		DEBUG(10, ("Trying lstat with capability for %s\n",
+			   smb_fname->base_name));
+		ret = stat_with_cap_dac_override(handle, smb_fname,
+						 AT_SYMLINK_NOFOLLOW);
+	}
+	return ret;
+}
+
+int nfs4_acl_fstatat(struct vfs_handle_struct *handle,
+		     const struct files_struct *dirfsp,
+		     const struct smb_filename *smb_fname,
+		     SMB_STRUCT_STAT *sbuf,
+		     int flags)
+{
+	int ret;
+
+	ret = SMB_VFS_NEXT_FSTATAT(handle, dirfsp, smb_fname, sbuf, flags);
+	if (ret == -1 && errno == EACCES) {
+		bool fake_dctime =
+			lp_fake_directory_create_times(SNUM(handle->conn));
+
+		DBG_DEBUG("fstatat for %s failed with EACCES. Trying with "
+			  "CAP_DAC_OVERRIDE.\n", dirfsp->fsp_name->base_name);
+		ret = fstatat_with_cap_dac_override(fsp_get_pathref_fd(dirfsp),
+						    smb_fname->base_name,
+						    sbuf,
+						    flags,
+						    fake_dctime);
+	}
+
+	return ret;
+}
+
 /************************************************
  Split the ACE flag mapping between nfs4 and Windows
  into two separate functions rather than trying to do
@@ -978,8 +1127,6 @@ NTSTATUS smb_set_nt_acl_nfs4(vfs_handle_struct *handle, files_struct *fsp,
 	bool	result, is_directory;
 
 	bool set_acl_as_root = false;
-	uid_t newUID = (uid_t)-1;
-	gid_t newGID = (gid_t)-1;
 	int saved_errno;
 	NTSTATUS status;
 	TALLOC_CTX *frame = talloc_stackframe();
@@ -1019,48 +1166,19 @@ NTSTATUS smb_set_nt_acl_nfs4(vfs_handle_struct *handle, files_struct *fsp,
 	is_directory = S_ISDIR(fsp->fsp_name->st.st_ex_mode);
 
 	if (pparams->do_chown) {
-		/* chown logic is a copy/paste from posix_acl.c:set_nt_acl */
-
-		uid_t old_uid = fsp->fsp_name->st.st_ex_uid;
-		gid_t old_gid = fsp->fsp_name->st.st_ex_gid;
-		status = unpack_nt_owners(fsp->conn, &newUID, &newGID,
-					  security_info_sent, psd);
+		/*
+		 * When the chown succeeds, the special entries in the
+		 * file system ACL refer to the new owner. In order to
+		 * apply the complete information from the DACL,
+		 * setting the ACL then has to succeed. Track this
+		 * case with set_acl_as_root and set the ACL as root
+		 * accordingly.
+		 */
+		status = chown_if_needed(fsp, security_info_sent, psd,
+					 &set_acl_as_root);
 		if (!NT_STATUS_IS_OK(status)) {
-			DEBUG(8, ("unpack_nt_owners failed"));
 			TALLOC_FREE(frame);
 			return status;
-		}
-		if (((newUID != (uid_t)-1) && (old_uid != newUID)) ||
-		    ((newGID != (gid_t)-1) && (old_gid != newGID)))
-		{
-			status = try_chown(fsp, newUID, newGID);
-			if (!NT_STATUS_IS_OK(status)) {
-				DEBUG(3,("chown %s, %u, %u failed. Error = "
-					 "%s.\n", fsp_str_dbg(fsp),
-					 (unsigned int)newUID,
-					 (unsigned int)newGID,
-					 nt_errstr(status)));
-				TALLOC_FREE(frame);
-				return status;
-			}
-
-			DEBUG(10,("chown %s, %u, %u succeeded.\n",
-				  fsp_str_dbg(fsp), (unsigned int)newUID,
-				  (unsigned int)newGID));
-
-			/*
-			 * Owner change, need to update stat info.
-			 */
-			status = vfs_stat_fsp(fsp);
-			if (!NT_STATUS_IS_OK(status)) {
-				TALLOC_FREE(frame);
-				return status;
-			}
-
-			/* If we successfully chowned, we know we must
-			 * be able to set the acl, so do it as root.
-			 */
-			set_acl_as_root = true;
 		}
 	}
 

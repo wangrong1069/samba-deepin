@@ -33,6 +33,7 @@
 #include "auth.h"
 #include "rpc_server/rpc_ncacn_np.h"
 #include "rpc_server/srv_pipe_hnd.h"
+#include "lib/util/idtree_random.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_RPC_SRV
@@ -125,7 +126,9 @@ void dcesrv_log_successful_authz(
 				   "DCE/RPC",
 				   auth_type,
 				   transport_protection,
-				   auth->session_info);
+				   auth->session_info,
+				   NULL /* client_audit_info */,
+				   NULL /* server_audit_info */);
 
 	auth->auth_audited = true;
 
@@ -161,6 +164,7 @@ static NTSTATUS dcesrv_assoc_group_new(struct dcesrv_call_state *call)
 
 	id = idr_get_new_random(dce_ctx->assoc_groups_idr,
 				assoc_group,
+				1,
 				UINT16_MAX);
 	if (id == -1) {
 		TALLOC_FREE(assoc_group);

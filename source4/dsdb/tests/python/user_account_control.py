@@ -96,7 +96,7 @@ class UserAccountControlTests(samba.tests.TestCase):
                                  UF_SERVER_TRUST_ACCOUNT]:
                 account_type_str = dsdb.user_account_control_flag_bit_to_string(account_type)
                 for objectclass in ["computer", "user"]:
-                    for name in [("oc_uac_lock$", "withdollar"), \
+                    for name in [("oc_uac_lock$", "withdollar"),
                         ("oc_uac_lock", "plain")]:
                         test_name = f"{account_type_str}_{objectclass}_{priv[1]}_{name[1]}"
                         cls.generate_dynamic_test("test_objectclass_uac_dollar_lock",
@@ -313,7 +313,7 @@ class UserAccountControlTests(samba.tests.TestCase):
 
     def test_add_computer_sd_cc(self):
         user_sid = self.sd_utils.get_object_sid(self.unpriv_user_dn)
-        mod = "(OA;;CC;bf967a86-0de6-11d0-a285-00aa003049e2;;%s)" % str(user_sid)
+        mod = f"(OA;CI;WDCC;{dsdb.DS_GUID_SCHEMA_CLASS_COMPUTER};;{user_sid})"
 
         old_sd = self.sd_utils.read_sd_on_dn(self.OU)
         self.sd_utils.dacl_add_ace(self.OU, mod)
@@ -322,8 +322,11 @@ class UserAccountControlTests(samba.tests.TestCase):
         sd = ldb.MessageElement((ndr_pack(self.sd_reference_modify)),
                                 ldb.FLAG_MOD_ADD,
                                 "nTSecurityDescriptor")
-        self.add_computer_ldap(computername,
-                               others={"nTSecurityDescriptor": sd})
+        try:
+            self.add_computer_ldap(computername,
+                                   others={"nTSecurityDescriptor": sd})
+        except LdbError as e:
+            self.fail(str(e))
 
         res = self.admin_samdb.search("%s" % self.base_dn,
                                       expression="(&(objectClass=computer)(samAccountName=%s$))" % computername,
@@ -448,7 +451,7 @@ class UserAccountControlTests(samba.tests.TestCase):
 
     def test_add_computer_cc_normal_bare(self):
         user_sid = self.sd_utils.get_object_sid(self.unpriv_user_dn)
-        mod = "(OA;;CC;bf967a86-0de6-11d0-a285-00aa003049e2;;%s)" % str(user_sid)
+        mod = f"(OA;CI;CC;{dsdb.DS_GUID_SCHEMA_CLASS_COMPUTER};;{user_sid})"
 
         old_sd = self.sd_utils.read_sd_on_dn(self.OU)
         self.sd_utils.dacl_add_ace(self.OU, mod)
@@ -457,9 +460,11 @@ class UserAccountControlTests(samba.tests.TestCase):
         sd = ldb.MessageElement((ndr_pack(self.sd_reference_modify)),
                                 ldb.FLAG_MOD_ADD,
                                 "nTSecurityDescriptor")
-        self.add_computer_ldap(computername,
-                               others={"nTSecurityDescriptor": sd})
-
+        try:
+            self.add_computer_ldap(computername,
+                                   others={"nTSecurityDescriptor": sd})
+        except LdbError as e:
+            self.fail(str(e))
         res = self.admin_samdb.search("%s" % self.base_dn,
                                       expression="(&(objectClass=computer)(samAccountName=%s$))" % computername,
                                       scope=SCOPE_SUBTREE,
@@ -847,7 +852,7 @@ class UserAccountControlTests(samba.tests.TestCase):
             self.add_computer_ldap(computername, others={"userAccountControl": [str(bit_add)]})
             delete_force(self.admin_samdb, "CN=%s,%s" % (computername, self.OU))
             if bit in priv_bits:
-                self.fail("Unexpectdly able to set userAccountControl bit 0x%08X (%s) on %s"
+                self.fail("Unexpectedly able to set userAccountControl bit 0x%08X (%s) on %s"
                           % (bit, bit_str, computername))
 
         except LdbError as e4:
@@ -884,9 +889,11 @@ class UserAccountControlTests(samba.tests.TestCase):
         computername = self.computernames[0]
 
         user_sid = self.sd_utils.get_object_sid(self.unpriv_user_dn)
-        mod = "(OA;;CC;bf967a86-0de6-11d0-a285-00aa003049e2;;%s)" % str(user_sid)
-
+        ace_cc = f"(OA;;CC;{dsdb.DS_GUID_SCHEMA_CLASS_COMPUTER};;{user_sid})"
+        ace_wp_dnshostname = f"(OA;CI;WP;{dsdb.DS_GUID_SCHEMA_ATTR_DNS_HOST_NAME};;{user_sid})"
+        ace_wp_primarygroupid = f"(OA;CI;WP;{dsdb.DS_GUID_SCHEMA_ATTR_PRIMARY_GROUP_ID};;{user_sid})"
         old_sd = self.sd_utils.read_sd_on_dn(self.OU)
+        mod = ace_cc + ace_wp_dnshostname + ace_wp_primarygroupid
 
         self.sd_utils.dacl_add_ace(self.OU, mod)
         try:
@@ -1275,7 +1282,7 @@ class UserAccountControlTests(samba.tests.TestCase):
 
         try:
             self.admin_samdb.add(msg_dict)
-            if (objectclass == "user" \
+            if (objectclass == "user"
                 and account_type != UF_NORMAL_ACCOUNT):
                 self.fail("Able to create {account_type_str} on {objectclass}")
         except LdbError as e:

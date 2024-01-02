@@ -54,12 +54,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include <netinet/in.h>
 
 #include <search.h>
 #include <assert.h>
 
+#include "nss_utils.h"
 /*
  * Defining _POSIX_PTHREAD_SEMANTICS before including pwd.h and grp.h  gives us
  * the posix getpwnam_r(), getpwuid_r(), getgrnam_r and getgrgid_r calls on
@@ -177,16 +179,8 @@ typedef nss_status_t NSS_STATUS;
 #define NWRAP_INET_ADDRSTRLEN INET_ADDRSTRLEN
 #endif
 
-#define NWRAP_LOCK(m) do { \
-	pthread_mutex_lock(&( m ## _mutex)); \
-} while(0)
-
-#define NWRAP_UNLOCK(m) do { \
-	pthread_mutex_unlock(&( m ## _mutex)); \
-} while(0)
-
-static pthread_mutex_t libc_symbol_binding_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t nss_module_symbol_binding_mutex = PTHREAD_MUTEX_INITIALIZER;
+#define MAX(a,b) ((a) < (b) ? (b) : (a))
+#define MIN(a,b) ((a) > (b) ? (b) : (a))
 
 static bool nwrap_initialized = false;
 static pthread_mutex_t nwrap_initialized_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -198,49 +192,48 @@ static pthread_mutex_t nwrap_he_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t nwrap_pw_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t nwrap_sp_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+#define nss_wrapper_init_mutex(m) \
+	_nss_wrapper_init_mutex(m, #m)
+
 /* Add new global locks here please */
 /* Also don't forget to add locks to
  * nwrap_init() function.
  */
+# define NWRAP_REINIT_ALL do { \
+	int ret; \
+	ret = nss_wrapper_init_mutex(&nwrap_initialized_mutex); \
+	if (ret != 0) exit(-1); \
+	ret = nss_wrapper_init_mutex(&nwrap_global_mutex); \
+	if (ret != 0) exit(-1); \
+	ret = nss_wrapper_init_mutex(&nwrap_gr_global_mutex); \
+	if (ret != 0) exit(-1); \
+	ret = nss_wrapper_init_mutex(&nwrap_he_global_mutex); \
+	if (ret != 0) exit(-1); \
+	ret = nss_wrapper_init_mutex(&nwrap_pw_global_mutex); \
+	if (ret != 0) exit(-1); \
+	ret = nss_wrapper_init_mutex(&nwrap_sp_global_mutex); \
+	if (ret != 0) exit(-1); \
+} while(0)
+
 # define NWRAP_LOCK_ALL do { \
-	NWRAP_LOCK(libc_symbol_binding); \
-	NWRAP_LOCK(nss_module_symbol_binding); \
-	NWRAP_LOCK(nwrap_initialized); \
-	NWRAP_LOCK(nwrap_global); \
-	NWRAP_LOCK(nwrap_gr_global); \
-	NWRAP_LOCK(nwrap_he_global); \
-	NWRAP_LOCK(nwrap_pw_global); \
-	NWRAP_LOCK(nwrap_sp_global); \
+	nwrap_mutex_lock(&nwrap_initialized_mutex); \
+	nwrap_mutex_lock(&nwrap_global_mutex); \
+	nwrap_mutex_lock(&nwrap_gr_global_mutex); \
+	nwrap_mutex_lock(&nwrap_he_global_mutex); \
+	nwrap_mutex_lock(&nwrap_pw_global_mutex); \
+	nwrap_mutex_lock(&nwrap_sp_global_mutex); \
 } while (0);
 
 # define NWRAP_UNLOCK_ALL do {\
-	NWRAP_UNLOCK(nwrap_sp_global); \
-	NWRAP_UNLOCK(nwrap_pw_global); \
-	NWRAP_UNLOCK(nwrap_he_global); \
-	NWRAP_UNLOCK(nwrap_gr_global); \
-	NWRAP_UNLOCK(nwrap_global); \
-	NWRAP_UNLOCK(nwrap_initialized); \
-	NWRAP_UNLOCK(nss_module_symbol_binding); \
-	NWRAP_UNLOCK(libc_symbol_binding); \
+	nwrap_mutex_unlock(&nwrap_sp_global_mutex); \
+	nwrap_mutex_unlock(&nwrap_pw_global_mutex); \
+	nwrap_mutex_unlock(&nwrap_he_global_mutex); \
+	nwrap_mutex_unlock(&nwrap_gr_global_mutex); \
+	nwrap_mutex_unlock(&nwrap_global_mutex); \
+	nwrap_mutex_unlock(&nwrap_initialized_mutex); \
 } while (0);
 
 static void nwrap_init(void);
-
-static void nwrap_thread_prepare(void)
-{
-	nwrap_init();
-	NWRAP_LOCK_ALL;
-}
-
-static void nwrap_thread_parent(void)
-{
-	NWRAP_UNLOCK_ALL;
-}
-
-static void nwrap_thread_child(void)
-{
-	NWRAP_UNLOCK_ALL;
-}
 
 enum nwrap_dbglvl_e {
 	NWRAP_LOG_ERROR = 0,
@@ -528,7 +521,7 @@ typedef NSS_STATUS (*__nss_getpwent_r)(struct passwd *result,
 				       size_t buflen,
 				       int *errnop);
 typedef NSS_STATUS (*__nss_endpwent)(void);
-typedef NSS_STATUS (*__nss_initgroups)(const char *user,
+typedef NSS_STATUS (*__nss_initgroups_dyn)(const char *user,
 				       gid_t group,
 				       long int *start,
 				       long int *size,
@@ -580,7 +573,7 @@ struct nwrap_nss_module_symbols {
 	NWRAP_NSS_MODULE_SYMBOL_ENTRY(getpwent_r);
 	NWRAP_NSS_MODULE_SYMBOL_ENTRY(endpwent);
 
-	NWRAP_NSS_MODULE_SYMBOL_ENTRY(initgroups);
+	NWRAP_NSS_MODULE_SYMBOL_ENTRY(initgroups_dyn);
 	NWRAP_NSS_MODULE_SYMBOL_ENTRY(getgrnam_r);
 	NWRAP_NSS_MODULE_SYMBOL_ENTRY(getgrgid_r);
 	NWRAP_NSS_MODULE_SYMBOL_ENTRY(setgrent);
@@ -618,8 +611,14 @@ struct nwrap_ops {
 					 struct passwd *pwdst, char *buf,
 					 size_t buflen, struct passwd **pwdstp);
 	void		(*nw_endpwent)(struct nwrap_backend *b);
-	int		(*nw_initgroups)(struct nwrap_backend *b,
-					 const char *user, gid_t group);
+	int		(*nw_initgroups_dyn)(struct nwrap_backend *b,
+					     const char *user,
+					     gid_t group,
+					     long int *start,
+					     long int *size,
+					     gid_t **groups,
+					     long int limit,
+					     int *errnop);
 	struct group *	(*nw_getgrnam)(struct nwrap_backend *b,
 				       const char *name);
 	int		(*nw_getgrnam_r)(struct nwrap_backend *b,
@@ -675,8 +674,14 @@ static int nwrap_files_getpwent_r(struct nwrap_backend *b,
 				  struct passwd *pwdst, char *buf,
 				  size_t buflen, struct passwd **pwdstp);
 static void nwrap_files_endpwent(struct nwrap_backend *b);
-static int nwrap_files_initgroups(struct nwrap_backend *b,
-				  const char *user, gid_t group);
+static int nwrap_files_initgroups_dyn(struct nwrap_backend *b,
+				      const char *user,
+				      gid_t group,
+				      long int *start,
+				      long int *size,
+				      gid_t **groups,
+				      long int limit,
+				      int *errnop);
 static struct group *nwrap_files_getgrnam(struct nwrap_backend *b,
 					  const char *name);
 static int nwrap_files_getgrnam_r(struct nwrap_backend *b,
@@ -742,8 +747,14 @@ static int nwrap_module_getgrgid_r(struct nwrap_backend *b,
 				   char *buf, size_t buflen, struct group **grdstp);
 static void nwrap_module_setgrent(struct nwrap_backend *b);
 static void nwrap_module_endgrent(struct nwrap_backend *b);
-static int nwrap_module_initgroups(struct nwrap_backend *b,
-				   const char *user, gid_t group);
+static int nwrap_module_initgroups_dyn(struct nwrap_backend *b,
+				       const char *user,
+				       gid_t group,
+				       long int *start,
+				       long int *size,
+				       gid_t **groups,
+				       long int limit,
+				       int *errnop);
 static struct hostent *nwrap_module_gethostbyaddr(struct nwrap_backend *b,
 						  const void *addr,
 						  socklen_t len, int type);
@@ -766,7 +777,7 @@ struct nwrap_ops nwrap_files_ops = {
 	.nw_getpwent	= nwrap_files_getpwent,
 	.nw_getpwent_r	= nwrap_files_getpwent_r,
 	.nw_endpwent	= nwrap_files_endpwent,
-	.nw_initgroups	= nwrap_files_initgroups,
+	.nw_initgroups_dyn	= nwrap_files_initgroups_dyn,
 	.nw_getgrnam	= nwrap_files_getgrnam,
 	.nw_getgrnam_r	= nwrap_files_getgrnam_r,
 	.nw_getgrgid	= nwrap_files_getgrgid,
@@ -792,7 +803,7 @@ struct nwrap_ops nwrap_module_ops = {
 	.nw_getpwent	= nwrap_module_getpwent,
 	.nw_getpwent_r	= nwrap_module_getpwent_r,
 	.nw_endpwent	= nwrap_module_endpwent,
-	.nw_initgroups	= nwrap_module_initgroups,
+	.nw_initgroups_dyn	= nwrap_module_initgroups_dyn,
 	.nw_getgrnam	= nwrap_module_getgrnam,
 	.nw_getgrnam_r	= nwrap_module_getgrnam_r,
 	.nw_getgrgid	= nwrap_module_getgrgid,
@@ -831,6 +842,14 @@ static int nwrap_convert_he_ai(const struct hostent *he,
 			       const struct addrinfo *hints,
 			       struct addrinfo **pai,
 			       bool skip_canonname);
+
+#ifdef HAVE_GETGROUPLIST
+static int nwrap_getgrouplist(const char *user,
+			      gid_t group,
+			      long int *size,
+			      gid_t **groupsp,
+			      long int limit);
+#endif
 
 /*
  * VECTORS
@@ -1070,7 +1089,14 @@ static struct nwrap_he nwrap_he_global;
 
 static bool nwrap_gr_parse_line(struct nwrap_cache *nwrap, char *line);
 static void nwrap_gr_unload(struct nwrap_cache *nwrap);
+#if ! defined(HAVE_CONSTRUCTOR_ATTRIBUTE) && defined(HAVE_PRAGMA_INIT)
+/* xlC and other oldschool compilers support (only) this */
+#pragma init (nwrap_constructor)
+#endif
 void nwrap_constructor(void) CONSTRUCTOR_ATTRIBUTE;
+#if ! defined(HAVE_DESTRUCTOR_ATTRIBUTE) && defined(HAVE_PRAGMA_FINI)
+#pragma fini (nwrap_destructor)
+#endif
 void nwrap_destructor(void) DESTRUCTOR_ATTRIBUTE;
 
 /*********************************************************
@@ -1223,37 +1249,57 @@ static void *_nwrap_bind_symbol(enum nwrap_lib lib, const char *fn_name)
 	return func;
 }
 
+#define nwrap_mutex_lock(m) _nwrap_mutex_lock(m, #m, __func__, __LINE__)
+static void _nwrap_mutex_lock(pthread_mutex_t *mutex, const char *name, const char *caller, unsigned line)
+{
+	int ret;
+
+	ret = pthread_mutex_lock(mutex);
+	if (ret != 0) {
+		NWRAP_LOG(NWRAP_LOG_ERROR, "PID(%d):PPID(%d): %s(%u): Couldn't lock pthread mutex(%s) - %s",
+			  getpid(), getppid(), caller, line, name, strerror(ret));
+		abort();
+	}
+}
+
+#define nwrap_mutex_unlock(m) _nwrap_mutex_unlock(m, #m, __func__, __LINE__)
+static void _nwrap_mutex_unlock(pthread_mutex_t *mutex, const char *name, const char *caller, unsigned line)
+{
+	int ret;
+
+	ret = pthread_mutex_unlock(mutex);
+	if (ret != 0) {
+		NWRAP_LOG(NWRAP_LOG_ERROR, "PID(%d):PPID(%d): %s(%u): Couldn't unlock pthread mutex(%s) - %s",
+			  getpid(), getppid(), caller, line, name, strerror(ret));
+		abort();
+	}
+}
+
 #define nwrap_bind_symbol_libc(sym_name) \
-	NWRAP_LOCK(libc_symbol_binding); \
 	if (nwrap_main_global->libc->symbols._libc_##sym_name.obj == NULL) { \
 		nwrap_main_global->libc->symbols._libc_##sym_name.obj = \
 			_nwrap_bind_symbol(NWRAP_LIBC, #sym_name); \
 	} \
-	NWRAP_UNLOCK(libc_symbol_binding)
 
 #define nwrap_bind_symbol_libc_posix(sym_name) \
-	NWRAP_LOCK(libc_symbol_binding); \
 	if (nwrap_main_global->libc->symbols._libc_##sym_name.obj == NULL) { \
 		nwrap_main_global->libc->symbols._libc_##sym_name.obj = \
 			_nwrap_bind_symbol(NWRAP_LIBC, "__posix_" #sym_name); \
 	} \
-	NWRAP_UNLOCK(libc_symbol_binding)
 
 #define nwrap_bind_symbol_libnsl(sym_name) \
-	NWRAP_LOCK(libc_symbol_binding); \
 	if (nwrap_main_global->libc->symbols._libc_##sym_name.obj == NULL) { \
 		nwrap_main_global->libc->symbols._libc_##sym_name.obj = \
 			_nwrap_bind_symbol(NWRAP_LIBNSL, #sym_name); \
 	} \
-	NWRAP_UNLOCK(libc_symbol_binding)
 
 #define nwrap_bind_symbol_libsocket(sym_name) \
-	NWRAP_LOCK(libc_symbol_binding); \
 	if (nwrap_main_global->libc->symbols._libc_##sym_name.obj == NULL) { \
 		nwrap_main_global->libc->symbols._libc_##sym_name.obj = \
 			_nwrap_bind_symbol(NWRAP_LIBSOCKET, #sym_name); \
 	} \
-	NWRAP_UNLOCK(libc_symbol_binding)
+
+static void nwrap_bind_symbol_all(void);
 
 /* INTERNAL HELPER FUNCTIONS */
 static void nwrap_lines_unload(struct nwrap_cache *const nwrap)
@@ -1278,7 +1324,7 @@ static void nwrap_lines_unload(struct nwrap_cache *const nwrap)
  */
 static struct passwd *libc_getpwnam(const char *name)
 {
-	nwrap_bind_symbol_libc(getpwnam);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getpwnam.f(name);
 }
@@ -1290,11 +1336,7 @@ static int libc_getpwnam_r(const char *name,
 			   size_t buflen,
 			   struct passwd **result)
 {
-#ifdef HAVE___POSIX_GETPWNAM_R
-	nwrap_bind_symbol_libc_posix(getpwnam_r);
-#else
-	nwrap_bind_symbol_libc(getpwnam_r);
-#endif
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getpwnam_r.f(name,
 								   pwd,
@@ -1306,7 +1348,7 @@ static int libc_getpwnam_r(const char *name,
 
 static struct passwd *libc_getpwuid(uid_t uid)
 {
-	nwrap_bind_symbol_libc(getpwuid);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getpwuid.f(uid);
 }
@@ -1318,11 +1360,7 @@ static int libc_getpwuid_r(uid_t uid,
 			   size_t buflen,
 			   struct passwd **result)
 {
-#ifdef HAVE___POSIX_GETPWUID_R
-	nwrap_bind_symbol_libc_posix(getpwuid_r);
-#else
-	nwrap_bind_symbol_libc(getpwuid_r);
-#endif
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getpwuid_r.f(uid,
 								   pwd,
@@ -1365,14 +1403,14 @@ static bool str_tolower_copy(char **dst_name, const char *const src_name)
 
 static void libc_setpwent(void)
 {
-	nwrap_bind_symbol_libc(setpwent);
+	nwrap_bind_symbol_all();
 
 	nwrap_main_global->libc->symbols._libc_setpwent.f();
 }
 
 static struct passwd *libc_getpwent(void)
 {
-	nwrap_bind_symbol_libc(getpwent);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getpwent.f();
 }
@@ -1383,7 +1421,7 @@ static struct passwd *libc_getpwent_r(struct passwd *pwdst,
 				      char *buf,
 				      int buflen)
 {
-	nwrap_bind_symbol_libc(getpwent_r);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getpwent_r.f(pwdst,
 								   buf,
@@ -1395,7 +1433,7 @@ static int libc_getpwent_r(struct passwd *pwdst,
 			   size_t buflen,
 			   struct passwd **pwdstp)
 {
-	nwrap_bind_symbol_libc(getpwent_r);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getpwent_r.f(pwdst,
 								   buf,
@@ -1407,21 +1445,21 @@ static int libc_getpwent_r(struct passwd *pwdst,
 
 static void libc_endpwent(void)
 {
-	nwrap_bind_symbol_libc(endpwent);
+	nwrap_bind_symbol_all();
 
 	nwrap_main_global->libc->symbols._libc_endpwent.f();
 }
 
 static int libc_initgroups(const char *user, gid_t gid)
 {
-	nwrap_bind_symbol_libc(initgroups);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_initgroups.f(user, gid);
 }
 
 static struct group *libc_getgrnam(const char *name)
 {
-	nwrap_bind_symbol_libc(getgrnam);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrnam.f(name);
 }
@@ -1433,11 +1471,7 @@ static int libc_getgrnam_r(const char *name,
 			   size_t buflen,
 			   struct group **result)
 {
-#ifdef HAVE___POSIX_GETGRNAM_R
-	nwrap_bind_symbol_libc_posix(getgrnam_r);
-#else
-	nwrap_bind_symbol_libc(getgrnam_r);
-#endif
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrnam_r.f(name,
 								   grp,
@@ -1449,7 +1483,7 @@ static int libc_getgrnam_r(const char *name,
 
 static struct group *libc_getgrgid(gid_t gid)
 {
-	nwrap_bind_symbol_libc(getgrgid);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrgid.f(gid);
 }
@@ -1461,14 +1495,7 @@ static int libc_getgrgid_r(gid_t gid,
 			   size_t buflen,
 			   struct group **result)
 {
-#ifdef HAVE___POSIX_GETGRGID_R
-	if (nwrap_main_global->libc->symbols._libc_getgrgid_r == NULL) {
-		*(void **) (&nwrap_main_global->libc->symbols._libc_getgrgid_r) =
-			_nwrap_bind_symbol_libc("__posix_getgrgid_r");
-	}
-#else
-	nwrap_bind_symbol_libc(getgrgid_r);
-#endif
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrgid_r.f(gid,
 								   grp,
@@ -1480,14 +1507,14 @@ static int libc_getgrgid_r(gid_t gid,
 
 static void libc_setgrent(void)
 {
-	nwrap_bind_symbol_libc(setgrent);
+	nwrap_bind_symbol_all();
 
 	nwrap_main_global->libc->symbols._libc_setgrent.f();
 }
 
 static struct group *libc_getgrent(void)
 {
-	nwrap_bind_symbol_libc(getgrent);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrent.f();
 }
@@ -1498,7 +1525,7 @@ static struct group *libc_getgrent_r(struct group *group,
 				     char *buf,
 				     size_t buflen)
 {
-	nwrap_bind_symbol_libc(getgrent_r);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrent_r.f(group,
 								   buf,
@@ -1510,7 +1537,7 @@ static int libc_getgrent_r(struct group *group,
 			   size_t buflen,
 			   struct group **result)
 {
-	nwrap_bind_symbol_libc(getgrent_r);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrent_r.f(group,
 								   buf,
@@ -1522,7 +1549,7 @@ static int libc_getgrent_r(struct group *group,
 
 static void libc_endgrent(void)
 {
-	nwrap_bind_symbol_libc(endgrent);
+	nwrap_bind_symbol_all();
 
 	nwrap_main_global->libc->symbols._libc_endgrent.f();
 }
@@ -1533,7 +1560,7 @@ static int libc_getgrouplist(const char *user,
 			     gid_t *groups,
 			     int *ngroups)
 {
-	nwrap_bind_symbol_libc(getgrouplist);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getgrouplist.f(user,
 								     group,
@@ -1544,28 +1571,28 @@ static int libc_getgrouplist(const char *user,
 
 static void libc_sethostent(int stayopen)
 {
-	nwrap_bind_symbol_libnsl(sethostent);
+	nwrap_bind_symbol_all();
 
 	nwrap_main_global->libc->symbols._libc_sethostent.f(stayopen);
 }
 
 static struct hostent *libc_gethostent(void)
 {
-	nwrap_bind_symbol_libnsl(gethostent);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostent.f();
 }
 
 static void libc_endhostent(void)
 {
-	nwrap_bind_symbol_libnsl(endhostent);
+	nwrap_bind_symbol_all();
 
 	nwrap_main_global->libc->symbols._libc_endhostent.f();
 }
 
 static struct hostent *libc_gethostbyname(const char *name)
 {
-	nwrap_bind_symbol_libnsl(gethostbyname);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostbyname.f(name);
 }
@@ -1573,7 +1600,7 @@ static struct hostent *libc_gethostbyname(const char *name)
 #ifdef HAVE_GETHOSTBYNAME2 /* GNU extension */
 static struct hostent *libc_gethostbyname2(const char *name, int af)
 {
-	nwrap_bind_symbol_libnsl(gethostbyname2);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostbyname2.f(name, af);
 }
@@ -1588,7 +1615,7 @@ static int libc_gethostbyname2_r(const char *name,
 				 struct hostent **result,
 				 int *h_errnop)
 {
-	nwrap_bind_symbol_libnsl(gethostbyname2_r);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostbyname2_r.f(name,
 									 af,
@@ -1604,7 +1631,7 @@ static struct hostent *libc_gethostbyaddr(const void *addr,
 					  socklen_t len,
 					  int type)
 {
-	nwrap_bind_symbol_libnsl(gethostbyaddr);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostbyaddr.f(addr,
 								      len,
@@ -1613,7 +1640,7 @@ static struct hostent *libc_gethostbyaddr(const void *addr,
 
 static int libc_gethostname(char *name, size_t len)
 {
-	nwrap_bind_symbol_libnsl(gethostname);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostname.f(name, len);
 }
@@ -1626,7 +1653,7 @@ static int libc_gethostbyname_r(const char *name,
 				struct hostent **result,
 				int *h_errnop)
 {
-	nwrap_bind_symbol_libnsl(gethostbyname_r);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostbyname_r.f(name,
 									ret,
@@ -1647,7 +1674,7 @@ static int libc_gethostbyaddr_r(const void *addr,
 				struct hostent **result,
 				int *h_errnop)
 {
-	nwrap_bind_symbol_libnsl(gethostbyaddr_r);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_gethostbyaddr_r.f(addr,
 									len,
@@ -1665,7 +1692,7 @@ static int libc_getaddrinfo(const char *node,
 			    const struct addrinfo *hints,
 			    struct addrinfo **res)
 {
-	nwrap_bind_symbol_libsocket(getaddrinfo);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getaddrinfo.f(node,
 								    service,
@@ -1681,7 +1708,7 @@ static int libc_getnameinfo(const struct sockaddr *sa,
 			    size_t servlen,
 			    int flags)
 {
-	nwrap_bind_symbol_libsocket(getnameinfo);
+	nwrap_bind_symbol_all();
 
 	return nwrap_main_global->libc->symbols._libc_getnameinfo.f(sa,
 								    salen,
@@ -1690,6 +1717,81 @@ static int libc_getnameinfo(const struct sockaddr *sa,
 								    serv,
 								    servlen,
 								    flags);
+}
+
+static void __nwrap_bind_symbol_all_once(void)
+{
+	nwrap_bind_symbol_libc(getpwnam);
+#ifdef HAVE_GETPWNAM_R
+# ifdef HAVE___POSIX_GETPWNAM_R
+	nwrap_bind_symbol_libc_posix(getpwnam_r);
+# else
+	nwrap_bind_symbol_libc(getpwnam_r);
+# endif
+#endif
+	nwrap_bind_symbol_libc(getpwuid);
+#ifdef HAVE_GETPWUID_R
+# ifdef HAVE___POSIX_GETPWUID_R
+	nwrap_bind_symbol_libc_posix(getpwuid_r);
+# else
+	nwrap_bind_symbol_libc(getpwuid_r);
+# endif
+#endif
+	nwrap_bind_symbol_libc(setpwent);
+	nwrap_bind_symbol_libc(getpwent);
+#ifdef HAVE_GETPWENT_R
+	nwrap_bind_symbol_libc(getpwent_r);
+#endif
+	nwrap_bind_symbol_libc(endpwent);
+	nwrap_bind_symbol_libc(initgroups);
+	nwrap_bind_symbol_libc(getgrnam);
+#ifdef HAVE_GETGRNAM_R
+# ifdef HAVE___POSIX_GETGRNAM_R
+	nwrap_bind_symbol_libc_posix(getgrnam_r);
+# else
+	nwrap_bind_symbol_libc(getgrnam_r);
+# endif
+#endif
+	nwrap_bind_symbol_libc(getgrgid);
+#ifdef HAVE_GETGRGID_R
+# ifdef HAVE___POSIX_GETGRGID_R
+	nwrap_bind_symbol_libc_posix(getgrgid_r);
+# else
+	nwrap_bind_symbol_libc(getgrgid_r);
+# endif
+#endif
+	nwrap_bind_symbol_libc(setgrent);
+	nwrap_bind_symbol_libc(getgrent);
+	nwrap_bind_symbol_libc(getgrent_r);
+	nwrap_bind_symbol_libc(endgrent);
+	nwrap_bind_symbol_libc(getgrouplist);
+	nwrap_bind_symbol_libnsl(sethostent);
+	nwrap_bind_symbol_libnsl(gethostent);
+	nwrap_bind_symbol_libnsl(endhostent);
+	nwrap_bind_symbol_libnsl(gethostbyname);
+#ifdef HAVE_GETHOSTBYNAME2 /* GNU extension */
+	nwrap_bind_symbol_libnsl(gethostbyname2);
+#endif
+#ifdef HAVE_GETHOSTBYNAME2_R /* GNU extension */
+	nwrap_bind_symbol_libnsl(gethostbyname2_r);
+#endif
+	nwrap_bind_symbol_libnsl(gethostbyaddr);
+	nwrap_bind_symbol_libnsl(gethostname);
+#ifdef HAVE_GETHOSTBYNAME_R
+	nwrap_bind_symbol_libnsl(gethostbyname_r);
+#endif
+#ifdef HAVE_GETHOSTBYADDR_R
+	nwrap_bind_symbol_libnsl(gethostbyaddr_r);
+#endif
+	nwrap_bind_symbol_libsocket(getaddrinfo);
+	nwrap_bind_symbol_libsocket(getnameinfo);
+}
+
+static void nwrap_bind_symbol_all(void)
+{
+	static pthread_once_t all_symbol_binding_once = PTHREAD_ONCE_INIT;
+
+	pthread_once(&all_symbol_binding_once, __nwrap_bind_symbol_all_once);
 }
 
 /*********************************************************
@@ -1725,20 +1827,16 @@ static void *_nwrap_bind_nss_module_symbol(struct nwrap_backend *b,
 }
 
 #define nwrap_nss_module_bind_symbol(sym_name) \
-	NWRAP_LOCK(nss_module_symbol_binding); \
 	if (symbols->_nss_##sym_name.obj == NULL) { \
 		symbols->_nss_##sym_name.obj = \
 			_nwrap_bind_nss_module_symbol(b, #sym_name); \
-	} \
-	NWRAP_UNLOCK(nss_module_symbol_binding)
+	}
 
 #define nwrap_nss_module_bind_symbol2(sym_name, alt_name) \
-	NWRAP_LOCK(nss_module_symbol_binding); \
 	if (symbols->_nss_##sym_name.obj == NULL) { \
 		symbols->_nss_##sym_name.obj = \
 			_nwrap_bind_nss_module_symbol(b, #alt_name); \
-	} \
-	NWRAP_UNLOCK(nss_module_symbol_binding)
+	}
 
 static struct nwrap_nss_module_symbols *
 nwrap_bind_nss_module_symbols(struct nwrap_backend *b)
@@ -1759,7 +1857,7 @@ nwrap_bind_nss_module_symbols(struct nwrap_backend *b)
 	nwrap_nss_module_bind_symbol(setpwent);
 	nwrap_nss_module_bind_symbol(getpwent_r);
 	nwrap_nss_module_bind_symbol(endpwent);
-	nwrap_nss_module_bind_symbol2(initgroups, initgroups_dyn);
+	nwrap_nss_module_bind_symbol(initgroups_dyn);
 	nwrap_nss_module_bind_symbol(getgrnam_r);
 	nwrap_nss_module_bind_symbol(getgrgid_r);
 	nwrap_nss_module_bind_symbol(setgrent);
@@ -1869,6 +1967,34 @@ static void nwrap_backend_init(struct nwrap_main *r)
 	}
 }
 
+static int _nss_wrapper_init_mutex(pthread_mutex_t *m, const char *name)
+{
+	pthread_mutexattr_t ma;
+	bool need_destroy = false;
+	int ret = 0;
+
+#define __CHECK(cmd) do { \
+	ret = cmd; \
+	if (ret != 0) { \
+		NWRAP_LOG(NWRAP_LOG_ERROR, \
+			  "%s: %s - failed %d", \
+			  name, #cmd, ret); \
+		goto done; \
+	} \
+} while(0)
+
+	*m = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+	__CHECK(pthread_mutexattr_init(&ma));
+	need_destroy = true;
+	__CHECK(pthread_mutexattr_settype(&ma, PTHREAD_MUTEX_ERRORCHECK));
+	__CHECK(pthread_mutex_init(m, &ma));
+done:
+	if (need_destroy) {
+		pthread_mutexattr_destroy(&ma);
+	}
+	return ret;
+}
+
 static void nwrap_init(void)
 {
 	const char *env;
@@ -1876,9 +2002,9 @@ static void nwrap_init(void)
 	size_t max_hostents_tmp;
 	int ok;
 
-	NWRAP_LOCK(nwrap_initialized);
+	nwrap_mutex_lock(&nwrap_initialized_mutex);
 	if (nwrap_initialized) {
-		NWRAP_UNLOCK(nwrap_initialized);
+		nwrap_mutex_unlock(&nwrap_initialized_mutex);
 		return;
 	}
 
@@ -1887,11 +2013,11 @@ static void nwrap_init(void)
 	 * We don't use NWRAP_(UN)LOCK_ALL macros here because we
 	 * want to avoid overhead when other threads do their job.
 	 */
-	NWRAP_LOCK(nwrap_global);
-	NWRAP_LOCK(nwrap_gr_global);
-	NWRAP_LOCK(nwrap_he_global);
-	NWRAP_LOCK(nwrap_pw_global);
-	NWRAP_LOCK(nwrap_sp_global);
+	nwrap_mutex_lock(&nwrap_global_mutex);
+	nwrap_mutex_lock(&nwrap_gr_global_mutex);
+	nwrap_mutex_lock(&nwrap_he_global_mutex);
+	nwrap_mutex_lock(&nwrap_pw_global_mutex);
+	nwrap_mutex_lock(&nwrap_sp_global_mutex);
 
 	nwrap_initialized = true;
 
@@ -1970,7 +2096,12 @@ static void nwrap_init(void)
 	nwrap_he_global.cache->unload = nwrap_he_unload;
 
 	/* We hold all locks here so we can use NWRAP_UNLOCK_ALL. */
-	NWRAP_UNLOCK_ALL;
+	nwrap_mutex_unlock(&nwrap_sp_global_mutex);
+	nwrap_mutex_unlock(&nwrap_pw_global_mutex);
+	nwrap_mutex_unlock(&nwrap_he_global_mutex);
+	nwrap_mutex_unlock(&nwrap_gr_global_mutex);
+	nwrap_mutex_unlock(&nwrap_global_mutex);
+	nwrap_mutex_unlock(&nwrap_initialized_mutex);
 }
 
 bool nss_wrapper_enabled(void)
@@ -2129,7 +2260,21 @@ reopen:
 	}
 
 	ret = fstat(nwrap->fd, &st);
-	if (ret != 0) {
+	if (ret != 0 && errno == EBADF && retried == false) {
+		/* maybe something closed the fd on our behalf */
+		NWRAP_LOG(NWRAP_LOG_TRACE,
+			  "fstat(%s) - %d:%s - reopen",
+			  nwrap->path,
+			  ret,
+			  strerror(errno));
+		retried = true;
+		memset(&nwrap->st, 0, sizeof(nwrap->st));
+		fclose(nwrap->fp);
+		nwrap->fp = NULL;
+		nwrap->fd = -1;
+		goto reopen;
+	}
+	else if (ret != 0) {
 		NWRAP_LOG(NWRAP_LOG_ERROR,
 			  "fstat(%s) - %d:%s",
 			  nwrap->path,
@@ -2869,93 +3014,6 @@ static void nwrap_gr_unload(struct nwrap_cache *nwrap)
 	nwrap_gr->idx = 0;
 }
 
-static int nwrap_gr_copy_r(const struct group *src, struct group *dst,
-			   char *buf, size_t buflen, struct group **dstp)
-{
-	char *p = NULL;
-	uintptr_t align = 0;
-	unsigned int gr_mem_cnt = 0;
-	unsigned i;
-	size_t total_len;
-	size_t gr_name_len = strlen(src->gr_name) + 1;
-	size_t gr_passwd_len = strlen(src->gr_passwd) + 1;
-	union {
-		char *ptr;
-		char **data;
-	} g_mem;
-
-	for (i = 0; src->gr_mem[i] != NULL; i++) {
-		gr_mem_cnt++;
-	}
-
-	/* Align the memory for storing pointers */
-	align = __alignof__(char *) - ((p - (char *)0) % __alignof__(char *));
-	total_len = align +
-		    (1 + gr_mem_cnt) * sizeof(char *) +
-		    gr_name_len + gr_passwd_len;
-
-	if (total_len > buflen) {
-		errno = ERANGE;
-		return -1;
-	}
-	buflen -= total_len;
-
-	/* gr_mem */
-	p = buf + align;
-	g_mem.ptr = p;
-	dst->gr_mem = g_mem.data;
-
-	/* gr_name */
-	p += (1 + gr_mem_cnt) * sizeof(char *);
-	dst->gr_name = p;
-
-	/* gr_passwd */
-	p += gr_name_len;
-	dst->gr_passwd = p;
-
-	/* gr_mem[x] */
-	p += gr_passwd_len;
-
-	/* gr_gid */
-	dst->gr_gid = src->gr_gid;
-
-	memcpy(dst->gr_name, src->gr_name, gr_name_len);
-
-	memcpy(dst->gr_passwd, src->gr_passwd, gr_passwd_len);
-
-	/* Set the terminating entry */
-	dst->gr_mem[gr_mem_cnt] = NULL;
-
-	/* Now add the group members content */
-	total_len = 0;
-	for (i = 0; i < gr_mem_cnt; i++) {
-		size_t len = strlen(src->gr_mem[i]) + 1;
-
-		dst->gr_mem[i] = p;
-		total_len += len;
-		p += len;
-	}
-
-	if (total_len > buflen) {
-		errno = ERANGE;
-		return -1;
-	}
-
-	for (i = 0; i < gr_mem_cnt; i++) {
-		size_t len = strlen(src->gr_mem[i]) + 1;
-
-		memcpy(dst->gr_mem[i],
-		       src->gr_mem[i],
-		       len);
-	}
-
-	if (dstp != NULL) {
-		*dstp = dst;
-	}
-
-	return 0;
-}
-
 static struct nwrap_entlist *nwrap_entlist_init(struct nwrap_entdata *ed)
 {
 	struct nwrap_entlist *el;
@@ -3577,27 +3635,21 @@ static struct spwd *nwrap_files_getspnam(const char *name)
 #endif /* defined(HAVE_SHADOW_H) && defined(HAVE_GETSPNAM) */
 
 /* misc functions */
-static int nwrap_files_initgroups(struct nwrap_backend *b,
-				  const char *user,
-				  gid_t group)
+static int nwrap_files_initgroups_dyn(struct nwrap_backend *b,
+				      const char *user,
+				      gid_t group,
+				      long int *start,
+				      long int *size,
+				      gid_t **groups,
+				      long int limit,
+				      int *errnop)
 {
 	struct group *grp;
-	gid_t *groups;
-	int size = 1;
-	int rc;
+	int i = 0;
 
-	groups = (gid_t *)malloc(size * sizeof(gid_t));
-	if (groups == NULL) {
-		NWRAP_LOG(NWRAP_LOG_ERROR, "Out of memory");
-		errno = ENOMEM;
-		return -1;
-	}
-	groups[0] = group;
-
+	(void)errnop; /* unused */
 	nwrap_files_setgrent(b);
 	while ((grp = nwrap_files_getgrent(b)) != NULL) {
-		int i = 0;
-
 		NWRAP_LOG(NWRAP_LOG_DEBUG,
 			  "Inspecting %s for group membership",
 			  grp->gr_name);
@@ -3610,33 +3662,31 @@ static int nwrap_files_initgroups(struct nwrap_backend *b,
 					  user,
 					  grp->gr_name);
 
-				groups = (gid_t *)realloc(groups,
-							  (size + 1) * sizeof(gid_t));
-				if (groups == NULL) {
-					NWRAP_LOG(NWRAP_LOG_ERROR,
-						  "Out of memory");
-					errno = ENOMEM;
-					return -1;
-				}
+				if (*start == *size) {
+					long int newsize;
+					gid_t *newgroups;
 
-				groups[size] = grp->gr_gid;
-				size++;
+					newsize = 2 * (*size);
+					if (limit > 0 && newsize > limit) {
+						newsize = MAX(limit, *size);
+					}
+					newgroups = (gid_t *) realloc((*groups),
+							newsize * sizeof(**groups));
+					if (!newgroups) {
+						errno = ENOMEM;
+						return -1;
+					}
+					*groups = newgroups;
+					*size = newsize;
+				}
+				(*groups)[*start] = grp->gr_gid;
+				(*start)++;
 			}
 		}
 	}
 
 	nwrap_files_endgrent(b);
-
-	NWRAP_LOG(NWRAP_LOG_DEBUG,
-		  "%s is member of %d groups",
-		  user, size);
-
-	/* This really only works if uid_wrapper is loaded */
-	rc = setgroups(size, groups);
-
-	free(groups);
-
-	return rc;
+	return *start;
 }
 
 /* group functions */
@@ -4070,6 +4120,10 @@ static int nwrap_files_getaddrinfo(const char *name,
 	}
 
 	name_len = strlen(name);
+	if (name_len == 0) {
+		return EAI_NONAME;
+	}
+
 	if (name_len < sizeof(canon_name) && name[name_len - 1] == '.') {
 		memcpy(canon_name, name, name_len - 1);
 		canon_name[name_len] = '\0';
@@ -4462,31 +4516,33 @@ static int nwrap_module_getpwent_r(struct nwrap_backend *b,
 
 static void nwrap_module_endpwent(struct nwrap_backend *b)
 {
-	if (b->symbols->_nss_endpwent.f) {
+	if (b->symbols->_nss_endpwent.f == NULL) {
 		return;
 	}
 
 	b->symbols->_nss_endpwent.f();
 }
 
-static int nwrap_module_initgroups(struct nwrap_backend *b,
-				   const char *user, gid_t group)
+static int nwrap_module_initgroups_dyn(struct nwrap_backend *b,
+				       const char *user,
+				       gid_t group,
+				       long int *start,
+				       long int *size,
+				       gid_t **groups,
+				       long int limit,
+				       int *errnop)
 {
-	gid_t *groups;
-	long int start;
-	long int size;
-
-	if (b->symbols->_nss_initgroups.f == NULL) {
+	if (b->symbols->_nss_initgroups_dyn.f == NULL) {
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	return b->symbols->_nss_initgroups.f(user,
+	return b->symbols->_nss_initgroups_dyn.f(user,
 					     group,
-					     &start,
-					     &size,
-					     &groups,
-					     0,
-					     &errno);
+					     start,
+					     size,
+					     groups,
+					     limit,
+					     errnop);
 }
 
 static struct group *nwrap_module_getgrnam(struct nwrap_backend *b,
@@ -4634,7 +4690,7 @@ static int nwrap_module_getgrgid_r(struct nwrap_backend *b,
 
 static void nwrap_module_setgrent(struct nwrap_backend *b)
 {
-	if (b->symbols->_nss_setgrent.f) {
+	if (b->symbols->_nss_setgrent.f == NULL) {
 		return;
 	}
 
@@ -5187,20 +5243,49 @@ void endpwent(void)
 
 static int nwrap_initgroups(const char *user, gid_t group)
 {
-	size_t i;
+#if defined(NGROUPS_MAX) && NGROUPS_MAX == 0
+	/* No extra groups allowed.  */
+	return 0;
+#elif !defined(HAVE_GETGROUPLIST)
+	return 0;
+#else
+	long int size;
+	long int limit;
+	gid_t *groups;
+	int ngroups;
+	int result;
+	const char *env = getenv("UID_WRAPPER");
 
-	for (i=0; i < nwrap_main_global->num_backends; i++) {
-		struct nwrap_backend *b = &nwrap_main_global->backends[i];
-		int rc;
-
-		rc = b->ops->nw_initgroups(b, user, group);
-		if (rc == 0) {
-			return 0;
-		}
+	if (env == NULL || env[0] != '1') {
+		NWRAP_LOG(NWRAP_LOG_WARN,
+			  "initgroups() requires uid_wrapper to work!");
+		return 0;
 	}
 
-	errno = ENOENT;
-	return -1;
+	limit = sysconf(_SC_NGROUPS_MAX);
+	if (limit > 0) {
+		size = MIN(limit, 64);
+	} else {
+		size = 16;
+	}
+
+	groups = (gid_t *)malloc(size * sizeof(gid_t));
+	if (groups == NULL) {
+		/* No more memory.  */
+		return -1;
+	}
+
+	ngroups = nwrap_getgrouplist(user, group, &size, &groups, limit);
+
+	/* Try to set the maximum number of groups the kernel can handle.  */
+	do {
+		result = setgroups(ngroups, groups);
+	} while (result == -1 && errno == EINVAL && --ngroups > 0);
+
+	free(groups);
+
+	return result;
+#endif
 }
 
 int initgroups(const char *user, gid_t group)
@@ -5498,81 +5583,85 @@ void endgrent(void)
  ***************************************************************************/
 
 #ifdef HAVE_GETGROUPLIST
-static int nwrap_getgrouplist(const char *user, gid_t group,
-			      gid_t *groups, int *ngroups)
+static int nwrap_getgrouplist(const char *user,
+			      gid_t group,
+			      long int *size,
+			      gid_t **groupsp,
+			      long int limit)
 {
-	struct group *grp;
-	gid_t *groups_tmp;
-	int count = 1;
+	enum nss_status status = NSS_STATUS_UNAVAIL;
+	/* Start is one, because we have the first group as parameter.  */
+	long int start = 1;
+	size_t i;
 
-	NWRAP_LOG(NWRAP_LOG_DEBUG, "getgrouplist called for %s", user);
+	/* Never store more than the starting *SIZE number of elements.  */
+	assert(*size > 0);
+	(*groupsp)[0] = group;
 
-	groups_tmp = (gid_t *)malloc(count * sizeof(gid_t));
-	if (!groups_tmp) {
-		NWRAP_LOG(NWRAP_LOG_ERROR, "Out of memory");
-		errno = ENOMEM;
-		return -1;
-	}
-	groups_tmp[0] = group;
+	for (i = 0; i < nwrap_main_global->num_backends; i++) {
+		struct nwrap_backend *b = &nwrap_main_global->backends[i];
+		long int prev_start = start;
+		long int cnt = prev_start;
 
-	nwrap_setgrent();
-	while ((grp = nwrap_getgrent()) != NULL) {
-		int i = 0;
+		status = b->ops->nw_initgroups_dyn(b,
+						   user,
+						   group,
+						   &start,
+						   size,
+						   groupsp,
+						   limit,
+						   &errno);
 
-		NWRAP_LOG(NWRAP_LOG_DEBUG,
-			  "Inspecting %s for group membership",
-			  grp->gr_name);
+		/* Remove duplicates.  */
+		while (cnt < start) {
+			long int inner;
+			for (inner = 0; inner < prev_start; ++inner)
+				if ((*groupsp)[inner] == (*groupsp)[cnt])
+					break;
 
-		for (i=0; grp->gr_mem && grp->gr_mem[i] != NULL; i++) {
-
-			if (group != grp->gr_gid &&
-			    (strcmp(user, grp->gr_mem[i]) == 0)) {
-
-				NWRAP_LOG(NWRAP_LOG_DEBUG,
-					  "%s is member of %s",
-					  user,
-					  grp->gr_name);
-
-				groups_tmp = (gid_t *)realloc(groups_tmp, (count + 1) * sizeof(gid_t));
-				if (!groups_tmp) {
-					NWRAP_LOG(NWRAP_LOG_ERROR,
-						  "Out of memory");
-					errno = ENOMEM;
-					return -1;
-				}
-				groups_tmp[count] = grp->gr_gid;
-
-				count++;
-			}
+			if (inner < prev_start)
+				(*groupsp)[cnt] = (*groupsp)[--start];
+			else
+				++cnt;
 		}
+		NWRAP_LOG(NWRAP_LOG_DEBUG,
+			  "Resource '%s' returned status=%d and increased "
+			  "count of groups to %ld",
+			  b->name,
+			  status,
+			  start);
 	}
-
-	nwrap_endgrent();
-
-	NWRAP_LOG(NWRAP_LOG_DEBUG,
-		  "%s is member of %d groups",
-		  user, *ngroups);
-
-	if (*ngroups < count) {
-		*ngroups = count;
-		free(groups_tmp);
-		return -1;
-	}
-
-	*ngroups = count;
-	memcpy(groups, groups_tmp, count * sizeof(gid_t));
-	free(groups_tmp);
-
-	return count;
+	return start;
 }
 
 int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups)
 {
+	long int size;
+	int total, retval;
+	gid_t *newgroups;
+
 	if (!nss_wrapper_enabled()) {
 		return libc_getgrouplist(user, group, groups, ngroups);
 	}
 
-	return nwrap_getgrouplist(user, group, groups, ngroups);
+	size = MAX(1, *ngroups);
+	newgroups = (gid_t *)malloc(size * sizeof(gid_t));
+	if (newgroups == NULL) {
+		return -1;
+	}
+
+	total = nwrap_getgrouplist(user, group, &size, &newgroups, -1);
+
+	if (groups != NULL) {
+		memcpy(groups, newgroups, MIN(*ngroups, total) * sizeof(gid_t));
+	}
+
+	free(newgroups);
+
+	retval = total > *ngroups ? -1 : total;
+	*ngroups = total;
+
+	return retval;
 }
 #endif
 
@@ -6327,11 +6416,29 @@ int gethostname(char *name, size_t len)
 	return nwrap_gethostname(name, len);
 }
 
+static void nwrap_thread_prepare(void)
+{
+	nwrap_init();
+	NWRAP_LOCK_ALL;
+}
+
+static void nwrap_thread_parent(void)
+{
+	NWRAP_UNLOCK_ALL;
+}
+
+static void nwrap_thread_child(void)
+{
+	NWRAP_REINIT_ALL;
+}
+
 /****************************
  * CONSTRUCTOR
  ***************************/
 void nwrap_constructor(void)
 {
+	NWRAP_REINIT_ALL;
+
 	/*
 	 * If we hold a lock and the application forks, then the child
 	 * is not able to unlock the mutex and we are in a deadlock.
@@ -6363,13 +6470,25 @@ void nwrap_destructor(void)
 
 		/* libc */
 		if (m->libc != NULL) {
-			if (m->libc->handle != NULL) {
+			if (m->libc->handle != NULL
+#ifdef RTLD_NEXT
+			    && m->libc->handle != RTLD_NEXT
+#endif
+			   ) {
 				dlclose(m->libc->handle);
 			}
-			if (m->libc->nsl_handle != NULL) {
+			if (m->libc->nsl_handle != NULL
+#ifdef RTLD_NEXT
+			    && m->libc->nsl_handle != RTLD_NEXT
+#endif
+			   ) {
 				dlclose(m->libc->nsl_handle);
 			}
-			if (m->libc->sock_handle != NULL) {
+			if (m->libc->sock_handle != NULL
+#ifdef RTLD_NEXT
+			    && m->libc->sock_handle != RTLD_NEXT
+#endif
+			   ) {
 				dlclose(m->libc->sock_handle);
 			}
 			SAFE_FREE(m->libc);

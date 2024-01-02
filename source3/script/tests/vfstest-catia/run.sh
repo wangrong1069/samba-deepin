@@ -1,12 +1,12 @@
 #!/bin/sh
 if [ $# -lt 2 ]; then
-cat <<EOF
+	cat <<EOF
 Usage: run.sh VFSTEST PREFIX
 EOF
-exit 1;
+	exit 1
 fi
 
-TESTBASE=`dirname $0`
+TESTBASE=$(dirname $0)
 VFSTEST=$1
 PREFIX=$2
 shift 2
@@ -16,7 +16,7 @@ VFSTEST_PREFIX=vfstest
 VFSTEST_TMPDIR=$(mktemp -d ${PREFIX}/${VFSTEST_PREFIX}_XXXXXX)
 
 # We could pass in the --option=... via tests.py as ADDARGS
-# Atm i've choosen to specify them here:
+# Atm i've chosen to specify them here:
 
 MYARGS1="--option=vfsobjects=catia"
 MYARGS2="--option=catia:mappings=0x22:0xa8,0x2a:0xa4,0x2f:0xf8,0x3a:0xf7,0x3c:0xab,0x3e:0xbb,0x3f:0xbf,0x5c:0xff,0x7c:0xa6,0x20:0xb1"
@@ -32,7 +32,7 @@ WIN_DIR="dir_aÿa÷a¤a¿a«a»a¦a"
 # translated unix directory name
 UNIX_DIR="dir_a\a:a*a?a<a>a|a"
 
-incdir=`dirname $0`/../../../../testprogs/blackbox
+incdir=$(dirname $0)/../../../../testprogs/blackbox
 . $incdir/subunit.sh
 
 failed=0
@@ -43,57 +43,57 @@ cd $VFSTEST_TMPDIR || exit 1
 touch $UNIX_FILE || exit 1
 
 # test "translate" unix-to-windows
-test_vfstest() 
+test_vfstest()
 {
-    cmd='$VFSTEST --debug-stdout -f $TESTBASE/vfstest.cmd $MYARGS1 $MYARGS2 $ADDARGS '
-    out=`eval $cmd`
-    ret=$?
+	cmd='$VFSTEST --debug-stdout -f $TESTBASE/vfstest.cmd $MYARGS1 $MYARGS2 $ADDARGS '
+	out=$(eval $cmd)
+	ret=$?
 
-    if [ $ret != 0 ] ; then
-	echo "$out"
-	echo "command failed"
-	false
-	return
-    fi
+	if [ $ret != 0 ]; then
+		echo "$out"
+		echo "command failed"
+		false
+		return
+	fi
 
-    echo "$out" | grep $WIN_FILE >/dev/null 2>&1
+	echo "$out" | grep $WIN_FILE >/dev/null 2>&1
 
-    if [ $? = 0 ] ; then
-	echo "ALL IS WORKING"
-	true
-    else
-	false
-    fi
+	if [ $? = 0 ]; then
+		echo "ALL IS WORKING"
+		true
+	else
+		false
+	fi
 }
 
 # test the mkdir call with special windows chars
 # and then check the created unix directory name
-test_vfstest_dir() 
+test_vfstest_dir()
 {
-    cmd='$VFSTEST -f $TESTBASE/vfstest1.cmd $MYARGS1 $MYARGS2 $ADDARGS '
-    out=`eval $cmd`
-    ret=$?
+	cmd='$VFSTEST -f $TESTBASE/vfstest1.cmd $MYARGS1 $MYARGS2 $ADDARGS '
+	out=$(eval $cmd)
+	ret=$?
 
-    if [ $ret != 0 ] ; then
-	echo "$out"
-	echo "command failed"
-	false
-	return
-    fi
+	if [ $ret != 0 ]; then
+		echo "$out"
+		echo "command failed"
+		false
+		return
+	fi
 
-    NUM=`find $UNIX_DIR | wc -l`
-    if [ $NUM -ne 1 ] ; then
-	echo "Cannot find $UNIX_DIR"
-	false
-    else
-	true
-    fi
+	NUM=$(find $UNIX_DIR | wc -l)
+	if [ $NUM -ne 1 ]; then
+		echo "Cannot find $UNIX_DIR"
+		false
+	else
+		true
+	fi
 }
 
-testit "vfstest_catia" test_vfstest || failed=`expr $failed + 1`
+testit "vfstest_catia" test_vfstest || failed=$(expr $failed + 1)
 
-if [ $failed = 0 ] ; then
-    testit "vfstest1_catia" test_vfstest_dir || failed=`expr $failed + 1`
+if [ $failed = 0 ]; then
+	testit "vfstest1_catia" test_vfstest_dir || failed=$(expr $failed + 1)
 fi
 
 # Cleanup: remove tempdir

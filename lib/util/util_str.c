@@ -1,27 +1,28 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Samba utility functions
-   
+
    Copyright (C) Andrew Tridgell 1992-2001
    Copyright (C) Simo Sorce      2001-2002
    Copyright (C) Martin Pool     2003
    Copyright (C) James Peach	 2005
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "includes.h"
+#include "replace.h"
+#include "lib/util/samba_util.h"
 #include "system/locale.h"
 #include "smb_strtox.h"
 #undef strncasecmp
@@ -58,7 +59,7 @@ _PUBLIC_ bool conv_str_bool(const char * str, bool * val)
 }
 
 /**
- * Convert a size specification like 16K into an integral number of bytes. 
+ * Convert a size specification like 16K into an integral number of bytes.
  **/
 _PUBLIC_ bool conv_str_size_error(const char * str, uint64_t * val)
 {
@@ -131,7 +132,7 @@ _PUBLIC_ bool strequal(const char *s1, const char *s2)
 		return true;
 	if (!s1 || !s2)
 		return false;
-  
+
 	return strcasecmp_m(s1,s2) == 0;
 }
 
@@ -303,39 +304,4 @@ _PUBLIC_ bool set_boolean(const char *boolean_string, bool *boolean)
 		return true;
 	}
 	return false;
-}
-
-_PUBLIC_ int memcmp_const_time(const void *s1, const void *s2, size_t n)
-{
-	const uint8_t *p1 = s1, *p2 = s2;
-	size_t i, sum = 0;
-
-	for (i = 0; i < n; i++) {
-		sum |= (p1[i] ^ p2[i]);
-	}
-
-	return sum != 0;
-}
-
-_PUBLIC_ void talloc_asprintf_addbuf(char **ps, const char *fmt, ...)
-{
-	va_list ap;
-	char *s = *ps;
-	char *t = NULL;
-
-	if (s == NULL) {
-		return;
-	}
-
-	va_start(ap, fmt);
-	t = talloc_vasprintf_append_buffer(s, fmt, ap);
-	va_end(ap);
-
-	if (t == NULL) {
-		/* signal failure to the next caller */
-		TALLOC_FREE(s);
-		*ps = NULL;
-	} else {
-		*ps = t;
-	}
 }

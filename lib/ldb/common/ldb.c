@@ -117,6 +117,7 @@ struct ldb_context *ldb_init(TALLOC_CTX *mem_ctx, struct tevent_context *ev_ctx)
 			return NULL;
 		}
 		tevent_set_debug(ev_ctx, ldb_tevent_debug, ldb);
+		tevent_set_max_debug_level(ev_ctx, TEVENT_DEBUG_TRACE);
 		tevent_loop_allow_nesting(ev_ctx);
 	}
 
@@ -312,10 +313,7 @@ void ldb_asprintf_errstring(struct ldb_context *ldb, const char *format, ...)
 
 void ldb_reset_err_string(struct ldb_context *ldb)
 {
-	if (ldb->err_string) {
-		talloc_free(ldb->err_string);
-		ldb->err_string = NULL;
-	}
+	TALLOC_FREE(ldb->err_string);
 }
 
 
@@ -748,6 +746,7 @@ struct ldb_handle *ldb_handle_new(TALLOC_CTX *mem_ctx, struct ldb_context *ldb)
 			return NULL;
 		}
 		tevent_set_debug(h->event_context, ldb_tevent_debug, ldb);
+		tevent_set_max_debug_level(h->event_context, TEVENT_DEBUG_TRACE);
 		tevent_loop_allow_nesting(h->event_context);
 	}
 
@@ -1470,6 +1469,10 @@ int ldb_build_search_req_ex(struct ldb_request **ret_req,
 	req->operation = LDB_SEARCH;
 	if (base == NULL) {
 		req->op.search.base = ldb_dn_new(req, ldb, NULL);
+		if (req->op.search.base == NULL) {
+			ldb_oom(ldb);
+			return LDB_ERR_OPERATIONS_ERROR;
+		}
 	} else {
 		req->op.search.base = base;
 	}

@@ -33,6 +33,7 @@
 
 #include "hx_locl.h"
 
+#include <stdint.h>
 #include <hxtool-commands.h>
 #include <sl.h>
 #include <rtbl.h>
@@ -861,10 +862,25 @@ certificate_copy(struct certificate_copy_options *opt, int argc, char **argv)
     hx509_certs certs;
     hx509_lock inlock, outlock = NULL;
     char *sn;
+    int flags = 0;
+    int store_flags = 0;
     int ret;
 
     hx509_lock_init(context, &inlock);
     lock_strings(inlock, &opt->in_pass_strings);
+
+    if (!opt->root_certs_flag)
+        /*
+         * We're probably copying an EE cert, its issuer, and all intermediates
+         * up to and excluding the root.
+         */
+        store_flags |= HX509_CERTS_STORE_NO_ROOTS;
+
+    if (!opt->private_keys_flag) {
+        /* Neither read nor store private keys */
+        store_flags |= HX509_CERTS_NO_PRIVATE_KEYS;
+        flags |= HX509_CERTS_NO_PRIVATE_KEYS;
+    }
 
     if (opt->out_pass_string) {
 	hx509_lock_init(context, &outlock);
@@ -874,25 +890,53 @@ certificate_copy(struct certificate_copy_options *opt, int argc, char **argv)
 		 opt->out_pass_string, ret);
     }
 
+    if (argc < 2)
+        errx(1, "hxtool copy-certificate requires at least two positional "
+             "arguments");
+
+    /*
+     * The _last_ positional argument is the destination store.  Because we use
+     * HX509_CERTS_CREATE we'll ignore its contents and then truncate to write
+     * it (well, if it's a file; see key store plugins).
+     *
+     * But note that the truncation doesn't happen until we call
+     * hx509_certs_store(), which means we still have a chance to _read_ this
+     * store.  That means that one can write this:
+     *
+     *      hxtool cc FILE:b FILE:a FILE:b
+     *
+     * to notionally append FILE:a to FILE:b.  Still, we'll have an option to
+     * do the append anyways:
+     *
+     *      hxtool cc --append FILE:a FILE:b
+     */
     sn = fix_store_name(context, argv[argc - 1], "FILE");
     ret = hx509_certs_init(context, sn,
-			   HX509_CERTS_CREATE, inlock, &certs);
+			   HX509_CERTS_CREATE | flags, inlock, &certs);
     if (ret)
 	hx509_err(context, 1, ret, "hx509_certs_init %s", sn);
+
+    if (opt->append_flag) {
+        /* Append == read the certs in the dst prior to doing anything else */
+        ret = hx509_certs_append(context, certs, inlock, sn);
+        if (ret)
+            hx509_err(context, 1, ret, "hx509_certs_append %s", sn);
+    }
     free(sn);
 
+    /*
+     * Read all the certificate stores in all but the last positional argument.
+     */
     while(argc-- > 1) {
-	int retx;
-
         sn = fix_store_name(context, argv[0], "FILE");
-	retx = hx509_certs_append(context, certs, inlock, sn);
-	if (retx)
-	    hx509_err(context, 1, retx, "hx509_certs_append %s", sn);
+	ret = hx509_certs_append(context, certs, inlock, sn);
+	if (ret)
+	    hx509_err(context, 1, ret, "hx509_certs_append %s", sn);
         free(sn);
 	argv++;
     }
 
-    ret = hx509_certs_store(context, certs, 0, outlock);
+    ret = hx509_certs_store(context, certs, store_flags, outlock);
 	if (ret)
 	    hx509_err(context, 1, ret, "hx509_certs_store");
 
@@ -1450,7 +1494,9 @@ request_create(struct request_create_options *opt, int argc, char **argv)
 	    opt->key_bits_integer,
 	    &signer);
 
-    hx509_request_init(context, &req);
+    ret = hx509_request_init(context, &req);
+    if (ret)
+	hx509_err(context, 1, ret, "Could not initialize CSR context");
 
     if (opt->subject_string) {
 	hx509_name name = NULL;
@@ -1616,13 +1662,15 @@ random_data(void *opt, int argc, char **argv)
 {
     void *ptr;
     ssize_t len;
+    int64_t bytes;
     int ret;
 
-    len = parse_bytes(argv[0], "byte");
-    if (len <= 0) {
+    bytes = parse_bytes(argv[0], "byte");
+    if (bytes <= 0 || bytes > SSIZE_MAX) {
 	fprintf(stderr, "bad argument to random-data\n");
 	return 1;
     }
+    len = bytes;
 
     ptr = malloc(len);
     if (ptr == NULL) {
@@ -2076,39 +2124,33 @@ hxtool_ca(struct certificate_sign_options *opt, int argc, char **argv)
     }
 
     if (opt->generate_key_string) {
-	struct hx509_generate_private_context *keyctx;
-
-	ret = _hx509_generate_private_key_init(context,
-					       &asn1_oid_id_pkcs1_rsaEncryption,
-					       &keyctx);
-	if (ret)
-	    hx509_err(context, 1, ret, "generate private key");
-
-	if (opt->issue_ca_flag)
-	    _hx509_generate_private_key_is_ca(context, keyctx);
-
-	if (opt->key_bits_integer)
-	    _hx509_generate_private_key_bits(context, keyctx,
-					     opt->key_bits_integer);
-
-	ret = _hx509_generate_private_key(context, keyctx,
-					  &cert_key);
-	_hx509_generate_private_key_free(&keyctx);
-	if (ret)
-	    hx509_err(context, 1, ret, "generate private key");
+        /*
+         * Note that we used to set isCA in the key gen context.  Now that we
+         * use get_key() we no longer set isCA in the key gen context.  But
+         * nothing uses that field of the key gen context.
+         */
+        get_key(opt->certificate_private_key_string,
+                opt->generate_key_string,
+                opt->key_bits_integer,
+                &cert_key);
 
 	ret = hx509_private_key2SPKI(context, cert_key, &spki);
 	if (ret)
 	    errx(1, "hx509_private_key2SPKI: %d\n", ret);
 
-	if (opt->self_signed_flag)
-	    private_key = cert_key;
-    }
-
-    if (opt->certificate_private_key_string) {
+        if (opt->self_signed_flag)
+            private_key = cert_key;
+    } else if (opt->certificate_private_key_string) {
 	ret = read_private_key(opt->certificate_private_key_string, &cert_key);
 	if (ret)
 	    err(1, "read_private_key for certificate");
+
+	ret = hx509_private_key2SPKI(context, cert_key, &spki);
+	if (ret)
+	    errx(1, "hx509_private_key2SPKI: %d\n", ret);
+
+        if (opt->self_signed_flag)
+            private_key = cert_key;
     }
 
     if (opt->subject_string) {
@@ -2319,7 +2361,31 @@ hxtool_ca(struct certificate_sign_options *opt, int argc, char **argv)
 	    hx509_err(context, 1, ret, "hx509_ca_sign");
     }
 
-    if (cert_key) {
+    /* Copy the private key to the output store, maybe */
+    if (cert_key && opt->generate_key_string &&
+        !opt->certificate_private_key_string) {
+        /*
+         * Yes: because we're generating the key and --certificate-private-key
+         * was not given.
+         */
+	ret = _hx509_cert_assign_key(cert, cert_key);
+	if (ret)
+	    hx509_err(context, 1, ret, "_hx509_cert_assign_key");
+    } else if (opt->certificate_private_key_string && opt->certificate_string &&
+               strcmp(opt->certificate_private_key_string,
+                      opt->certificate_string) == 0) {
+        /*
+         * Yes: because we're re-writing the store whence the private key.  We
+         * would lose the key otherwise.
+         */
+	ret = _hx509_cert_assign_key(cert, cert_key);
+	if (ret)
+	    hx509_err(context, 1, ret, "_hx509_cert_assign_key");
+    } else if (opt->self_signed_flag && opt->ca_private_key_string &&
+               opt->certificate_string &&
+               strcmp(opt->ca_private_key_string,
+                      opt->certificate_string) == 0) {
+        /* Yes: same as preceding */
 	ret = _hx509_cert_assign_key(cert, cert_key);
 	if (ret)
 	    hx509_err(context, 1, ret, "_hx509_cert_assign_key");

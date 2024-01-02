@@ -134,19 +134,23 @@ static ADS_STATUS libnet_connect_ads(const char *dns_domain_name,
 				     const char *user_name,
 				     const char *password,
 				     const char *ccname,
+				     TALLOC_CTX *mem_ctx,
 				     ADS_STRUCT **ads)
 {
+	TALLOC_CTX *tmp_ctx = talloc_stackframe();
 	ADS_STATUS status;
 	ADS_STRUCT *my_ads = NULL;
 	char *cp;
 	enum credentials_use_kerberos krb5_state;
 
-	my_ads = ads_init(dns_domain_name,
+	my_ads = ads_init(tmp_ctx,
+			  dns_domain_name,
 			  netbios_domain_name,
 			  dc_name,
 			  ADS_SASL_SEAL);
 	if (!my_ads) {
-		return ADS_ERROR_LDAP(LDAP_NO_MEMORY);
+		status = ADS_ERROR_LDAP(LDAP_NO_MEMORY);
+		goto out;
 	}
 
 	/* In FIPS mode, client use kerberos is forced to required. */
@@ -167,38 +171,53 @@ static ADS_STATUS libnet_connect_ads(const char *dns_domain_name,
 	}
 
 	if (user_name) {
-		SAFE_FREE(my_ads->auth.user_name);
-		my_ads->auth.user_name = SMB_STRDUP(user_name);
+		ADS_TALLOC_CONST_FREE(my_ads->auth.user_name);
+		my_ads->auth.user_name = talloc_strdup(my_ads, user_name);
+		if (my_ads->auth.user_name == NULL) {
+			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+			goto out;
+		}
 		if ((cp = strchr_m(my_ads->auth.user_name, '@'))!=0) {
 			*cp++ = '\0';
-			SAFE_FREE(my_ads->auth.realm);
-			my_ads->auth.realm = smb_xstrdup(cp);
-			if (!strupper_m(my_ads->auth.realm)) {
-				ads_destroy(&my_ads);
-				return ADS_ERROR_LDAP(LDAP_NO_MEMORY);
+			ADS_TALLOC_CONST_FREE(my_ads->auth.realm);
+			my_ads->auth.realm = talloc_asprintf_strupper_m(my_ads, "%s", cp);
+			if (my_ads->auth.realm == NULL) {
+				status = ADS_ERROR_LDAP(LDAP_NO_MEMORY);
+				goto out;
 			}
 		}
 	}
 
 	if (password) {
-		SAFE_FREE(my_ads->auth.password);
-		my_ads->auth.password = SMB_STRDUP(password);
+		ADS_TALLOC_CONST_FREE(my_ads->auth.password);
+		my_ads->auth.password = talloc_strdup(my_ads, password);
+		if (my_ads->auth.password == NULL) {
+			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+			goto out;
+		}
 	}
 
 	if (ccname != NULL) {
-		SAFE_FREE(my_ads->auth.ccache_name);
-		my_ads->auth.ccache_name = SMB_STRDUP(ccname);
+		ADS_TALLOC_CONST_FREE(my_ads->auth.ccache_name);
+		my_ads->auth.ccache_name = talloc_strdup(my_ads, ccname);
+		if (my_ads->auth.ccache_name == NULL) {
+			status = ADS_ERROR_NT(NT_STATUS_NO_MEMORY);
+			goto out;
+		}
 		setenv(KRB5_ENV_CCNAME, my_ads->auth.ccache_name, 1);
 	}
 
 	status = ads_connect_user_creds(my_ads);
 	if (!ADS_ERR_OK(status)) {
-		ads_destroy(&my_ads);
-		return status;
+		goto out;
 	}
 
-	*ads = my_ads;
-	return ADS_SUCCESS;
+	*ads = talloc_move(mem_ctx, &my_ads);
+
+	status = ADS_SUCCESS;
+out:
+	TALLOC_FREE(tmp_ctx);
+	return status;
 }
 
 /****************************************************************
@@ -257,6 +276,7 @@ static ADS_STATUS libnet_join_connect_ads(TALLOC_CTX *mem_ctx,
 				    username,
 				    password,
 				    ccname,
+				    r,
 				    &r->in.ads);
 	if (!ADS_ERR_OK(status)) {
 		libnet_join_set_error_string(mem_ctx, r,
@@ -314,6 +334,7 @@ static ADS_STATUS libnet_unjoin_connect_ads(TALLOC_CTX *mem_ctx,
 				    r->in.admin_account,
 				    r->in.admin_password,
 				    NULL,
+				    r,
 				    &r->in.ads);
 	if (!ADS_ERR_OK(status)) {
 		libnet_unjoin_set_error_string(mem_ctx, r,
@@ -543,7 +564,7 @@ static ADS_STATUS libnet_join_set_machine_spn(TALLOC_CTX *mem_ctx,
 
 	status = libnet_join_find_machine_acct(mem_ctx, r);
 	if (!ADS_ERR_OK(status)) {
-		return status;
+		goto done;
 	}
 
 	status = libnet_join_get_machine_spns(frame,
@@ -1024,10 +1045,10 @@ static ADS_STATUS libnet_join_post_processing_ads_modify(TALLOC_CTX *mem_ctx,
 
 		if (r->in.ads->auth.ccache_name != NULL) {
 			ads_kdestroy(r->in.ads->auth.ccache_name);
-			r->in.ads->auth.ccache_name = NULL;
+			ADS_TALLOC_CONST_FREE(r->in.ads->auth.ccache_name);
 		}
 
-		ads_destroy(&r->in.ads);
+		TALLOC_FREE(r->in.ads);
 
 		status = libnet_join_connect_ads_machine(mem_ctx, r);
 		if (!ADS_ERR_OK(status)) {
@@ -2348,6 +2369,14 @@ static WERROR libnet_join_pre_processing(TALLOC_CTX *mem_ctx,
 		r->in.admin_account = admin_account;
 	}
 
+	if (r->in.provision_computer_account_only) {
+		/*
+		 * When in the "provision_computer_account_only" path we do not
+		 * need to have access to secrets.tdb at all - gd
+		 */
+		return WERR_OK;
+	}
+
 	if (!secrets_init()) {
 		libnet_join_set_error_string(mem_ctx, r,
 			"Unable to open secrets database");
@@ -2476,9 +2505,7 @@ static WERROR libnet_join_post_processing(TALLOC_CTX *mem_ctx,
 
 static int libnet_destroy_JoinCtx(struct libnet_JoinCtx *r)
 {
-	if (r->in.ads) {
-		ads_destroy(&r->in.ads);
-	}
+	TALLOC_FREE(r->in.ads);
 
 	return 0;
 }
@@ -2488,9 +2515,7 @@ static int libnet_destroy_JoinCtx(struct libnet_JoinCtx *r)
 
 static int libnet_destroy_UnjoinCtx(struct libnet_UnjoinCtx *r)
 {
-	if (r->in.ads) {
-		ads_destroy(&r->in.ads);
-	}
+	TALLOC_FREE(r->in.ads);
 
 	return 0;
 }
@@ -2510,7 +2535,7 @@ WERROR libnet_init_JoinCtx(TALLOC_CTX *mem_ctx,
 
 	talloc_set_destructor(ctx, libnet_destroy_JoinCtx);
 
-	ctx->in.machine_name = talloc_strdup(mem_ctx, lp_netbios_name());
+	ctx->in.machine_name = talloc_strdup(ctx, lp_netbios_name());
 	W_ERROR_HAVE_NO_MEMORY(ctx->in.machine_name);
 
 	ctx->in.secure_channel_type = SEC_CHAN_WKSTA;
@@ -2540,7 +2565,7 @@ WERROR libnet_init_UnjoinCtx(TALLOC_CTX *mem_ctx,
 
 	talloc_set_destructor(ctx, libnet_destroy_UnjoinCtx);
 
-	ctx->in.machine_name = talloc_strdup(mem_ctx, lp_netbios_name());
+	ctx->in.machine_name = talloc_strdup(ctx, lp_netbios_name());
 	W_ERROR_HAVE_NO_MEMORY(ctx->in.machine_name);
 
 	*r = ctx;

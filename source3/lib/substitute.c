@@ -1,4 +1,4 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    string substitution functions
    Copyright (C) Andrew Tridgell 1992-2000
@@ -33,7 +33,12 @@ static char local_machine[MACHINE_NAME_SIZE];
 static char remote_machine[MACHINE_NAME_SIZE];
 
 userdom_struct current_user_info;
-fstring remote_proto="UNKNOWN";
+static fstring remote_proto="UNKNOWN";
+
+void set_remote_proto(const char *proto)
+{
+	fstrcpy(remote_proto, proto);
+}
 
 /**
  * Set the 'local' machine name
@@ -181,6 +186,11 @@ const char *get_current_username(void)
 	return current_user_info.smb_name;
 }
 
+const char *get_current_user_info_domain(void)
+{
+	return current_user_info.domain;
+}
+
 /*******************************************************************
  Given a pointer to a %$(NAME) in p and the whole string in str
  expand it as an environment variable.
@@ -188,7 +198,7 @@ const char *get_current_username(void)
  Return a new allocated and expanded string.
  Based on code by Branko Cibej <branko.cibej@hermes.si>
  When this is called p points at the '%' character.
- May substitute multiple occurrencies of the same env var.
+ May substitute multiple occurrences of the same env var.
 ********************************************************************/
 
 static char *realloc_expand_env_var(char *str, char *p)
@@ -265,7 +275,7 @@ void standard_sub_basic(const char *smb_name, const char *domain_name,
 }
 
 /*
- * Limit addresses to hexalpha charactes and underscore, safe for path
+ * Limit addresses to hexalpha characters and underscore, safe for path
  * components for Windows clients.
  */
 static void make_address_pathsafe(char *addr)
@@ -314,7 +324,7 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
 		b = a_string;
 
 		switch (*(p+1)) {
-		case 'U' : 
+		case 'U' :
 			r = strlower_talloc(tmp_ctx, smb_name);
 			if (r == NULL) {
 				goto error;
@@ -381,7 +391,7 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
 			a_string = realloc_string_sub(a_string, "%J", r);
 			break;
 		}
-		case 'i': 
+		case 'i':
 			a_string = realloc_string_sub(
 				a_string, "%i",
 				sub_sockaddr[0] ? sub_sockaddr : "0.0.0.0");
@@ -393,12 +403,12 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
 			a_string = realloc_string_sub(a_string, "%j", r);
 			break;
 		}
-		case 'L' : 
+		case 'L' :
 			if ( strncasecmp_m(p, "%LOGONSERVER%", strlen("%LOGONSERVER%")) == 0 ) {
 				break;
 			}
 			if (local_machine_name && *local_machine_name) {
-				a_string = realloc_string_sub(a_string, "%L", local_machine_name); 
+				a_string = realloc_string_sub(a_string, "%L", local_machine_name);
 			} else {
 				a_string = realloc_string_sub(a_string, "%L", lp_netbios_name());
 			}
@@ -450,7 +460,7 @@ char *talloc_sub_basic(TALLOC_CTX *mem_ctx,
 			slprintf(vnnstr,sizeof(vnnstr)-1, "%u", get_my_vnn());
 			a_string = realloc_string_sub(a_string, "%V", vnnstr);
 			break;
-		default: 
+		default:
 			break;
 		}
 
@@ -506,11 +516,11 @@ char *talloc_sub_specified(TALLOC_CTX *mem_ctx,
 		b = a_string;
 
 		switch (*(p+1)) {
-		case 'U' : 
+		case 'U' :
 			a_string = talloc_string_sub(
 				tmp_ctx, a_string, "%U", username);
 			break;
-		case 'u' : 
+		case 'u' :
 			a_string = talloc_string_sub(
 				tmp_ctx, a_string, "%u", username);
 			break;
@@ -561,7 +571,7 @@ char *talloc_sub_specified(TALLOC_CTX *mem_ctx,
 			a_string = talloc_string_sub(tmp_ctx, a_string,
 						     "%N", lp_netbios_name());
 			break;
-		default: 
+		default:
 			break;
 		}
 
@@ -617,19 +627,19 @@ char *talloc_sub_advanced(TALLOC_CTX *ctx,
 			TALLOC_FREE(h);
 			break;
 		}
-		case 'P': 
-			a_string = realloc_string_sub(a_string, "%P", connectpath); 
+		case 'P':
+			a_string = realloc_string_sub(a_string, "%P", connectpath);
 			break;
-		case 'S': 
+		case 'S':
 			a_string = realloc_string_sub(a_string, "%S", servicename);
 			break;
-		case 'g': 
-			a_string = realloc_string_sub(a_string, "%g", gidtoname(gid)); 
+		case 'g':
+			a_string = realloc_string_sub(a_string, "%g", gidtoname(gid));
 			break;
-		case 'u': 
-			a_string = realloc_string_sub(a_string, "%u", user); 
+		case 'u':
+			a_string = realloc_string_sub(a_string, "%u", user);
 			break;
-		default: 
+		default:
 			break;
 		}
 

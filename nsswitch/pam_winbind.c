@@ -2461,6 +2461,7 @@ static char winbind_get_separator(struct pwb_context *ctx)
 {
 	wbcErr wbc_status;
 	static struct wbcInterfaceDetails *details = NULL;
+	char result;
 
 	wbc_status = wbcCtxInterfaceDetails(ctx->wbc_ctx, &details);
 	if (!WBC_ERROR_IS_OK(wbc_status)) {
@@ -2474,7 +2475,9 @@ static char winbind_get_separator(struct pwb_context *ctx)
 		return '\0';
 	}
 
-	return details->winbind_separator;
+	result = details->winbind_separator;
+	wbcFreeMemory(details);
+	return result;
 }
 
 
@@ -3288,8 +3291,7 @@ int pam_sm_chauthtok(pam_handle_t * pamh, int flags,
 				 "failed to set PAM_OLDAUTHTOK");
 		}
 	} else if (flags & PAM_UPDATE_AUTHTOK) {
-
-		time_t *pwdlastset_update = NULL;
+		const time_t *pwdlastset_update = NULL;
 
 		/*
 		 * obtain the proposed password
@@ -3354,7 +3356,7 @@ int pam_sm_chauthtok(pam_handle_t * pamh, int flags,
 		 */
 		pam_get_data(pamh,
 			     PAM_WINBIND_PWD_LAST_SET,
-			     (const void **)&pwdlastset_update);
+			     (const void **)(&pwdlastset_update));
 
 		/*
 		 * if cached creds were enabled, make sure to set the

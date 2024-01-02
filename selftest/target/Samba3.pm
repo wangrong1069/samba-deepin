@@ -247,12 +247,13 @@ sub check_env($$)
 	ad_member           => ["ad_dc", "fl2008r2dc", "fl2003dc"],
 	ad_member_rfc2307   => ["ad_dc_ntvfs"],
 	ad_member_idmap_rid => ["ad_dc"],
+	admem_idmap_autorid => ["ad_dc"],
 	ad_member_idmap_ad  => ["fl2008r2dc"],
 	ad_member_fips      => ["ad_dc_fips"],
 	ad_member_offlogon  => ["ad_dc"],
 	ad_member_oneway    => ["fl2000dc"],
 	ad_member_idmap_nss => ["ad_dc"],
-	ad_member_s3_join   => ["ad_dc"],
+	ad_member_s3_join   => ["vampire_dc"],
 
 	clusteredmember => ["nt4_dc"],
 );
@@ -301,6 +302,8 @@ sub setup_nt4_dc
 	server schannel require seal:schannel10\$ = no
 	server schannel require seal:schannel11\$ = no
 	server schannel require seal:torturetest\$ = no
+
+	vfs_default:VFS_OPEN_HOW_RESOLVE_NO_SYMLINKS = no
 
 	fss: sequence timeout = 1
 	check parent directory delete on close = yes
@@ -1172,6 +1175,102 @@ sub setup_ad_member_rfc2307
 	return $ret;
 }
 
+sub setup_admem_idmap_autorid
+{
+	my ($self, $prefix, $dcvars) = @_;
+
+	# If we didn't build with ADS, pretend this env was never available
+	if (not $self->have_ads()) {
+	        return "UNKNOWN";
+	}
+
+	print "PROVISIONING S3 AD MEMBER WITH idmap_autorid config...";
+
+	my $member_options = "
+	security = ads
+	workgroup = $dcvars->{DOMAIN}
+	realm = $dcvars->{REALM}
+	idmap config * : backend = autorid
+	idmap config * : range = 1000000-19999999
+	idmap config * : rangesize = 1000000
+
+	# Prevent overriding the provisioned lib/krb5.conf which sets certain
+	# values required for tests to succeed
+	create krb5 conf = no
+";
+
+	my $ret = $self->provision(
+	    prefix => $prefix,
+	    domain => $dcvars->{DOMAIN},
+	    realm => $dcvars->{REALM},
+	    server => "ADMEMAUTORID",
+	    password => "loCalMemberPass",
+	    extra_options => $member_options,
+	    resolv_conf => $dcvars->{RESOLV_CONF});
+
+	$ret or return undef;
+
+	$ret->{DOMAIN} = $dcvars->{DOMAIN};
+	$ret->{REALM} = $dcvars->{REALM};
+	$ret->{DOMSID} = $dcvars->{DOMSID};
+
+	my $ctx;
+	my $prefix_abs = abs_path($prefix);
+	$ctx = {};
+	$ctx->{krb5_conf} = "$prefix_abs/lib/krb5.conf";
+	$ctx->{domain} = $dcvars->{DOMAIN};
+	$ctx->{realm} = $dcvars->{REALM};
+	$ctx->{dnsname} = lc($dcvars->{REALM});
+	$ctx->{kdc_ipv4} = $dcvars->{SERVER_IP};
+	$ctx->{kdc_ipv6} = $dcvars->{SERVER_IPV6};
+	$ctx->{krb5_ccname} = "$prefix_abs/krb5cc_%{uid}";
+	Samba::mk_krb5_conf($ctx, "");
+
+	$ret->{KRB5_CONFIG} = $ctx->{krb5_conf};
+
+	my $net = Samba::bindir_path($self, "net");
+	# Add hosts file for name lookups
+	my $cmd = "NSS_WRAPPER_HOSTS='$ret->{NSS_WRAPPER_HOSTS}' ";
+	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$ret->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
+	if (defined($ret->{RESOLV_WRAPPER_CONF})) {
+		$cmd .= "RESOLV_WRAPPER_CONF=\"$ret->{RESOLV_WRAPPER_CONF}\" ";
+	} else {
+		$cmd .= "RESOLV_WRAPPER_HOSTS=\"$ret->{RESOLV_WRAPPER_HOSTS}\" ";
+	}
+	$cmd .= "RESOLV_CONF=\"$ret->{RESOLV_CONF}\" ";
+	$cmd .= "KRB5_CONFIG=\"$ret->{KRB5_CONFIG}\" ";
+	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$ret->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
+	$cmd .= "$net join $ret->{CONFIGURATION}";
+	$cmd .= " -U$dcvars->{USERNAME}\%$dcvars->{PASSWORD}";
+
+	if (system($cmd) != 0) {
+	    warn("Join failed\n$cmd");
+	    return undef;
+	}
+
+	# We need world access to this share, as otherwise the domain
+	# administrator from the AD domain provided by Samba4 can't
+	# access the share for tests.
+	chmod 0777, "$prefix/share";
+
+	if (not $self->check_or_start(
+		env_vars => $ret,
+		nmbd => "yes",
+		winbindd => "yes",
+		smbd => "yes")) {
+		return undef;
+	}
+
+	$ret->{DC_SERVER} = $dcvars->{SERVER};
+	$ret->{DC_SERVER_IP} = $dcvars->{SERVER_IP};
+	$ret->{DC_SERVER_IPV6} = $dcvars->{SERVER_IPV6};
+	$ret->{DC_NETBIOSNAME} = $dcvars->{NETBIOSNAME};
+	$ret->{DC_USERNAME} = $dcvars->{USERNAME};
+	$ret->{DC_PASSWORD} = $dcvars->{PASSWORD};
+
+	return $ret;
+}
+
 sub setup_ad_member_idmap_rid
 {
 	my ($self, $prefix, $dcvars) = @_;
@@ -1191,10 +1290,12 @@ sub setup_ad_member_idmap_rid
 	idmap config * : range = 1000000-1999999
 	idmap config $dcvars->{DOMAIN} : backend = rid
 	idmap config $dcvars->{DOMAIN} : range = 2000000-2999999
-	# Prevent overridding the provisioned lib/krb5.conf which sets certain
+	# Prevent overriding the provisioned lib/krb5.conf which sets certain
 	# values required for tests to succeed
 	create krb5 conf = no
         map to guest = bad user
+	winbind expand groups = 10
+	server signing = required
 ";
 
 	my $ret = $self->provision(
@@ -1291,6 +1392,7 @@ sub setup_ad_member_idmap_ad
 	idmap config $dcvars->{DOMAIN} : range = 2000000-2999999
 	idmap config $dcvars->{DOMAIN} : unix_primary_group = yes
 	idmap config $dcvars->{DOMAIN} : unix_nss_info = yes
+	idmap config $dcvars->{DOMAIN} : deny ous = \"ou=sub,DC=samba2008r2,DC=example,DC=com\"
 	idmap config $dcvars->{TRUST_DOMAIN} : backend = ad
 	idmap config $dcvars->{TRUST_DOMAIN} : range = 2000000-2999999
 	gensec_gssapi:requested_life_time = 5
@@ -1716,9 +1818,6 @@ sub setup_fileserver
 	my $force_user_valid_users_dir = "$share_dir/force_user_valid_users";
 	push(@dirs, $force_user_valid_users_dir);
 
-	my $smbget_sharedir="$share_dir/smbget";
-	push(@dirs,$smbget_sharedir);
-
 	my $tarmode_sharedir="$share_dir/tarmode";
 	push(@dirs,$tarmode_sharedir);
 
@@ -1747,6 +1846,9 @@ sub setup_fileserver
 	push(@dirs,$delete_unwrite_sharedir);
 	push(@dirs, "$delete_unwrite_sharedir/delete_veto_yes");
 	push(@dirs, "$delete_unwrite_sharedir/delete_veto_no");
+
+	my $volume_serial_number_sharedir="$share_dir/volume_serial_number";
+	push(@dirs, $volume_serial_number_sharedir);
 
 	my $ip4 = Samba::get_ipv4_addr("FILESERVER");
 	my $fileserver_options = "
@@ -1814,10 +1916,6 @@ sub setup_fileserver
 	force group = everyone
 	write list = force_user
 
-[smbget]
-	path = $smbget_sharedir
-	comment = smb username is [%U]
-	guest ok = yes
 [ign_sysacls]
 	path = $share_dir
 	comment = ignore system acls
@@ -1872,6 +1970,14 @@ sub setup_fileserver
 	path = $veto_sharedir
 	delete veto files = yes
 
+[veto_files_nohidden]
+	path = $veto_sharedir
+	veto files = /.*/
+
+[veto_files]
+	path = $veto_sharedir
+	veto files = /veto_name*/
+
 [delete_yes_unwrite]
 	read only = no
 	path = $delete_unwrite_sharedir
@@ -1892,6 +1998,17 @@ sub setup_fileserver
 	virusfilter:infected files = *infected*
 	virusfilter:infected file action = rename
 	virusfilter:scan on close = yes
+	vfs_default:VFS_OPEN_HOW_RESOLVE_NO_SYMLINKS = no
+
+[volumeserialnumber]
+	path = $volume_serial_number_sharedir
+	volume serial number = 0xdeadbeef
+
+[ea_acl_xattr]
+	path = $share_dir
+	vfs objects = acl_xattr
+	acl_xattr:security_acl_name = user.hackme
+	read only = no
 
 [homes]
 	comment = Home directories
@@ -1989,6 +2106,7 @@ sub setup_fileserver_smb1
 [global]
 	client min protocol = CORE
 	server min protocol = LANMAN1
+	check parent directory delete on close = yes
 
 [hidenewfiles]
 	path = $prefix_abs/share
@@ -2151,6 +2269,7 @@ sub setup_maptoguest
 	print "PROVISIONING maptoguest...";
 
 	my $options = "
+domain logons = yes
 map to guest = bad user
 ntlm auth = yes
 server min protocol = LANMAN1
@@ -2174,6 +2293,7 @@ server min protocol = LANMAN1
 	if (not $self->check_or_start(
 		env_vars => $vars,
 		nmbd => "yes",
+		winbindd => "yes",
 		smbd => "yes")) {
 	       return undef;
 	}
@@ -2476,6 +2596,12 @@ sub provision($$)
 	my $msdfs_shrdir2="$shrdir/msdfsshare2";
 	push(@dirs,$msdfs_shrdir2);
 
+	my $msdfs_pathname_share="$shrdir/msdfs_pathname_share";
+	push(@dirs,$msdfs_pathname_share);
+
+	my $non_msdfs_pathname_share="$shrdir/non_msdfs_pathname_share";
+	push(@dirs,$non_msdfs_pathname_share);
+
 	my $msdfs_deeppath="$msdfs_shrdir/deeppath";
 	push(@dirs,$msdfs_deeppath);
 
@@ -2524,6 +2650,9 @@ sub provision($$)
 	my $fruit_resource_stream_shrdir="$shrdir/fruit_resource_stream";
 	push(@dirs,$fruit_resource_stream_shrdir);
 
+	my $smbget_sharedir="$shrdir/smbget";
+	push(@dirs, $smbget_sharedir);
+
 	# this gets autocreated by winbindd
 	my $wbsockdir="$prefix_abs/wbsock";
 
@@ -2563,6 +2692,7 @@ sub provision($$)
 
 	chmod 0755, $ro_shrdir;
 
+	create_file_chmod("$ro_shrdir/readable_file", 0644) or return undef;
 	create_file_chmod("$ro_shrdir/unreadable_file", 0600) or return undef;
 
 	create_file_chmod("$ro_shrdir/msdfs-target", 0600) or return undef;
@@ -2715,6 +2845,7 @@ sub provision($$)
 	panic action = cd $self->{srcdir} && $self->{srcdir}/selftest/gdb_backtrace %d %\$(MAKE_TEST_BINARY)
 	smbd:suicide mode = yes
 	smbd:FSCTL_SMBTORTURE = yes
+	smbd:validate_oplock_types = yes
 
 	client min protocol = SMB2_02
 	server min protocol = SMB2_02
@@ -2729,8 +2860,12 @@ sub provision($$)
 	lock directory = $lockdir
 	log file = $logdir/log.\%m
 	log level = $server_log_level
+	winbind debug traceid = yes
 	debug pid = yes
         max log size = 0
+
+	debug syslog format = always
+	debug hires timestamp = yes
 
 	state directory = $lockdir
 	cache directory = $lockdir
@@ -2899,9 +3034,22 @@ sub provision($$)
 	msdfs root = yes
 	msdfs shuffle referrals = yes
 	guest ok = yes
+[msdfs-share-wl]
+	path = $msdfs_shrdir
+	msdfs root = yes
+	wide links = yes
+	guest ok = yes
 [msdfs-share2]
 	path = $msdfs_shrdir2
 	msdfs root = yes
+	guest ok = yes
+[msdfs-pathname-share]
+	path = $msdfs_pathname_share
+	msdfs root = yes
+	guest ok = yes
+[non-msdfs-pathname-share]
+	path = $non_msdfs_pathname_share
+	msdfs root = no
 	guest ok = yes
 [hideunread]
 	copy = tmp
@@ -3004,6 +3152,14 @@ sub provision($$)
 	directory mask = 0777
 	force directory mode = 0
 	vfs objects = xattr_tdb streams_depot
+[smb3_posix_share]
+	vfs objects = fake_acls xattr_tdb streams_depot time_audit full_audit
+	create mask = 07777
+	directory mask = 07777
+	mangled names = no
+	path = $shrdir
+	read only = no
+	guest ok = yes
 [aio]
 	copy = durable
 	aio read size = 1
@@ -3112,7 +3268,7 @@ sub provision($$)
 
 [fsrvp_share]
 	path = $fsrvp_shrdir
-	comment = fake shapshots using rsync
+	comment = fake snapshots using rsync
 	vfs objects = shell_snap shadow_copy2
 	shell_snap:check path command = $fake_snap_pl --check
 	shell_snap:create command = $fake_snap_pl --create
@@ -3263,6 +3419,11 @@ sub provision($$)
 	shadow:fixinodes = yes
 	smbd async dosmode = yes
 
+[shadow_depot]
+	path = $shadow_shrdir
+	comment = previous versions with streams_depot
+	vfs objects = streams_depot shadow_copy2
+
 [dfq]
 	path = $shrdir/dfree
 	vfs objects = acl_xattr fake_acls xattr_tdb fake_dfq
@@ -3300,6 +3461,9 @@ sub provision($$)
 	copy = tmp
 	path = $nosymlinks_shrdir
 	follow symlinks = no
+[nosymlinks_smb1allow]
+	copy=nosymlinks
+	follow symlinks = yes
 
 [local_symlinks]
 	copy = tmp
@@ -3313,6 +3477,11 @@ sub provision($$)
 
 [streams_xattr]
 	copy = tmp
+	vfs objects = streams_xattr xattr_tdb
+
+[streams_xattr_nostrict]
+	copy = tmp
+	strict rename = no
 	vfs objects = streams_xattr xattr_tdb
 
 [acl_streams_xattr]
@@ -3377,6 +3546,23 @@ sub provision($$)
 [acls_non_canonical]
 	copy = tmp
 	acl flag inherited canonicalization = no
+
+[full_audit_success_bad_name]
+	copy = tmp
+	full_audit:success = badname
+
+[full_audit_fail_bad_name]
+	copy = tmp
+	full_audit:failure = badname
+
+[only_ipv6]
+	copy = tmpguest
+	server addresses = $server_ipv6
+
+[smbget]
+	path = $smbget_sharedir
+	comment = smb username is [%U]
+	guest ok = yes
 
 include = $aliceconfdir/%U.conf
 	";
@@ -3507,7 +3693,7 @@ jacknomappergroup:x:$gid_jacknomapper:jacknomapper
 	$createuser_env{NSS_WRAPPER_PASSWD} = $nss_wrapper_passwd;
 	$createuser_env{NSS_WRAPPER_GROUP} = $nss_wrapper_group;
 	$createuser_env{NSS_WRAPPER_HOSTS} = $nss_wrapper_hosts;
-	$createuser_env{NSS_WRAPPER_HOSTNAME} = "${hostname}.samba.example.com";
+	$createuser_env{NSS_WRAPPER_HOSTNAME} = "${hostname}.${dns_domain}";
 	if ($ENV{SAMBA_DNS_FAKING}) {
 		$createuser_env{RESOLV_WRAPPER_HOSTS} = $dns_host_file;
 	} else {
@@ -3561,7 +3747,7 @@ jacknomappergroup:x:$gid_jacknomapper:jacknomapper
 	$ret{NSS_WRAPPER_PASSWD} = $nss_wrapper_passwd;
 	$ret{NSS_WRAPPER_GROUP} = $nss_wrapper_group;
 	$ret{NSS_WRAPPER_HOSTS} = $nss_wrapper_hosts;
-	$ret{NSS_WRAPPER_HOSTNAME} = "${hostname}.samba.example.com";
+	$ret{NSS_WRAPPER_HOSTNAME} = "${hostname}.${dns_domain}";
 	$ret{NSS_WRAPPER_MODULE_SO_PATH} = Samba::nss_wrapper_winbind_so_path($self);
 	$ret{NSS_WRAPPER_MODULE_FN_PREFIX} = "winbind";
 	if ($ENV{SAMBA_DNS_FAKING}) {

@@ -27,11 +27,15 @@ struct torture_suite;
 struct torture_tcase;
 struct torture_results;
 
+/*
+ * Arranged in precedence order. TORTURE_ERROR has the highest priority;
+ * TORTURE_OK the lowest.
+ */
 enum torture_result { 
 	TORTURE_OK=0, 
-	TORTURE_FAIL=1,
-	TORTURE_ERROR=2,
-	TORTURE_SKIP=3
+	TORTURE_SKIP=1,
+	TORTURE_FAIL=2,
+	TORTURE_ERROR=3
 };
 
 enum torture_progress_whence {
@@ -271,6 +275,20 @@ void torture_result(struct torture_context *test,
 		torture_result(torture_ctx, TORTURE_FAIL, __location__": Expression `%s' failed: %s", __STRING(expr), cmt); \
 		return false; \
 	} \
+} while(0)
+
+#define torture_assertf(torture_ctx, expr, format, ...) do {		\
+	if (!(expr)) {							\
+		char *_msg = talloc_asprintf(torture_ctx,		\
+					     format,			\
+					     __VA_ARGS__);		\
+		torture_result(torture_ctx,				\
+			       TORTURE_FAIL,				\
+			       __location__": Expression `%s' failed: %s", \
+			       __STRING(expr), _msg);			\
+		talloc_free(_msg);					\
+		return false;						\
+	}								\
 } while(0)
 
 #define torture_assert_goto(torture_ctx,expr,ret,label,cmt) do { \
@@ -671,7 +689,7 @@ static inline void torture_dump_data_str_cb(const char *buf, void *private_data)
 #define torture_assert_nttime_equal(torture_ctx,got,expected,cmt) \
 	do { NTTIME __got = got, __expected = expected; \
 	if (!nt_time_equal(&__got, &__expected)) { \
-		torture_result(torture_ctx, TORTURE_FAIL, __location__": "#got" was %s, expected %s: %s", nt_time_string(tctx, __got), nt_time_string(tctx, __expected), cmt); \
+		torture_result(torture_ctx, TORTURE_FAIL, __location__": "#got" was %s, expected %s: %s", nt_time_string(torture_ctx, __got), nt_time_string(torture_ctx, __expected), cmt); \
 		return false; \
 	}\
 	} while(0)

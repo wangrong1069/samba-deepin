@@ -1,7 +1,7 @@
 # simple makefile wrapper to run waf
 
 WAF_BINARY=$(PYTHON) ../buildtools/bin/waf
-WAF=WAF_MAKE=1 $(WAF_BINARY)
+WAF=PYTHONHASHSEED=1 WAF_MAKE=1 $(WAF_BINARY)
 
 all:
 	$(WAF) build
@@ -74,9 +74,6 @@ etags:
 ctags:
 	touch .tmplock
 	WAFLOCK=.tmplock $(WAF) ctags
-
-pydoctor:
-	$(WAF) pydoctor
 
 bin/%:: FORCE
 	$(WAF) --targets=`basename $@`

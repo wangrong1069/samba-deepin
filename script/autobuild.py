@@ -16,8 +16,10 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
-from distutils.sysconfig import get_python_lib
+from sysconfig import get_path
 import platform
+
+import logging
 
 try:
     from waflib.Build import CACHE_SUFFIX
@@ -25,12 +27,20 @@ except ImportError:
     sys.path.insert(0, "./third_party/waf")
     from waflib.Build import CACHE_SUFFIX
 
+logging.basicConfig(format='%(asctime)s %(message)s')
+logger = logging.getLogger('autobuild')
+logger.setLevel(logging.INFO)
 
 os.environ["PYTHONUNBUFFERED"] = "1"
 
 # This speeds up testing remarkably.
 os.environ['TDB_NO_FSYNC'] = '1'
 
+# allow autobuild to run within git rebase -i
+if "GIT_DIR" in os.environ:
+    del os.environ["GIT_DIR"]
+if "GIT_WORK_TREE" in os.environ:
+    del os.environ["GIT_WORK_TREE"]
 
 def find_git_root():
     '''get to the top of the git repo'''
@@ -99,6 +109,9 @@ if options.retry:
     if options.rebase is None:
         raise Exception('You can only use --retry if you also rebase')
 
+if options.verbose:
+    logger.setLevel(logging.DEBUG)
+
 if options.full_testbase is not None:
     testbase = options.full_testbase
 else:
@@ -120,11 +133,10 @@ else:
 
 CLEAN_SOURCE_TREE_CMD = "cd ${TEST_SOURCE_DIR} && script/clean-source-tree.sh"
 
-def nm_grep_symbols(sofile, expected_symbols=""):
-    return "nm " + sofile + " | " + \
-           "egrep -v ' (__bss_start|_edata|_init|_fini|_end)' | " + \
-           "egrep -v '" + expected_symbols + "' |" + \
-           "egrep ' [BDGTRVWS] ' && exit 1; exit 0;"
+
+def check_symbols(sofile, expected_symbols=""):
+    return "objdump --dynamic-syms " + sofile + " | " + \
+           "awk \'$0 !~ /" + expected_symbols + "/ {if ($2 == \"g\" && $3 ~ /D(F|O)/ && $4 ~ /(.bss|.text)/ && $7 !~ /(__gcov_|mangle_path)/) exit 1}\'"
 
 if args:
     # If we are only running specific test,
@@ -271,6 +283,16 @@ tasks = {
         ],
     },
 
+    "samba-without-smb1-build": {
+        "git-clone-required": True,
+        "sequence": [
+            ("configure", "./configure.developer --without-smb1-server --without-ad-dc" + samba_configure_params),
+            ("make", "make -j"),
+            ("check-clean-tree", CLEAN_SOURCE_TREE_CMD),
+            ("chmod-R-a-w", "chmod -R a-w ."),
+        ],
+    },
+
     "samba-no-opath-build": {
         "git-clone-required": True,
         "sequence": [
@@ -309,6 +331,7 @@ tasks = {
             "fl2008r2dc",
             "ad_member",
             "ad_member_idmap_rid",
+            "admem_idmap_autorid",
             "ad_member_idmap_ad",
             "ad_member_rfc2307",
             "ad_member_oneway",
@@ -377,6 +400,7 @@ tasks = {
             "fl2008r2dc",
             "ad_member",
             "ad_member_idmap_rid",
+            "admem_idmap_autorid",
             "ad_member_idmap_ad",
             "ad_member_rfc2307",
             "ad_member_oneway",
@@ -450,14 +474,25 @@ tasks = {
         ],
     },
 
+    "samba-fileserver-without-smb1": {
+        "dependency": "samba-without-smb1-build",
+        "sequence": [
+            ("random-sleep", random_sleep(300, 900)),
+            ("test", make_test(include_envs=["fileserver"])),
+            ("lcov", LCOV_CMD),
+            ("check-clean-tree", CLEAN_SOURCE_TREE_CMD),
+        ],
+    },
+
     # This is a full build without the AD DC so we test the build with
     # MIT Kerberos from the current system.  Runtime behaviour is
     # confirmed via the ktest (static ccache and keytab) environment
 
+    # This environment also used to confirm we can still build with --with-libunwind
     "samba-ktest-mit": {
         "sequence": [
             ("random-sleep", random_sleep(300, 900)),
-            ("configure", "./configure.developer --without-ad-dc --with-system-mitkrb5 " + samba_configure_params),
+            ("configure", "./configure.developer --without-ad-dc --with-libunwind --with-system-mitkrb5 " + samba_configure_params),
             ("make", "make -j"),
             ("test", make_test(include_envs=[
             "ktest", # ktest is also tested in fileserver, samba and
@@ -476,6 +511,7 @@ tasks = {
             ("test", make_test(include_envs=[
             "ad_member",
             "ad_member_idmap_rid",
+            "admem_idmap_autorid",
             "ad_member_idmap_ad",
             "ad_member_rfc2307",
             "ad_member_offlogon",
@@ -681,6 +717,7 @@ tasks = {
             ("test", make_test(include_envs=[
             "ad_member",
             "ad_member_idmap_rid",
+            "admem_idmap_autorid",
             "ad_member_idmap_ad",
             "ad_member_rfc2307",
             "ad_member_offlogon",
@@ -782,6 +819,20 @@ tasks = {
         ],
     },
 
+    "samba-32bit": {
+        "sequence": [
+            ("random-sleep", random_sleep(300, 900)),
+            ("configure", "./configure.developer --abi-check-disable --disable-warnings-as-errors" + samba_configure_params),
+            ("make", "make -j"),
+            ("nonetest", make_test(cmd='make test', TESTS="--exclude=selftest/slow-none", include_envs=["none"])),
+            ("quicktest", make_test(cmd='make quicktest', include_envs=["ad_dc", "ad_dc_smb1", "ad_dc_smb1_done"])),
+            ("ktest", make_test(cmd='make test', include_envs=["ktest"])),
+            ("install", "make install"),
+            ("check-clean-tree", CLEAN_SOURCE_TREE_CMD),
+            ("clean", "make clean"),
+        ],
+    },
+
     "samba-ctdb": {
         "sequence": [
             ("random-sleep", random_sleep(900, 1500)),
@@ -849,17 +900,17 @@ tasks = {
             ("nondevel-no-samba-libwbclient", "ldd ./bin/shared/libwbclient.so.0 | grep 'samba' && exit 1; exit 0"),
             ("nondevel-no-samba-pam_winbind", "ldd ./bin/plugins/pam_winbind.so | grep -v 'libtalloc.so.2' | grep 'samba' && exit 1; exit 0"),
             ("nondevel-no-public-nss_winbind",
-                nm_grep_symbols("./bin/plugins/libnss_winbind.so.2", " T _nss_winbind_")),
+                check_symbols("./bin/plugins/libnss_winbind.so.2", "_nss_winbind_")),
             ("nondevel-no-public-nss_wins",
-                nm_grep_symbols("./bin/plugins/libnss_wins.so.2", " T _nss_wins_")),
+                check_symbols("./bin/plugins/libnss_wins.so.2", "_nss_wins_")),
             ("nondevel-no-public-libwbclient",
-                nm_grep_symbols("./bin/shared/libwbclient.so.0", " T wbc")),
+                check_symbols("./bin/shared/libwbclient.so.0", "wbc")),
             ("nondevel-no-public-pam_winbind",
-                nm_grep_symbols("./bin/plugins/pam_winbind.so", "T pam_sm_")),
+                check_symbols("./bin/plugins/pam_winbind.so", "pam_sm_")),
             ("nondevel-no-public-winbind_krb5_locator",
-                nm_grep_symbols("./bin/plugins/winbind_krb5_locator.so", " D resolve\>")),
+                check_symbols("./bin/plugins/winbind_krb5_locator.so", "service_locator")),
             ("nondevel-no-public-async_dns_krb5_locator",
-                nm_grep_symbols("./bin/plugins/async_dns_krb5_locator.so", " D resolve\>")),
+                check_symbols("./bin/plugins/async_dns_krb5_locator.so", "service_locator")),
             ("nondevel-install", "make -j install"),
             ("nondevel-dist", "make dist"),
 
@@ -872,17 +923,19 @@ tasks = {
             ("prefix-no-samba-libwbclient", "ldd ${PREFIX_DIR}/lib/libwbclient.so.0 | grep 'samba' && exit 1; exit 0"),
             ("prefix-no-samba-pam_winbind", "ldd ${PREFIX_DIR}/lib/security/pam_winbind.so | grep -v 'libtalloc.so.2' | grep 'samba' && exit 1; exit 0"),
             ("prefix-no-public-nss_winbind",
-                nm_grep_symbols("${PREFIX_DIR}/lib/libnss_winbind.so.2", " T _nss_winbind_")),
+                check_symbols("${PREFIX_DIR}/lib/libnss_winbind.so.2", "_nss_winbind_")),
             ("prefix-no-public-nss_wins",
-                nm_grep_symbols("${PREFIX_DIR}/lib/libnss_wins.so.2", " T _nss_wins_")),
+                check_symbols("${PREFIX_DIR}/lib/libnss_wins.so.2", "_nss_wins_")),
             ("prefix-no-public-libwbclient",
-                nm_grep_symbols("${PREFIX_DIR}/lib/libwbclient.so.0", " T wbc")),
+                check_symbols("${PREFIX_DIR}/lib/libwbclient.so.0", "wbc")),
             ("prefix-no-public-pam_winbind",
-                nm_grep_symbols("${PREFIX_DIR}/lib/security/pam_winbind.so", "T pam_sm_")),
+                check_symbols("${PREFIX_DIR}/lib/security/pam_winbind.so", "pam_sm_")),
             ("prefix-no-public-winbind_krb5_locator",
-                nm_grep_symbols("${PREFIX_DIR}/lib/krb5/winbind_krb5_locator.so", " D resolve\>")),
+                check_symbols("${PREFIX_DIR}/lib/krb5/winbind_krb5_locator.so",
+                              "service_locator")),
             ("prefix-no-public-async_dns_krb5_locator",
-                nm_grep_symbols("${PREFIX_DIR}/lib/krb5/async_dns_krb5_locator.so", " D resolve\>")),
+                check_symbols("${PREFIX_DIR}/lib/krb5/async_dns_krb5_locator.so",
+                              "service_locator")),
 
             # retry with all modules shared
             ("allshared-distclean", "make distclean"),
@@ -897,17 +950,17 @@ tasks = {
             ("allshared-no-samba-libwbclient", "ldd ./bin/shared/libwbclient.so.0 | grep 'samba' && exit 1; exit 0"),
             ("allshared-no-samba-pam_winbind", "ldd ./bin/plugins/pam_winbind.so | grep -v 'libtalloc.so.2' | grep 'samba' && exit 1; exit 0"),
             ("allshared-no-public-nss_winbind",
-                nm_grep_symbols("./bin/plugins/libnss_winbind.so.2", " T _nss_winbind_")),
+                check_symbols("./bin/plugins/libnss_winbind.so.2", "_nss_winbind_")),
             ("allshared-no-public-nss_wins",
-                nm_grep_symbols("./bin/plugins/libnss_wins.so.2", " T _nss_wins_")),
+                check_symbols("./bin/plugins/libnss_wins.so.2", "_nss_wins_")),
             ("allshared-no-public-libwbclient",
-                nm_grep_symbols("./bin/shared/libwbclient.so.0", " T wbc")),
+                check_symbols("./bin/shared/libwbclient.so.0", "wbc")),
             ("allshared-no-public-pam_winbind",
-                nm_grep_symbols("./bin/plugins/pam_winbind.so", "T pam_sm_")),
+                check_symbols("./bin/plugins/pam_winbind.so", "pam_sm_")),
             ("allshared-no-public-winbind_krb5_locator",
-                nm_grep_symbols("./bin/plugins/winbind_krb5_locator.so", " D resolve\>")),
+                check_symbols("./bin/plugins/winbind_krb5_locator.so", "service_locator")),
             ("allshared-no-public-async_dns_krb5_locator",
-                nm_grep_symbols("./bin/plugins/async_dns_krb5_locator.so", " D resolve\>")),
+                check_symbols("./bin/plugins/async_dns_krb5_locator.so", "service_locator")),
         ],
     },
 
@@ -986,6 +1039,12 @@ tasks = {
             ("libs-check-clean-tree", CLEAN_SOURCE_TREE_CMD),
             ("libs-clean", "make clean"),
 
+        ],
+    },
+
+    "samba-shellcheck": {
+        "sequence": [
+            ("run", "script/check-shell-scripts.sh ."),
         ],
     },
 
@@ -1128,21 +1187,29 @@ defaulttasks.remove("samba-addc-mit-1")
 defaulttasks.remove("samba-addc-mit-4a")
 defaulttasks.remove("samba-addc-mit-4b")
 
+defaulttasks.remove("samba-32bit")
+
 if os.environ.get("AUTOBUILD_SKIP_SAMBA_O3", "0") == "1":
     defaulttasks.remove("samba-o3")
 
 
 def do_print(msg):
-    print("%s" % msg)
+    logger.info(msg)
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+def do_debug(msg):
+    logger.debug(msg)
     sys.stdout.flush()
     sys.stderr.flush()
 
 
 def run_cmd(cmd, dir=".", show=None, output=False, checkfail=True):
     if show is None:
-        show = options.verbose
-    if show:
+        do_debug("Running: '%s' in '%s'" % (cmd, dir))
+    elif show:
         do_print("Running: '%s' in '%s'" % (cmd, dir))
+
     if output:
         out = check_output([cmd], shell=True, cwd=dir)
         return out.decode(encoding='utf-8', errors='backslashreplace')
@@ -1180,9 +1247,8 @@ class builder(object):
         self.next = 0
         self.stdout_path = "%s/%s.stdout" % (gitroot, self.tag)
         self.stderr_path = "%s/%s.stderr" % (gitroot, self.tag)
-        if options.verbose:
-            do_print("stdout for %s in %s" % (self.name, self.stdout_path))
-            do_print("stderr for %s in %s" % (self.name, self.stderr_path))
+        do_debug("stdout for %s in %s" % (self.name, self.stdout_path))
+        do_debug("stderr for %s in %s" % (self.name, self.stderr_path))
         run_cmd("rm -f %s %s" % (self.stdout_path, self.stderr_path))
         self.stdout = open(self.stdout_path, 'w')
         self.stderr = open(self.stderr_path, 'w')
@@ -1199,12 +1265,12 @@ class builder(object):
             assert "dependency" not in definition
 
     def mark_existing(self):
-        do_print('%s: Mark as existing dependency' % self.name)
+        do_debug('%s: Mark as existing dependency' % self.name)
         self.next = len(self.sequence)
         self.done = True
 
     def add_consumer(self, consumer):
-        do_print("%s: add consumer: %s" % (self.name, consumer.name))
+        do_debug("%s: add consumer: %s" % (self.name, consumer.name))
         consumer.producer = self
         consumer.test_source_dir = self.test_source_dir
         self.consumers.append(consumer)
@@ -1212,7 +1278,7 @@ class builder(object):
     def start_next(self):
         if self.producer is not None:
             if not self.producer.done:
-                do_print("%s: Waiting for producer: %s" % (self.name, self.producer.name))
+                do_debug("%s: Waiting for producer: %s" % (self.name, self.producer.name))
                 return
 
         if self.next == 0:
@@ -1245,7 +1311,11 @@ class builder(object):
             do_print('%s: Remaining consumers %u' % (self.name, len(self.consumers)))
             return
         (self.stage, self.cmd) = self.sequence[self.next]
-        self.cmd = self.cmd.replace("${PYTHON_PREFIX}", get_python_lib(plat_specific=1, standard_lib=0, prefix=self.prefix))
+        self.cmd = self.cmd.replace("${PYTHON_PREFIX}",
+                                    get_path(name='platlib',
+                                             scheme="posix_prefix",
+                                             vars={"base": self.prefix,
+                                                   "platbase": self.prefix}))
         self.cmd = self.cmd.replace("${PREFIX}", "--prefix=%s" % self.prefix)
         self.cmd = self.cmd.replace("${PREFIX_DIR}", "%s" % self.prefix)
         self.cmd = self.cmd.replace("${TESTS}", options.restrict_tests)
@@ -1298,9 +1368,9 @@ class buildlist(object):
 
         tasknames = implicit_tasknames.copy()
         tasknames.extend(given_tasknames)
-        do_print("given_tasknames: %s" % given_tasknames)
-        do_print("implicit_tasknames: %s" % implicit_tasknames)
-        do_print("tasknames: %s" % tasknames)
+        do_debug("given_tasknames: %s" % given_tasknames)
+        do_debug("implicit_tasknames: %s" % implicit_tasknames)
+        do_debug("tasknames: %s" % tasknames)
         self.tlist = [builder(n, tasks[n]) for n in tasknames]
 
         if options.retry:
@@ -1336,11 +1406,11 @@ class buildlist(object):
                     b.mark_existing()
 
         for b in self.tlist:
-            do_print("b.name=%s" % b.name)
+            do_debug("b.name=%s" % b.name)
             if "dependency" not in b.definition:
                 continue
             depname = b.definition["dependency"]
-            do_print("b.name=%s: dependency:%s" % (b.name, depname))
+            do_debug("b.name=%s: dependency:%s" % (b.name, depname))
             for p in self.tlist:
                 if p.name == depname:
                     p.add_consumer(b)
@@ -1616,14 +1686,16 @@ The top commit for the tree that was built was:
 
 ''' % (log_base, failed_tag, log_base, failed_tag, log_base, top_commit_msg)
 
-    if add_log_tail:
-        f = open("%s/%s.stdout" % (gitroot, failed_tag), 'r')
+    log_stdout = "%s/%s.stdout" % (gitroot, failed_tag)
+    if add_log_tail and os.access(log_stdout, os.R_OK):
+        f = open(log_stdout, 'r')
         lines = f.readlines()
         log_tail = "".join(lines[-50:])
         num_lines = len(lines)
-        if num_lines < 50:
+        log_stderr = "%s/%s.stderr" % (gitroot, failed_tag)
+        if num_lines < 50 and os.access(log_stderr, os.R_OK):
             # Also include stderr (compile failures) if < 50 lines of stdout
-            f = open("%s/%s.stderr" % (gitroot, failed_tag), 'r')
+            f = open(log_stderr, 'r')
             log_tail += "".join(f.readlines()[-(50 - num_lines):])
 
         text += '''

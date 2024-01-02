@@ -183,8 +183,6 @@ typedef sig_atomic_t volatile SIG_ATOMIC_T;
 
 /* Is birthtime real, or was it calculated ? */
 #define ST_EX_IFLAG_CALCULATED_BTIME		(1 << 0)
-#define ST_EX_IFLAG_CALCULATED_ITIME		(1 << 1)
-#define ST_EX_IFLAG_CALCULATED_FILE_ID		(1 << 2)
 
 /*
  * Type for stat structure.
@@ -193,7 +191,6 @@ typedef sig_atomic_t volatile SIG_ATOMIC_T;
 struct stat_ex {
 	dev_t		st_ex_dev;
 	ino_t		st_ex_ino;
-	uint64_t	st_ex_file_id;
 	mode_t		st_ex_mode;
 	nlink_t		st_ex_nlink;
 	uid_t		st_ex_uid;
@@ -204,11 +201,7 @@ struct stat_ex {
 	struct timespec st_ex_mtime;
 	struct timespec st_ex_ctime;
 	struct timespec st_ex_btime; /* birthtime */
-	/*
-	 * Immutable original birth time aka invented time. Set when a file
-	 * is created, never changes thereafter. May not be set by the client.
-	 */
-	struct timespec st_ex_itime; /* invented time */
+	uint32_t	cached_dos_attributes;
 
 	blksize_t	st_ex_blksize;
 	blkcnt_t	st_ex_blocks;
@@ -271,14 +264,11 @@ typedef char fstring[FSTRING_LEN];
 #include "../lib/util/charset/charset.h"
 #include "dynconfig/dynconfig.h"
 #include "locking.h"
-#include "smb_perfcount.h"
 #include "smb.h"
 #include "../lib/util/byteorder.h"
 
 #include "../lib/util/samba_modules.h"
 #include "../lib/util/talloc_stack.h"
-#include "../lib/util/smb_threads.h"
-#include "../lib/util/smb_threads_internal.h"
 
 /* samba_setXXid functions. */
 #include "../lib/util/setid.h"

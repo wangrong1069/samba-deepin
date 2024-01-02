@@ -1,0 +1,4 @@
+# documentation and specifications for the schemas, keep them in the same place
+samba-ad-provision: package-contains-documentation-outside-usr-share-doc *usr/share/samba/setup/*
+samba-ad-provision: extra-license-file */setup/ad-schema/licence.txt*
+samba-ad-provision: extra-license-file */setup/adprep/WindowsServerDocs/LICENSE*

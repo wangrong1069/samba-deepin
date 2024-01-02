@@ -115,7 +115,7 @@ static bool string_match(const char *tok,const char *s)
 			return true;
 		}
 	} else if (tok[0] == '@') { /* netgroup: look it up */
-#ifdef HAVE_NETGROUP
+#if defined(HAVE_NETGROUP) && defined(HAVE_INNETGR)
 		DATA_BLOB tmp;
 		char *mydomain = NULL;
 		char *hostname = NULL;
@@ -309,7 +309,7 @@ static bool allow_access_internal(const char **deny_list,
 		return true;
 	}
 
-	/* if theres no deny list and no allow list then allow access */
+	/* if there's no deny list and no allow list then allow access */
 	if ((!deny_list || *deny_list == 0) &&
 	    (!allow_list || *allow_list == 0)) {
 		return true;
@@ -321,7 +321,7 @@ static bool allow_access_internal(const char **deny_list,
 		return(list_match(allow_list,client,client_match));
 	}
 
-	/* if theres a deny list but no allow list then allow
+	/* if there's a deny list but no allow list then allow
 	   all hosts not on the deny list */
 	if (!allow_list || *allow_list == 0) {
 		return(!list_match(deny_list,client,client_match));

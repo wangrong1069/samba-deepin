@@ -27,8 +27,8 @@
  */
 #define NBSSmessage     0x00   /* session message */
 #define NBSSrequest     0x81   /* session request */
-#define NBSSpositive    0x82   /* positiv session response */
-#define NBSSnegative    0x83   /* negativ session response */
+#define NBSSpositive    0x82   /* positive session response */
+#define NBSSnegative    0x83   /* negative session response */
 #define NBSSretarget    0x84   /* retarget session response */
 #define NBSSkeepalive   0x85   /* keepalive */
 
@@ -329,6 +329,7 @@ enum csc_policy {
 #define FLAGS2_UNICODE_STRINGS         0x8000
 
 /* FileAttributes (search attributes) field */
+#define FILE_ATTRIBUTES_INVALID 	0x0000L
 #define FILE_ATTRIBUTE_READONLY		0x0001L
 #define FILE_ATTRIBUTE_HIDDEN		0x0002L
 #define FILE_ATTRIBUTE_SYSTEM		0x0004L
@@ -399,7 +400,7 @@ enum csc_policy {
 #define FILE_CASE_PRESERVED_NAMES       0x00000002
 #define FILE_UNICODE_ON_DISK            0x00000004
 /* According to cifs9f, this is 4, not 8 */
-/* Acconding to testing, this actually sets the security attribute! */
+/* According to testing, this actually sets the security attribute! */
 #define FILE_PERSISTENT_ACLS            0x00000008
 #define FILE_FILE_COMPRESSION           0x00000010
 #define FILE_VOLUME_QUOTAS              0x00000020
@@ -614,8 +615,34 @@ enum csc_policy {
 #define IO_REPARSE_TAG_NFS	     0x80000014
 
 /*
+ * Sub-types for IO_REPARSE_TAG_NFS from [MS-FSCC] 2.1.2.6 Network
+ * File System (NFS) Reparse Data Buffer
+ */
+#define NFS_SPECFILE_LNK	     0x00000000014B4E4C
+#define NFS_SPECFILE_CHR	     0x0000000000524843
+#define NFS_SPECFILE_BLK	     0x00000000004B4C42
+#define NFS_SPECFILE_FIFO	     0x000000004F464946
+#define NFS_SPECFILE_SOCK	     0x000000004B434F53
+
+/*
  * Flag from [MS-FSCC] 2.1.2.4 Symbolic Link Reparse Data Buffer
  */
 #define SYMLINK_FLAG_RELATIVE	     0x00000001
+
+/*
+ * Symlink error tag from [MS-SMB2] 2.2.2.2.1 Symbolic Link Error Response
+ */
+#define SYMLINK_ERROR_TAG	     0x4C4D5953
+
+/*
+ * Flags according to answer from Dochelp:
+ * https://lists.samba.org/archive/cifs-protocol/2022-November/003909.html
+ */
+#define SYMLINK_ADMIN           0x20000000   /* The symlink creator is an admin */
+#define SYMLINK_UNTRUSTED       0x10000000   /* The symlink creator is untrusted */
+#define SYMLINK_TRUST_UNKNOWN   0x00000000   /* The symlink creator is unknown/legacy */
+
+#define SYMLINK_TRUST_MASK      0x30000000   /* Encodes the redirection trust level (maps to REDIRECTION_TRUST_LEVEL) */
+#define SYMLINK_TRUST_SHIFT     28           /* Bits to shift to convert to/from REDIRECTION_TRUST_LEVEL */
 
 #endif /* _SMB_CONSTANTS_H */

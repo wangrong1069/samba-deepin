@@ -1,22 +1,22 @@
-/* 
+/*
    Unix SMB/CIFS implementation.
    Copyright (C) Jelmer Vernooij <jelmer@samba.org> 2007
-   
+
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-   
+
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <Python.h>
+#include "lib/replace/system/python.h"
 #include "python/py3compat.h"
 #include "includes.h"
 #include "python/modules.h"
@@ -389,7 +389,7 @@ static PyObject *py_creds_set_bind_dn(PyObject *self, PyObject *args)
 		PyErr_Format(PyExc_TypeError, "Credentials expected");
 		return NULL;
 	}
-	if (!PyArg_ParseTuple(args, "s", &newval))
+	if (!PyArg_ParseTuple(args, "z", &newval))
 		return NULL;
 
 	return PyBool_FromLong(cli_credentials_set_bind_dn(creds, newval));
@@ -544,6 +544,32 @@ static PyObject *py_creds_get_nt_hash(PyObject *self, PyObject *unused)
 	ret = PyBytes_FromStringAndSize(discard_const_p(char, ntpw->hash), 16);
 	TALLOC_FREE(ntpw);
 	return ret;
+}
+
+static PyObject *py_creds_set_nt_hash(PyObject *self, PyObject *args)
+{
+	PyObject *py_cp = Py_None;
+	const struct samr_Password *pwd = NULL;
+	enum credentials_obtained obt = CRED_SPECIFIED;
+	int _obt = obt;
+	struct cli_credentials *creds = PyCredentials_AsCliCredentials(self);
+	if (creds == NULL) {
+		PyErr_Format(PyExc_TypeError, "Credentials expected");
+		return NULL;
+	}
+
+	if (!PyArg_ParseTuple(args, "O|i", &py_cp, &_obt)) {
+		return NULL;
+	}
+	obt = _obt;
+
+	pwd = pytalloc_get_type(py_cp, struct samr_Password);
+	if (pwd == NULL) {
+		/* pytalloc_get_type sets TypeError */
+		return NULL;
+	}
+
+	return PyBool_FromLong(cli_credentials_set_nt_hash(creds, pwd, obt));
 }
 
 static PyObject *py_creds_get_kerberos_state(PyObject *self, PyObject *unused)
@@ -937,6 +963,54 @@ static PyObject *py_creds_get_secure_channel_type(PyObject *self, PyObject *args
 	return PyLong_FromLong(channel_type);
 }
 
+static PyObject *py_creds_get_aes256_key(PyObject *self, PyObject *args)
+{
+	struct loadparm_context *lp_ctx = NULL;
+	TALLOC_CTX *mem_ctx = NULL;
+	PyObject *py_lp_ctx = Py_None;
+	const char *salt = NULL;
+	DATA_BLOB aes_256;
+	int code;
+	PyObject *ret = NULL;
+	struct cli_credentials *creds = PyCredentials_AsCliCredentials(self);
+	if (creds == NULL) {
+		PyErr_Format(PyExc_TypeError, "Credentials expected");
+		return NULL;
+	}
+
+	if (!PyArg_ParseTuple(args, "s|O", &salt, &py_lp_ctx))
+		return NULL;
+
+	mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
+
+	lp_ctx = lpcfg_from_py_object(mem_ctx, py_lp_ctx);
+	if (lp_ctx == NULL) {
+		talloc_free(mem_ctx);
+		return NULL;
+	}
+
+	code = cli_credentials_get_aes256_key(creds,
+					      mem_ctx,
+					      lp_ctx,
+					      salt,
+					      &aes_256);
+	if (code != 0) {
+		PyErr_SetString(PyExc_RuntimeError,
+				"Failed to generate AES256 key");
+		talloc_free(mem_ctx);
+		return NULL;
+	}
+
+	ret = PyBytes_FromStringAndSize((const char *)aes_256.data,
+					aes_256.length);
+	talloc_free(mem_ctx);
+	return ret;
+}
+
 static PyObject *py_creds_encrypt_netr_crypt_password(PyObject *self,
 						      PyObject *args)
 {
@@ -963,6 +1037,43 @@ static PyObject *py_creds_encrypt_netr_crypt_password(PyObject *self,
 	}
 	data.length = sizeof(struct netr_CryptPassword);
 	data.data   = (uint8_t *)pwd;
+	status = netlogon_creds_session_encrypt(creds->netlogon_creds, data);
+
+	PyErr_NTSTATUS_IS_ERR_RAISE(status);
+
+	Py_RETURN_NONE;
+}
+
+static PyObject *py_creds_encrypt_samr_password(PyObject *self,
+						PyObject *args)
+{
+	DATA_BLOB data = data_blob_null;
+	struct cli_credentials *creds  = NULL;
+	struct samr_Password   *pwd    = NULL;
+	NTSTATUS status;
+	PyObject *py_cp = Py_None;
+
+	creds = PyCredentials_AsCliCredentials(self);
+	if (creds == NULL) {
+		PyErr_Format(PyExc_TypeError, "Credentials expected");
+		return NULL;
+	}
+
+	if (creds->netlogon_creds == NULL) {
+		PyErr_Format(PyExc_ValueError, "NetLogon credentials not set");
+		return NULL;
+	}
+
+	if (!PyArg_ParseTuple(args, "O", &py_cp)) {
+		return NULL;
+	}
+
+	pwd = pytalloc_get_type(py_cp, struct samr_Password);
+	if (pwd == NULL) {
+		/* pytalloc_get_type sets TypeError */
+		return NULL;
+	}
+	data = data_blob_const(pwd->hash, sizeof(pwd->hash));
 	status = netlogon_creds_session_encrypt(creds->netlogon_creds, data);
 
 	PyErr_NTSTATUS_IS_ERR_RAISE(status);
@@ -1104,7 +1215,7 @@ static PyObject *py_creds_set_smb_encryption(PyObject *self, PyObject *args)
 		return NULL;
 	}
 
-	cli_credentials_set_smb_encryption(creds, encryption_state, obt);
+	(void)cli_credentials_set_smb_encryption(creds, encryption_state, obt);
 	Py_RETURN_NONE;
 }
 
@@ -1305,6 +1416,13 @@ static PyMethodDef py_creds_methods[] = {
 		.ml_flags = METH_NOARGS,
 	},
 	{
+		.ml_name  = "set_nt_hash",
+		.ml_meth  = py_creds_set_nt_hash,
+		.ml_flags = METH_VARARGS,
+		.ml_doc = "S.set_net_sh(samr_Password[, credentials.SPECIFIED]) -> bool\n"
+			"Change NT hash.",
+	},
+	{
 		.ml_name  = "get_kerberos_state",
 		.ml_meth  = py_creds_get_kerberos_state,
 		.ml_flags = METH_NOARGS,
@@ -1386,13 +1504,30 @@ static PyMethodDef py_creds_methods[] = {
 		.ml_flags = METH_VARARGS,
 	},
 	{
+		.ml_name  = "get_aes256_key",
+		.ml_meth  = py_creds_get_aes256_key,
+		.ml_flags = METH_VARARGS,
+		.ml_doc   = "S.get_aes256_key(salt[, lp]) -> bytes\n"
+			    "Generate an AES256 key using the current password and\n"
+			    "the specified salt",
+	},
+	{
 		.ml_name  = "encrypt_netr_crypt_password",
 		.ml_meth  = py_creds_encrypt_netr_crypt_password,
 		.ml_flags = METH_VARARGS,
-		.ml_doc   = "S.encrypt_netr_crypt_password(password) -> NTSTATUS\n"
+		.ml_doc   = "S.encrypt_netr_crypt_password(password) -> None\n"
 			    "Encrypt the supplied password using the session key and\n"
 			    "the negotiated encryption algorithm in place\n"
 			    "i.e. it overwrites the original data"},
+	{
+		.ml_name  = "encrypt_samr_password",
+		.ml_meth  = py_creds_encrypt_samr_password,
+		.ml_flags = METH_VARARGS,
+		.ml_doc   = "S.encrypt_samr_password(password) -> None\n"
+			    "Encrypt the supplied password using the session key and\n"
+			    "the negotiated encryption algorithm in place\n"
+			    "i.e. it overwrites the original data"
+	},
 	{
 		.ml_name  = "get_smb_signing",
 		.ml_meth  = py_creds_get_smb_signing,
@@ -1454,7 +1589,7 @@ static PyObject *py_ccache_name(PyObject *self, PyObject *unused)
 				    ccc->ccache, &name);
 	if (ret == 0) {
 		py_name = PyString_FromStringOrNULL(name);
-		SAFE_FREE(name);
+		krb5_free_string(ccc->smb_krb5_context->krb5_context, name);
 	} else {
 		PyErr_SetString(PyExc_RuntimeError,
 				"Failed to get ccache name");

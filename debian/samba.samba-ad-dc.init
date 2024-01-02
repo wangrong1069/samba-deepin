@@ -10,30 +10,24 @@
 # Description:  Meta-service to provide AD and SMB/CIFS services to clients
 ### END INIT INFO
 
-#
-# Start/stops the Samba daemon (samba).
-# Adapted from the Samba 3 packages.
-#
-
-PIDDIR=/run/samba
-SAMBAPID=$PIDDIR/samba.pid
+NAME=samba
+DAEMON=/usr/sbin/$NAME
+PIDFILE=/run/samba/$NAME.pid
+DESC="Samba AD DC server"
+SCRIPT=samba-ad-dc
 
 # clear conflicting settings from the environment
 unset TMPDIR
 
-# See if the daemon and the config file are there
-test -x /usr/sbin/samba -a -r /etc/samba/smb.conf || exit 0
+test -x $DAEMON || exit 0
+/usr/share/samba/is-configured $NAME || exit 0
+
+[ -f /etc/default/samba ] && . /etc/default/samba
 
 . /lib/lsb/init-functions
 
 case "$1" in
-	start)
-		SERVER_ROLE=`samba-tool testparm --parameter-name="server role"  2>/dev/null | tail -1`
-		if [ "$SERVER_ROLE" != "active directory domain controller" ]; then
-		    exit 0
-		fi
-
-
+	(start)
 		# CVE-2013-4475
 		KEYFILE=/var/lib/samba/private/tls/key.pem
 		if [ -e $KEYFILE ]
@@ -47,47 +41,23 @@ case "$1" in
 						exit 1
 				fi
 		fi
-
-		log_daemon_msg "Starting Samba AD DC daemon" "samba"
-		# Make sure we have our PIDDIR, even if it's on a tmpfs
-		install -o root -g root -m 755 -d $PIDDIR
-
-		if ! start-stop-daemon --start --quiet --oknodo --exec /usr/sbin/samba --pidfile $SAMBAPID -- -D; then
-			log_end_msg 1
-			exit 1
-		fi
-
-		log_end_msg 0
+		log_daemon_msg "Starting $DESC" $NAME
+		start-stop-daemon --start --quiet --oknodo --exec $DAEMON --pidfile $PIDFILE -- -D $SAMBAOPTIONS
+		log_end_msg $?
 		;;
-	stop)
-		log_daemon_msg "Stopping Samba AD DC daemon" "samba"
-
-		start-stop-daemon --stop --quiet --pidfile $SAMBAPID
-		# Wait a little and remove stale PID file
-		sleep 1
-		if [ -f $SAMBAPID ] && ! ps h `cat $SAMBAPID` > /dev/null
-		then
-			# Stale PID file (samba was succesfully stopped),
-			# remove it (should be removed by samba itself IMHO.)
-			rm -f $SAMBAPID
-		fi
-
-		log_end_msg 0
-
+	(stop)
+		log_daemon_msg "Stopping $DESC" $NAME
+		start-stop-daemon --stop  --quiet --oknodo --exec $DAEMON --pidfile $PIDFILE
+		log_end_msg $?
 		;;
-	restart|force-reload)
-		$0 stop
-		sleep 1
-		$0 start
+	(restart|force-reload)
+		$0 stop && sleep 1 && $0 start
 		;;
-	status)
-		status_of_proc -p $SAMBAPID /usr/sbin/samba samba
-		exit $?
+	(status)
+		status_of_proc -p $PIDFILE $DAEMON $NAME
 		;;
-	*)
-		echo "Usage: /etc/init.d/samba-ad-dc {start|stop|restart|force-reload|status}"
+	(*)
+		echo "Usage: /etc/init.d/$SCRIPT {start|stop|restart|force-reload|status}"
 		exit 1
 		;;
 esac
-
-exit 0

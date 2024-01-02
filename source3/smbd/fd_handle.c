@@ -17,6 +17,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "includes.h"
 #include "fd_handle.h"
 
 struct fd_handle {
@@ -27,11 +28,7 @@ struct fd_handle {
 	/*
 	 * NT Create options, but we only look at
 	 * NTCREATEX_FLAG_DENY_DOS and
-	 * NTCREATEX_FLAG_DENY_FCB and
-	 * NTCREATEX_FLAG_DELETE_ON_CLOSE
-	 * for print files *only*, where
-	 * DELETE_ON_CLOSE is not stored in the share
-	 * mode database.
+	 * NTCREATEX_FLAG_DENY_FCB.
 	 */
 	uint32_t private_options;
 	uint64_t gen_id;
@@ -134,7 +131,7 @@ int fsp_get_pathref_fd(const struct files_struct *fsp)
 void fsp_set_fd(struct files_struct *fsp, int fd)
 {
 	/*
-	 * Deliberatly allow setting an fd if the existing fd is the
+	 * Deliberately allow setting an fd if the existing fd is the
 	 * same. This happens if a VFS module assigns the fd to
 	 * fsp->fh->fd in its openat VFS function. The canonical place
 	 * where the assignment is done is in fd_open(), but some VFS

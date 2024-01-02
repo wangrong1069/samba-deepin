@@ -38,7 +38,7 @@ LIB_PATH="shared"
 
 os.environ['PYTHONUNBUFFERED'] = '1'
 
-if Context.HEXVERSION not in (0x2001800,):
+if Context.HEXVERSION not in (0x2001900,):
     Logs.error('''
 Please use the version of waf that comes with Samba, not
 a system installed version. See http://wiki.samba.org/index.php/Waf
@@ -856,7 +856,7 @@ def SAMBA_SUBSYSTEM(bld, modname, source,
 
     if provide_builtin_linking:
 
-        if use_hostcc or pyext or pyembed:
+        if use_hostcc:
             raise Errors.WafError("subsystem[%s] provide_builtin_linking=True " +
                                   "not allowed with use_hostcc=True" %
                                   modname)
@@ -899,10 +899,12 @@ def SAMBA_GENERATOR(bld, name, rule, source='', target='',
                     private_headers=None,
                     header_path=None,
                     vars=None,
-                    dep_vars=[],
+                    dep_vars=None,
                     always=False):
     '''A generic source generator target'''
 
+    if dep_vars is None:
+        dep_vars = []
     if not SET_TARGET_TYPE(bld, name, 'GENERATOR'):
         return
 
@@ -913,12 +915,19 @@ def SAMBA_GENERATOR(bld, name, rule, source='', target='',
     dep_vars.append('ruledeps')
     dep_vars.append('SAMBA_GENERATOR_VARS')
 
+    shell=isinstance(rule, str)
+
+    # This ensures that if the command (executed in the shell) fails
+    # (returns non-zero), the build fails
+    if shell:
+        rule = "set -e; " + rule
+
     bld.SET_BUILD_GROUP(group)
     t = bld(
         rule=rule,
         source=bld.EXPAND_VARIABLES(source, vars=vars),
+        shell=shell,
         target=target,
-        shell=isinstance(rule, str),
         update_outputs=True,
         before='c',
         ext_out='.c',
@@ -1180,10 +1189,10 @@ def SAMBAMANPAGES(bld, manpages, extra_source=None):
         source = [m + '.xml']
         if extra_source is not None:
             source = [source, extra_source]
-        # ${SRC[1]} and ${SRC[2]} are not referenced in the
+        # ${SRC[1]}, ${SRC[2]} and ${SRC[3]} are not referenced in the
         # SAMBA_GENERATOR but trigger the dependency calculation so
         # ensures that manpages are rebuilt when these change.
-        source += ['build/DTD/samba.entities', 'build/DTD/samba.build.version']
+        source += ['build/DTD/samba.build.pathconfig', 'build/DTD/samba.entities', 'build/DTD/samba.build.version']
         bld.SAMBA_GENERATOR(m,
                             source=source,
                             target=m,

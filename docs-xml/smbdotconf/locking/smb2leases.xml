@@ -15,13 +15,10 @@
 	and <smbconfoption name="kernel oplocks">no</smbconfoption>.
 	</para>
 
-	<para>Note that the write cache won't be used for file handles with a smb2 write lease.</para>
-
 </description>
 
 <related>oplocks</related>
 <related>kernel oplocks</related>
 <related>level2 oplocks</related>
-<related>write cache size</related>
 <value type="default">yes</value>
 </samba:parameter>

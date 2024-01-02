@@ -74,11 +74,11 @@ libldb.so.2 #PACKAGE# #MINVER#
  LDB_2.2.0@LDB_2.2.0 2:2.2.0
  LDB_2.4.0@LDB_2.4.0 2:2.5.0
  LDB_2.4.1@LDB_2.4.1 2:2.5.0
- LDB_2.4.4@LDB_2.4.4 2:2.4.4
  LDB_2.5.0@LDB_2.5.0 2:2.5.0
- LDB_2.5.1@LDB_2.5.1 2:2.5.1
- LDB_2.5.2@LDB_2.5.2 2:2.5.2
- LDB_2.5.3@LDB_2.5.3 2:2.5.3
+ LDB_2.6.0@LDB_2.6.0 2:2.6.0
+ LDB_2.6.1@LDB_2.6.1 2:2.6.1
+ LDB_2.7.0@LDB_2.7.0 2:2.7.0
+ LDB_2.8.0@LDB_2.8.0 2:2.8.0
  ldb_check_critical_controls@LDB_0.9.22 0.9.22
  ldb_controls_except_specified@LDB_0.9.22 0.9.22
  ldb_control_to_string@LDB_1.0.2 1.0.2~git20110403
@@ -168,7 +168,7 @@ libldb.so.2 #PACKAGE# #MINVER#
  ldb_extended@LDB_0.9.10 0.9.21
  ldb_extended_default_callback@LDB_0.9.10 0.9.21
  ldb_filter_attrs@LDB_2.0.1 2:2.0.1
- ldb_filter_attrs_in_place@LDB_2.5.3 2:2.5.3
+ ldb_filter_attrs_in_place@LDB_2.8.0 2:2.8.0
  ldb_filter_from_tree@LDB_0.9.10 0.9.21
  ldb_get_config_basedn@LDB_0.9.10 0.9.21
  ldb_get_create_perms@LDB_0.9.10 0.9.21
@@ -208,7 +208,7 @@ libldb.so.2 #PACKAGE# #MINVER#
  ldb_match_msg@LDB_0.9.10 0.9.21
  ldb_match_msg_error@LDB_0.9.15 0.9.21
  ldb_match_msg_objectclass@LDB_0.9.10 0.9.21
- ldb_match_scope@LDB_2.5.3 2:2.5.3
+ ldb_match_scope@LDB_2.8.0 2:2.8.0
  ldb_mod_register_control@LDB_0.9.10 0.9.21
  ldb_modify@LDB_0.9.10 0.9.21
  ldb_modify_default_callback@LDB_0.9.12 0.9.21
@@ -233,21 +233,21 @@ libldb.so.2 #PACKAGE# #MINVER#
  ldb_modules_list_from_string@LDB_0.9.10 0.9.21
  ldb_modules_load@LDB_0.9.18 0.9.21
  ldb_msg_add@LDB_0.9.10 0.9.21
- ldb_msg_add_distinguished_name@LDB_2.5.3 2:2.5.3
+ ldb_msg_add_distinguished_name@LDB_2.8.0 2:2.8.0
  ldb_msg_add_empty@LDB_0.9.10 0.9.21
  ldb_msg_add_fmt@LDB_0.9.10 0.9.21
  ldb_msg_add_linearized_dn@LDB_0.9.10 0.9.21
  ldb_msg_add_steal_string@LDB_0.9.10 0.9.21
  ldb_msg_add_steal_value@LDB_0.9.10 0.9.21
  ldb_msg_add_string@LDB_0.9.10 0.9.21
- ldb_msg_add_string_flags@LDB_2.5.2 2:2.5.2
+ ldb_msg_add_string_flags@LDB_2.6.1 2:2.6.1
  ldb_msg_add_value@LDB_0.9.10 0.9.21
- ldb_msg_append_fmt@LDB_2.5.2 2:2.5.2
- ldb_msg_append_linearized_dn@LDB_2.5.2 2:2.5.2
- ldb_msg_append_steal_string@LDB_2.5.2 2:2.5.2
- ldb_msg_append_steal_value@LDB_2.5.2 2:2.5.2
- ldb_msg_append_string@LDB_2.5.2 2:2.5.2
- ldb_msg_append_value@LDB_2.5.2 2:2.5.2
+ ldb_msg_append_fmt@LDB_2.6.1 2:2.6.1
+ ldb_msg_append_linearized_dn@LDB_2.6.1 2:2.6.1
+ ldb_msg_append_steal_string@LDB_2.6.1 2:2.6.1
+ ldb_msg_append_steal_value@LDB_2.6.1 2:2.6.1
+ ldb_msg_append_string@LDB_2.6.1 2:2.6.1
+ ldb_msg_append_value@LDB_2.6.1 2:2.6.1
  ldb_msg_canonicalize@LDB_0.9.10 0.9.21
  ldb_msg_check_string_attribute@LDB_0.9.10 0.9.21
  ldb_msg_copy@LDB_0.9.10 0.9.21
@@ -255,13 +255,13 @@ libldb.so.2 #PACKAGE# #MINVER#
  ldb_msg_copy_shallow@LDB_0.9.10 0.9.21
  ldb_msg_diff@LDB_0.9.10 0.9.21
  ldb_msg_difference@LDB_0.9.15 0.9.21
- ldb_msg_element_add_value@LDB_2.5.2 2:2.5.2
+ ldb_msg_element_add_value@LDB_2.6.1 2:2.6.1
  ldb_msg_element_compare@LDB_0.9.10 0.9.21
  ldb_msg_element_compare_name@LDB_0.9.10 0.9.21
  ldb_msg_element_equal_ordered@LDB_1.1.6 1:1.1.6
- ldb_msg_element_is_inaccessible@LDB_2.5.3 2:2.5.3
- ldb_msg_element_mark_inaccessible@LDB_2.5.3 2:2.5.3
- ldb_msg_elements_take_ownership@LDB_2.5.3 2:2.5.3
+ ldb_msg_element_is_inaccessible@LDB_2.8.0 2:2.8.0
+ ldb_msg_element_mark_inaccessible@LDB_2.8.0 2:2.8.0
+ ldb_msg_elements_take_ownership@LDB_2.8.0 2:2.8.0
  ldb_msg_find_attr_as_bool@LDB_0.9.10 0.9.21
  ldb_msg_find_attr_as_dn@LDB_0.9.10 0.9.21
  ldb_msg_find_attr_as_double@LDB_0.9.10 0.9.21
@@ -279,10 +279,10 @@ libldb.so.2 #PACKAGE# #MINVER#
  ldb_msg_normalize@LDB_0.9.15 0.9.21
  ldb_msg_remove_attr@LDB_0.9.10 0.9.21
  ldb_msg_remove_element@LDB_0.9.10 0.9.21
- ldb_msg_remove_inaccessible@LDB_2.5.3 2:2.5.3
+ ldb_msg_remove_inaccessible@LDB_2.8.0 2:2.8.0
  ldb_msg_rename_attr@LDB_0.9.10 0.9.21
  ldb_msg_sanity_check@LDB_0.9.10 0.9.21
- ldb_msg_shrink_to_fit@LDB_2.5.3 2:2.5.3
+ ldb_msg_shrink_to_fit@LDB_2.8.0 2:2.8.0
  ldb_msg_sort_elements@LDB_0.9.10 0.9.21
  ldb_next_del_trans@LDB_0.9.10 0.9.21
  ldb_next_end_trans@LDB_0.9.10 0.9.21
@@ -303,14 +303,14 @@ libldb.so.2 #PACKAGE# #MINVER#
  ldb_parse_tree@LDB_0.9.10 0.9.21
  ldb_parse_tree_attr_replace@LDB_0.9.10 0.9.21
  ldb_parse_tree_copy_shallow@LDB_0.9.10 0.9.21
- ldb_parse_tree_get_attr@LDB_2.5.3 2:2.5.3
+ ldb_parse_tree_get_attr@LDB_2.8.0 2:2.8.0
  ldb_parse_tree_walk@LDB_1.1.2 1.1.2~
  ldb_qsort@LDB_0.9.10 0.9.21
  ldb_register_backend@LDB_0.9.10 0.9.21
  ldb_register_extended_match_rule@LDB_1.1.19 1:1.1.20
  ldb_register_hook@LDB_0.9.18 0.9.21
  ldb_register_module@LDB_0.9.10 0.9.21
- ldb_register_redact_callback@LDB_2.5.3 2:2.5.3
+ ldb_register_redact_callback@LDB_2.8.0 2:2.8.0
  ldb_rename@LDB_0.9.10 0.9.21
  ldb_reply_add_control@LDB_0.9.10 0.9.21
  ldb_reply_get_control@LDB_0.9.10 0.9.21
@@ -371,6 +371,10 @@ libldb.so.2 #PACKAGE# #MINVER#
  ldb_unpack_data@LDB_1.1.14 1:1.1.15
  ldb_unpack_data_flags@LDB_2.0.1 2:2.0.1
  ldb_unpack_get_format@LDB_2.0.2 2:2.0.2
+ ldb_val_as_bool@LDB_2.8.0 2:2.8.0
+ ldb_val_as_dn@LDB_2.8.0 2:2.8.0
+ ldb_val_as_int64@LDB_2.8.0 2:2.8.0
+ ldb_val_as_uint64@LDB_2.8.0 2:2.8.0
  ldb_val_dup@LDB_0.9.10 0.9.21
  ldb_val_equal_exact@LDB_0.9.10 0.9.21
  ldb_val_map_local@LDB_0.9.10 0.9.21

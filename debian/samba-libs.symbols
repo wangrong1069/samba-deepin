@@ -1,4 +1,5 @@
-libndr.so.3 #PACKAGE# #MINVER#
+# libndrN is a virtual package provided by samba-libs
+libndr.so.3 libndr3 #MINVER#
 * Build-Depends-Package: samba-dev
  GUID_all_zero@NDR_0.0.1 2:4.17.2
  GUID_buf_string@NDR_0.0.4 2:4.17.2
@@ -294,7 +295,8 @@ libndr.so.3 #PACKAGE# #MINVER#
  ndr_transfer_syntax_ndr@NDR_0.0.1 2:4.17.2
  ndr_zero_memory@NDR_0.2.0 2:4.17.2
 
-libsmbldap.so.2 #PACKAGE# #MINVER#
+# libsmbldapN is a virtual package provided by samba-libs
+libsmbldap.so.2 libsmbldap2 #MINVER#
 * Build-Depends-Package: samba-dev
  SMBLDAP_0@SMBLDAP_0 2:4.16.6
  SMBLDAP_1@SMBLDAP_1 2:4.16.6

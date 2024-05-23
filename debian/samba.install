@@ -1,8 +1,5 @@
 #!/usr/bin/dh-exec --with-scripts=filter-arch,filter-build-profiles
 etc/ufw/applications.d/samba
-[linux-any] lib/systemd/system/nmb*.service
-[linux-any] lib/systemd/system/samba*.service
-[linux-any] lib/systemd/system/smb*.service
 usr/bin/dumpmscat
 usr/bin/mvxattr
 usr/bin/oLschema2ldif

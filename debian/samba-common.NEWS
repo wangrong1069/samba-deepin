@@ -1,0 +1,16 @@
+samba-common (2:4.19.4+dfsg-3) unstable; urgency=medium
+
+  /etc/logrotate.d/samba and /etc/logrotate/winbind logrotate scripts
+  has been removed.
+
+  Samba has its own log rotation implementation internally, renaming the
+  current log file with .old extension when the log grows larger than
+  max log size parameter in smb.conf (default is 5000Kb).  Also, samba
+  now writes quite a lot more log files for various components, and if
+  per-client logging is enabled, the per-client log files aren't covered
+  by the old logrotate script.
+
+  If you disabled internal samba log rotation, please re-enable it or else
+  the logs will grow in an uncontrollable way.
+
+ -- Michael Tokarev <mjt@tls.msk.ru>  Fri, 12 Jan 2024 20:03:05 +0300

@@ -81,14 +81,7 @@ with-snapper = yes
 
 config-args += \
 	--with-quota \
-	\
 	--with-systemd \
-	--systemd-install-services \
-	--with-systemddir=/lib/systemd/system \
-	--systemd-smb-extra='ExecCondition=/usr/share/samba/is-configured smb' \
-	--systemd-nmb-extra='ExecCondition=/usr/share/samba/is-configured nmb' \
-	--systemd-winbind-extra='ExecCondition=/usr/share/samba/is-configured winbind' \
-	--systemd-samba-extra='ExecCondition=/usr/share/samba/is-configured samba' \
 
 endif
 
@@ -253,27 +246,6 @@ override_dh_auto_install-arch:
 	install -p -m755 debian/update-apparmor-samba-profile -t debian/tmp/usr/share/samba/
 	install -Dp -m0644 debian/samba.ufw.profile debian/tmp/etc/ufw/applications.d/samba
 	install -Dp -m0644 debian/source_samba.py -t debian/tmp/usr/share/apport/package-hooks/
-ifeq ($(DEB_HOST_ARCH_OS), linux)
-# Services fixups. Historically, debian used smbd, nmbd and samba-ad-dc service names.
-# Upstream samba used names smb, nmb and samba.
-# We can not easily rename them now (need to rename possible overrides and drop-ins),
-# but we can provide synonyms
-	mv debian/tmp/lib/systemd/system/nmb.service debian/tmp/lib/systemd/system/nmbd.service
-	ln -s nmbd.service debian/tmp/lib/systemd/system/nmb.service
-	mv debian/tmp/lib/systemd/system/smb.service debian/tmp/lib/systemd/system/smbd.service
-	ln -s smbd.service debian/tmp/lib/systemd/system/smb.service
-	mv debian/tmp/lib/systemd/system/samba.service debian/tmp/lib/systemd/system/samba-ad-dc.service
-	ln -s samba-ad-dc.service debian/tmp/lib/systemd/system/samba.service
-	sed -i \
-	  -e 's|/etc/sysconfig/|/etc/default/|' \
-	  -e 's|nmb\.service|nmbd.service|' \
-	  -e 's|smb\.service|smbd.service|' \
-	  -e 's|samba\.service|samba-ad-dc.service|' \
-	  debian/tmp/lib/systemd/system/nmbd.service \
-	  debian/tmp/lib/systemd/system/samba-ad-dc.service \
-	  debian/tmp/lib/systemd/system/smbd.service \
-	  debian/tmp/lib/systemd/system/winbind.service
-endif
 	# install-and-rename docs for ctdb (also arch-specific)
 	mkdir -p debian/tmp/ctdb
 	install -p ctdb/config/events/README debian/tmp/ctdb/README.notification
@@ -339,7 +311,11 @@ ifneq (,$(filter ctdb, ${build-pkgs}))
 endif
 
 override_dh_installsystemd:
-	$(call ifpkg, samba, dh_installsystemd -psamba)
+ifneq (,$(filter samba, ${build-pkgs}))
+	dh_installsystemd -psamba --name=smbd
+	dh_installsystemd -psamba --name=nmbd
+	dh_installsystemd -psamba --name=samba-ad-dc
+endif
 	$(call ifpkg, winbind, dh_installsystemd -pwinbind)
 	$(call ifpkg, ctdb, dh_installsystemd -pctdb --no-start --no-stop-on-upgrade)
 
@@ -351,7 +327,7 @@ override_dh_makeshlibs:
 	{ \
 	    suff=$$(${DEB_HOST_MULTIARCH}-python3-config --extension-suffix | tr _ -); \
 	    SUFF=$$(echo "$${suff%.so}" | tr a-z- A-Z_); \
-	    echo "libpyldb-util$${suff}.2 python3-ldb #MINVER#"; \
+	    echo "libpyldb-util$${suff}.2 #PACKAGE# #MINVER#"; \
 	    echo "* Build-Depends-Package: python3-ldb-dev" ; \
 	    echo " PYLDB_UTIL$${SUFF}_${LDB_VERSION}@PYLDB_UTIL$${SUFF}_${LDB_VERSION} ${LDB_EPOCH}${LDB_VERSION}"; \
 	    cat debian/python3-ldb.symbols.in; \
@@ -405,6 +381,8 @@ ifneq (,$(filter ${build-pkgs}, ${mitkrb5-dep-pkgs}))
 	dh_gencontrol $(addprefix -p, $(filter ${build-pkgs}, ${mitkrb5-dep-pkgs})) -- -v${mitkrb5-samba-ver} -Vldb:Depends="${LDB_DEPENDS}"
 endif
 	dh_gencontrol --remaining-packages -- -Vldb:Depends="${LDB_DEPENDS}"
+# move files from / to /usr if needed (#1059187):
+	if command -v dh_movetousr >/dev/null; then dh_movetousr -plibpam-winbind -plibnss-winbind; fi
 
 clean:
 	# see also debian/clean

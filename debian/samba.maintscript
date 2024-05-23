@@ -1,5 +1,2 @@
-rm_conffile /etc/init.d/samba 2:4.6.5+dfsg-5~
-rm_conffile /etc/init/nmbd.conf 2:4.6.5+dfsg-5~
-rm_conffile /etc/init/reload-smbd.conf 2:4.6.5+dfsg-5~
-rm_conffile /etc/init/samba-ad-dc.conf 2:4.6.5+dfsg-5~
-rm_conffile /etc/init/smbd.conf 2:4.6.5+dfsg-5~
+rm_conffile /etc/cron.daily/samba 2:4.19.3+dfsg-3~
+rm_conffile /etc/logrotate.d/samba 2:4.19.4+dfsg-3~

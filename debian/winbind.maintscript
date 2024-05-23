@@ -1,1 +1,1 @@
-rm_conffile /etc/init/winbind.conf 2:4.6.5+dfsg-5~
+rm_conffile /etc/logrotate.d/winbind 2:4.19.4+dfsg-3~

@@ -27,7 +27,7 @@ Build-Depends-Arch:
 	libtdb-dev (>= 1.4.9~),
 	python3-tdb (>= 1.4.9~),
 # system libraries:
-	pkg-config,
+	pkgconf,
 	libacl1-dev,
 	libarchive-dev,
 	libavahi-client-dev,
@@ -59,7 +59,7 @@ Build-Depends-Arch:
 	libsystemd-dev [linux-any],
 	libtasn1-6-dev (>= 3.8),
 	libtasn1-bin,
-	liburing-dev [linux-any] <!pkg.samba.nouring>,
+	liburing-dev [linux-any],
 	xfslibs-dev [linux-any],
 	zlib1g-dev (>= 1:1.2.3),
 # python (+#904999):
@@ -75,7 +75,7 @@ Build-Depends-Arch:
 #	python3-iso8601 <!nocheck>,
 #	python3-pyasn1 <!nocheck>,
 #	tdb-tools <!nocheck>,
-Rules-Requires-Root: binary-targets
+Rules-Requires-Root: no
 Vcs-Browser: https://salsa.debian.org/samba-team/samba
 Vcs-Git: https://salsa.debian.org/samba-team/samba.git
 
@@ -96,7 +96,6 @@ Depends: passwd,
          ${python3:Depends},
          ${shlibs:Depends}
 Recommends: attr,
-            logrotate,
             python3-markdown,
             samba-dsdb-modules,
             samba-vfs-modules,
@@ -131,6 +130,7 @@ Pre-Depends: ${misc:Pre-Depends}
 Multi-Arch: same
 Architecture: any
 Section: libs
+Provides: libndr3 (= ${binary:Version}), libsmbldap2 (= ${binary:Version})
 Depends: ${misc:Depends}, ${shlibs:Depends},
 # since libldb ABI is incorrectly versioned resulting in breakage like #1021371,
 # just require libldb version of the same build
@@ -508,7 +508,7 @@ Depends: iproute2 [linux-any],
          ${misc:Depends},
          ${shlibs:Depends}
 Recommends: ethtool [linux-any], python3:any, python3-etcd, ${rados:Depends}
-Suggests: logrotate, lsof
+Suggests: lsof
 Description: clustered database to store temporary data
  CTDB is a cluster implementation of the TDB database used by Samba and other
  projects to store temporary data. If an application is already using TDB for
@@ -583,7 +583,6 @@ Depends: libc6-dev,
          libtalloc-dev,
          libtevent-dev,
          libtdb-dev,
-         pkg-config,
          ${misc:Depends}
 Description: LDAP-like embedded database - development files
  ldb is a LDAP-like embedded database built on top of TDB.
@@ -613,7 +612,6 @@ Section: libdevel
 Architecture: any
 Depends: libc6-dev,
          libldb-dev,
-         pkg-config,
          python3-ldb (= ${binary:Version}),
          ${misc:Depends}
 Description: LDB Python 3 bindings - development files

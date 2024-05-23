@@ -22,4 +22,4 @@ fruit-disable-useless-size_t-overflow-check.patch
 meaningful-error-if-no-samba-ad-provision.patch
 meaningful-error-if-no-python3-markdown.patch
 ctdb-use-run-instead-of-var-run.patch
-python-fix-invalid-escape-sequences.patch
+silence-can-not-convert-group-sid.diff

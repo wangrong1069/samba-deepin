@@ -7,6 +7,9 @@
 
 set -xueo pipefail
 
+sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+
 yum update -y
 yum install -y dnf-plugins-core
 yum install -y epel-release
@@ -82,7 +85,6 @@ yum install -y \
     perl \
     perl-Archive-Tar \
     perl-ExtUtils-MakeMaker \
-    perl-JSON \
     perl-Parse-Yapp \
     perl-Test-Simple \
     perl-generators \

@@ -111,13 +111,13 @@ static int vxfs_ace_cmp(const void *ace1, const void *ace2)
 	type_a1 = SVAL(ace1, 0);
 	type_a2 = SVAL(ace2, 0);
 
-	ret = (type_a1 - type_a2);
-	if (!ret) {
+	ret = NUMERIC_CMP(type_a1, type_a2);
+	if (ret == 0) {
 		/* Compare ID under type */
 		/* skip perm thus take offset as 4*/
 		id_a1 = IVAL(ace1, 4);
 		id_a2 = IVAL(ace2, 4);
-		ret = id_a1 - id_a2;
+		ret = NUMERIC_CMP(id_a1, id_a2);
 	}
 
 	return ret;
@@ -542,7 +542,7 @@ static int vxfs_fset_xattr(struct vfs_handle_struct *handle,
 		return ret;
 	}
 
-	DBG_DEBUG("Fallback to xattr");
+	DBG_DEBUG("Fallback to xattr\n");
 	if (strcmp(name, XATTR_NTACL_NAME) == 0) {
 		return SMB_VFS_NEXT_FSETXATTR(handle, fsp, XATTR_USER_NTACL,
 					      value, size, flags);

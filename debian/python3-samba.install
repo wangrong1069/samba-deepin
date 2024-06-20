@@ -2,3 +2,8 @@ usr/lib/python3*/*-packages/samba
 usr/lib/*/libsamba-policy.cpython-*.so.*
 usr/lib/*/samba/libsamba-net.cpython-*.so.*
 usr/lib/*/samba/libsamba-python.cpython-*.so.0
+
+usr/bin/samba-tool
+usr/share/man/man8/samba-tool.8
+usr/sbin/samba-gpupdate
+usr/share/man/man8/samba-gpupdate.8

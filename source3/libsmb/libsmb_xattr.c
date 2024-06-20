@@ -1,10 +1,10 @@
-/* 
+/*
    Unix SMB/Netbios implementation.
    SMB client library implementation
    Copyright (C) Andrew Tridgell 1998
    Copyright (C) Richard Sharpe 2000, 2002
    Copyright (C) John Terpstra 2000
-   Copyright (C) Tom Jansen (Ninja ISD) 2002 
+   Copyright (C) Tom Jansen (Ninja ISD) 2002
    Copyright (C) Derrell Lipman 2003-2008
    Copyright (C) Jeremy Allison 2007, 2008
 
@@ -121,7 +121,13 @@ ace_compare(struct security_ace *ace1,
          */
 
 	if (ace1->type != ace2->type) {
-		return ace2->type - ace1->type;
+		/*
+		 * ace2 and ace1 are reversed here, so that
+		 * ACCESS_DENIED_ACE_TYPE (1) sorts before
+		 * ACCESS_ALLOWED_ACE_TYPE (0), which is the order you
+		 * usually want.
+		 */
+		return NUMERIC_CMP(ace2->type, ace1->type);
         }
 
 	if (dom_sid_compare(&ace1->trustee, &ace2->trustee)) {
@@ -129,15 +135,15 @@ ace_compare(struct security_ace *ace1,
         }
 
 	if (ace1->flags != ace2->flags) {
-		return ace1->flags - ace2->flags;
+		return NUMERIC_CMP(ace1->flags, ace2->flags);
         }
 
 	if (ace1->access_mask != ace2->access_mask) {
-		return ace1->access_mask - ace2->access_mask;
+		return NUMERIC_CMP(ace1->access_mask, ace2->access_mask);
         }
 
 	if (ace1->size != ace2->size) {
-		return ace1->size - ace2->size;
+		return NUMERIC_CMP(ace1->size, ace2->size);
         }
 
 	return memcmp(ace1, ace2, sizeof(struct security_ace));
@@ -267,11 +273,11 @@ parse_ace(struct cli_state *ipc_cli,
         unsigned int amask;
 	struct dom_sid sid;
 	uint32_t mask;
-	const struct perm_value *v;
         struct perm_value {
                 const char perm[7];
                 uint32_t mask;
         };
+	size_t i;
 	TALLOC_CTX *frame = talloc_stackframe();
 
         /* These values discovered by inspection */
@@ -282,14 +288,12 @@ parse_ace(struct cli_state *ipc_cli,
                 { "D", 0x00010000 },
                 { "P", 0x00040000 },
                 { "O", 0x00080000 },
-                { "", 0 },
         };
 
         static const struct perm_value standard_values[] = {
                 { "READ",   0x001200a9 },
                 { "CHANGE", 0x001301bf },
                 { "FULL",   0x001f01ff },
-                { "", 0 },
         };
 
 	ZERO_STRUCTP(ace);
@@ -350,7 +354,8 @@ parse_ace(struct cli_state *ipc_cli,
 		goto done;
 	}
 
-	for (v = standard_values; v != NULL; v++) {
+	for (i = 0; i < ARRAY_SIZE(standard_values); i++) {
+		const struct perm_value *v = &standard_values[i];
 		if (strcmp(tok, v->perm) == 0) {
 			amask = v->mask;
 			goto done;
@@ -362,7 +367,8 @@ parse_ace(struct cli_state *ipc_cli,
 	while(*p) {
 		bool found = False;
 
-		for (v = special_values; v != NULL; v++) {
+		for (i = 0; i < ARRAY_SIZE(special_values); i++) {
+			const struct perm_value *v = &special_values[i];
 			if (v->perm[0] == *p) {
 				amask |= v->mask;
 				found = True;
@@ -629,11 +635,11 @@ dos_attr_parse(SMBCCTX *context,
 		if (strncasecmp_m(tok, "MODE:", 5) == 0) {
                         long request = strtol(tok+5, NULL, 16);
                         if (request == 0) {
-                                dad->mode = (request |
-                                             (IS_DOS_DIR(dad->mode)
-                                              ? FILE_ATTRIBUTE_DIRECTORY
-                                              : FILE_ATTRIBUTE_NORMAL));
-                        } else {
+				dad->mode =
+					(dad->mode & FILE_ATTRIBUTE_DIRECTORY)
+						? FILE_ATTRIBUTE_DIRECTORY
+						: FILE_ATTRIBUTE_NORMAL;
+			} else {
                                 dad->mode = request;
                         }
 			continue;
@@ -898,7 +904,7 @@ cacl_get(SMBCCTX *context,
 		if (!NT_STATUS_IS_OK(status)) {
 			DEBUG(5, ("cacl_get failed to open %s: %s\n",
 				  targetpath, nt_errstr(status)));
-			errno = 0;
+			errno = cli_status_to_errno(status);
 			return -1;
 		}
 
@@ -907,7 +913,7 @@ cacl_get(SMBCCTX *context,
 			DEBUG(5,("cacl_get Failed to query old descriptor "
 				 "of %s: %s\n",
 				  targetpath, nt_errstr(status)));
-			errno = 0;
+			errno = cli_status_to_errno(status);
 			return -1;
 		}
 
@@ -1060,9 +1066,9 @@ cacl_get(SMBCCTX *context,
                                 if (all || all_nt) {
                                         if (determine_size) {
                                                 p = talloc_asprintf(
-                                                        ctx, 
+                                                        ctx,
                                                         ",ACL:"
-                                                        "%s:%d/%d/0x%08x", 
+                                                        "%s:%d/%d/0x%08x",
                                                         sidstr,
                                                         ace->type,
                                                         ace->flags,
@@ -1075,7 +1081,7 @@ cacl_get(SMBCCTX *context,
                                         } else {
                                                 n = snprintf(
                                                         buf, bufsize,
-                                                        ",ACL:%s:%d/%d/0x%08x", 
+                                                        ",ACL:%s:%d/%d/0x%08x",
                                                         sidstr,
                                                         ace->type,
                                                         ace->flags,
@@ -1087,8 +1093,8 @@ cacl_get(SMBCCTX *context,
                                             strcasecmp_m(name+4, sidstr) == 0)) {
                                         if (determine_size) {
                                                 p = talloc_asprintf(
-                                                        ctx, 
-                                                        "%d/%d/0x%08x", 
+                                                        ctx,
+                                                        "%d/%d/0x%08x",
                                                         ace->type,
                                                         ace->flags,
                                                         ace->access_mask);
@@ -1099,7 +1105,7 @@ cacl_get(SMBCCTX *context,
                                                 n = strlen(p);
                                         } else {
                                                 n = snprintf(buf, bufsize,
-                                                             "%d/%d/0x%08x", 
+                                                             "%d/%d/0x%08x",
                                                              ace->type,
                                                              ace->flags,
                                                              ace->access_mask);
@@ -1107,7 +1113,7 @@ cacl_get(SMBCCTX *context,
                                 } else if (all_nt_acls) {
                                         if (determine_size) {
                                                 p = talloc_asprintf(
-                                                        ctx, 
+                                                        ctx,
                                                         "%s%s:%d/%d/0x%08x",
                                                         i ? "," : "",
                                                         sidstr,
@@ -1848,7 +1854,7 @@ SMBC_setxattr_ctx(SMBCCTX *context,
 				dad->mode);
 			if (!ok) {
                                 /* cause failure if NT failed too */
-                                dad = NULL; 
+                                dad = NULL;
                         }
                 }
 
@@ -2171,14 +2177,11 @@ SMBC_getxattr_ctx(SMBCCTX *context,
                 /* Yup. */
                 const char *filename = name;
                 ret = cacl_get(context, talloc_tos(), srv,
-                               ipc_srv == NULL ? NULL : ipc_srv->cli, 
+                               ipc_srv == NULL ? NULL : ipc_srv->cli,
                                &ipc_srv->pol, path,
                                filename,
                                discard_const_p(char, value),
                                size);
-                if (ret < 0 && errno == 0) {
-                        errno = SMBC_errno(context, srv->cli);
-                }
 		TALLOC_FREE(frame);
 		/*
 		 * static function cacl_get returns a value greater than zero

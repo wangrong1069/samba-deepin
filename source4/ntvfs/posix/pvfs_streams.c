@@ -22,6 +22,7 @@
 #include "includes.h"
 #include "vfs_posix.h"
 #include "librpc/gen_ndr/xattr.h"
+#include "lib/util/tsort.h"
 
 /*
   normalise a stream name, removing a :$DATA suffix if there is one 
@@ -51,7 +52,7 @@ static int stream_name_cmp(const char *name1, const char *name2)
 	l1 = c1?(c1 - name1):strlen(name1);
 	l2 = c2?(c2 - name2):strlen(name2);
 	if (l1 != l2) {
-		return l1 - l2;
+		return NUMERIC_CMP(l1, l2);
 	}
 	ret = strncasecmp_m(name1, name2, l1);
 	if (ret != 0) {
@@ -426,7 +427,7 @@ static NTSTATUS pvfs_stream_load(struct pvfs_state *pvfs,
 }
 
 /*
-  the equvalent of pread() on a stream
+  the equivalent of pread() on a stream
 */
 ssize_t pvfs_stream_read(struct pvfs_state *pvfs,
 			 struct pvfs_file_handle *h, void *data, size_t count, off_t offset)
@@ -455,7 +456,7 @@ ssize_t pvfs_stream_read(struct pvfs_state *pvfs,
 
 
 /*
-  the equvalent of pwrite() on a stream
+  the equivalent of pwrite() on a stream
 */
 ssize_t pvfs_stream_write(struct pvfs_state *pvfs,
 			  struct pvfs_file_handle *h, const void *data, size_t count, off_t offset)
@@ -514,7 +515,7 @@ ssize_t pvfs_stream_write(struct pvfs_state *pvfs,
 }
 
 /*
-  the equvalent of truncate() on a stream
+  the equivalent of truncate() on a stream
 */
 NTSTATUS pvfs_stream_truncate(struct pvfs_state *pvfs,
 			      struct pvfs_filename *name, int fd, off_t length)

@@ -38,6 +38,7 @@ with-ceph =
 with-snapper =
 
 config-args = \
+	--vendor-name=${DEB_VENDOR}-${DEB_VERSION_UPSTREAM_REVISION} \
 	--prefix=/usr \
 	--enable-fhs \
 	--sysconfdir=/etc \
@@ -87,7 +88,7 @@ endif
 
 # Ubuntu i386 binary compatibility only effort: Disable some i386 packages and modules
 ifeq (${DEB_VENDOR}-${DEB_HOST_ARCH}, Ubuntu-i386)
-omit-pkgs += ctdb libpam-winbind samba samba-testsuite samba-vfs-modules
+omit-pkgs += ctdb libpam-winbind samba samba-ad-dc samba-testsuite samba-vfs-modules
 endif
 
 ifneq (,$(filter armel mipsel m68k powerpc sh4,${DEB_HOST_ARCH}))
@@ -119,6 +120,13 @@ config-args += $(if ${with-ceph},\
 	  --enable-cephfs --enable-ceph-reclock,\
 	  --disable-cephfs)
 
+# we had t64 transition (libsmbclient => libsmbclient0) for trixie
+ifneq (,$(filter pkg.samba.before-trixie, ${DEB_BUILD_PROFILES}))
+libsmbclient := libsmbclient
+else
+libsmbclient := libsmbclient0
+endif
+
 with_mitkrb5 = $(filter pkg.samba.mitkrb5, ${DEB_BUILD_PROFILES})
 ifneq (,${with_mitkrb5})
 config-args += \
@@ -130,7 +138,7 @@ mitkrb5-samba-ver = ${DEB_VERSION}mitkrb5
 mitkrb5-dep-pkgs = samba-libs samba-dev
 mitkrb5-dep-pkgs += samba samba-common-bin python3-samba
 mitkrb5-dep-pkgs += samba-dsdb-modules samba-vfs-modules
-mitkrb5-dep-pkgs += libsmbclient smbclient
+mitkrb5-dep-pkgs += ${libsmbclient} smbclient
 mitkrb5-dep-pkgs += libnss-winbind libpam-winbind
 mitkrb5-dep-pkgs += winbind libwbclient0
 mitkrb5-dep-pkgs += samba-testsuite
@@ -152,12 +160,6 @@ install install-arch install-indep: %:
 configure: bin/configured.stamp
 .PHONY: configure
 bin/configured.stamp:
-# branding
-	if [ ! -f VERSION.orig ]; then \
-	  mv VERSION VERSION.orig; \
-	  sed -r -e 's/^(SAMBA_VERSION_VENDOR_SUFFIX).*/\1=${DEB_VENDOR}/' \
-		VERSION.orig > VERSION; \
-	fi
 	CC="${CC}" CPP="${CPP}" LD="${LD}" PKGCONFIG="${PKG_CONFIG}" \
 	CPPFLAGS="${CPPFLAGS}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" \
 	PYTHON=python3 PYTHON_CONFIG=${DEB_HOST_MULTIARCH}-python3-config \
@@ -237,15 +239,13 @@ override_dh_auto_install-arch:
 	# Included in python-tevent?
 	rm debian/tmp/usr/lib/python*/*-packages/_tevent.*
 	rm debian/tmp/usr/lib/python*/*-packages/tevent.py
+	# selftests: either not needed or should go to -testsuite
+	rm -rf debian/tmp/usr/lib/python3/dist-packages/samba/tests/
 	# pam stuff
 	install -Dp -m0644 debian/winbind.pam-config debian/tmp/usr/share/pam-configs/winbind
 	mv debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libnss_* debian/tmp/lib/$(DEB_HOST_MULTIARCH)/
-	# Debian goodies to set global option in smb.conf and add a share
-	install -p -m0755 debian/setoption.py -t debian/tmp/usr/share/samba/
-	install -p -m0755 debian/addshare.py -t debian/tmp/usr/share/samba/
 	install -p -m755 debian/update-apparmor-samba-profile -t debian/tmp/usr/share/samba/
 	install -Dp -m0644 debian/samba.ufw.profile debian/tmp/etc/ufw/applications.d/samba
-	install -Dp -m0644 debian/source_samba.py -t debian/tmp/usr/share/apport/package-hooks/
 	# install-and-rename docs for ctdb (also arch-specific)
 	mkdir -p debian/tmp/ctdb
 	install -p ctdb/config/events/README debian/tmp/ctdb/README.notification
@@ -279,9 +279,6 @@ override_dh_auto_install-indep:
 ifeq (${DEB_VENDOR}, Ubuntu)
 	patch debian/samba-common/usr/share/samba/smb.conf debian/smb.conf.ubuntu.diff
 endif
-	install -Dp -m0755 debian/panic-action  -t debian/samba-common/usr/share/samba/
-	install -Dp -m0755 debian/is-configured -t debian/samba-common/usr/share/samba/
-	install -Dp -m0644 debian/gdbcommands -t debian/samba-common/etc/samba/
 	# we wrongly have pam file in samba-common instead of samba
 	install -Dp -m0644 debian/samba.pam debian/samba-common/etc/pam.d/samba
 
@@ -300,8 +297,8 @@ ifpkg = $(if $(filter ${1},${build-pkgs}),${2})
 override_dh_installinit:
 ifneq (,$(filter samba, ${build-pkgs}))
 	dh_installinit -psamba --name smbd
-	dh_installinit -psamba --name nmbd --error-handler nmbd_error_handler
-	dh_installinit -psamba --name samba-ad-dc
+	dh_installinit -psamba --name nmbd
+	dh_installinit -psamba-ad-dc
 endif
 	$(call ifpkg, winbind, dh_installinit -pwinbind)
 ifneq (,$(filter ctdb, ${build-pkgs}))
@@ -314,7 +311,7 @@ override_dh_installsystemd:
 ifneq (,$(filter samba, ${build-pkgs}))
 	dh_installsystemd -psamba --name=smbd
 	dh_installsystemd -psamba --name=nmbd
-	dh_installsystemd -psamba --name=samba-ad-dc
+	dh_installsystemd -psamba-ad-dc
 endif
 	$(call ifpkg, winbind, dh_installsystemd -pwinbind)
 	$(call ifpkg, ctdb, dh_installsystemd -pctdb --no-start --no-stop-on-upgrade)
@@ -373,7 +370,7 @@ endif
 	$(call depcheck, libldb2, samba|samba-libs|winbind|libwbclient0) # use-bzero-instead-of-memset_s.diff
 	$(call depcheck, python3-samba, samba|winbind|ctdb)
 	$(call depcheck, libwbclient0, samba|samba-libs|winbind|smbclient|ctdb)
-	$(call depcheck, libsmbclient, samba|winbind|smbclient|ctdb)
+	$(call depcheck, ${libsmbclient}, samba|winbind|smbclient|ctdb)
 
 override_dh_gencontrol:
 	dh_gencontrol $(addprefix -p, ${LDB_PACKAGES}) -- -v${LDB_DEB_VERSION}
@@ -387,7 +384,6 @@ endif
 clean:
 	# see also debian/clean
 	dh_clean bin/ testbuild/
-	[ ! -f VERSION.orig ] || mv -f VERSION.orig VERSION
 ifneq (,${with_mitkrb5})
 	[ ! -d third_party/heimdal-build-with-mitkrb5 ] || \
 		mv third_party/heimdal-build-with-mitkrb5 third_party/heimdal

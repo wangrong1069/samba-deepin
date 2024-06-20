@@ -6,39 +6,28 @@ usr/bin/oLschema2ldif
 usr/bin/pdbedit
 usr/bin/profiles
 usr/bin/sharesec
-usr/bin/smbcontrol
 usr/bin/smbstatus
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libHDB-SAMBA4-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libgss-preauth-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libhdb-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libkdc-samba4.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libHDB-SAMBA4-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libgss-preauth-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libhdb-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libkdc-private-samba.so.0
 <pkg.samba.mitkrb5> usr/lib/*/krb5/plugins/kdb/samba.so
-usr/lib/*/samba/libmscat-samba4.so.0
+usr/lib/*/samba/libmscat-private-samba.so.0
 usr/libexec/samba/samba-bgqd
 usr/lib/*/samba/service/*.so
 usr/sbin/eventlogadm
 usr/sbin/nmbd
-usr/sbin/samba
-usr/sbin/samba-gpupdate
-usr/sbin/samba_dnsupdate
-usr/sbin/samba_downgrade_db
-usr/sbin/samba_spnupdate
-usr/sbin/samba_upgradedns
 usr/sbin/smbd
 usr/share/man/man1/log2pcap.1
 usr/share/man/man1/mvxattr.1
 usr/share/man/man1/oLschema2ldif.1
 usr/share/man/man1/profiles.1
 usr/share/man/man1/sharesec.1
-usr/share/man/man1/smbcontrol.1
 usr/share/man/man1/smbstatus.1
 usr/share/man/man8/eventlogadm.8
 usr/share/man/man8/nmbd.8
 usr/share/man/man8/pdbedit.8
 usr/share/man/man8/samba-bgqd.8
-usr/share/man/man8/samba_downgrade_db.8
-usr/share/man/man8/samba-gpupdate.8
-usr/share/man/man8/samba.8
 usr/share/man/man8/smbd.8
 usr/share/samba/admx/
 usr/share/samba/mdssvc/elasticsearch_mappings.json

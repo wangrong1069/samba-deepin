@@ -12,7 +12,7 @@ usr/lib/*/libdcerpc.so.0*
 usr/lib/*/libndr-krb5pac.so.0*
 usr/lib/*/libndr-nbt.so.0*
 usr/lib/*/libndr-standard.so.0*
-usr/lib/*/libndr.so.3*
+usr/lib/*/libndr.so.4*
 usr/lib/*/libnetapi.so.1*
 usr/lib/*/libsamba-credentials.so.1*
 usr/lib/*/libsamba-errors.so.1*
@@ -24,111 +24,111 @@ usr/lib/*/libsmbconf.so.0*
 usr/lib/*/libsmbldap.so.2*
 usr/lib/*/libtevent-util.so.0*
 # heimdal libraries (used by samba and winbind)
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libasn1-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libcom-err-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libgssapi-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libhcrypto-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libheimbase-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libheimntlm-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libhx509-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libkrb5-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libroken-samba4.so.0
-<!pkg.samba.mitkrb5> usr/lib/*/samba/libwind-samba4.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libasn1-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libcom-err-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libgssapi-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libhcrypto-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libheimbase-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libheimntlm-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libhx509-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libkrb5-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libroken-private-samba.so.0
+<!pkg.samba.mitkrb5> usr/lib/*/samba/libwind-private-samba.so.0
 #
 usr/lib/*/samba/auth/
 usr/lib/*/samba/bind9/dlz_bind9_*.so
 usr/lib/*/samba/gensec/*.so
-usr/lib/*/samba/libCHARSET3-samba4.so.0
-usr/lib/*/samba/libLIBWBCLIENT-OLD-samba4.so.0
-usr/lib/*/samba/libMESSAGING-SEND-samba4.so.0
-usr/lib/*/samba/libMESSAGING-samba4.so.0
-usr/lib/*/samba/libREG-FULL-samba4.so.0
-usr/lib/*/samba/libRPC-SERVER-LOOP-samba4.so.0
-usr/lib/*/samba/libad-claims-samba4.so.0
-usr/lib/*/samba/libaddns-samba4.so.0
-usr/lib/*/samba/libads-samba4.so.0
-usr/lib/*/samba/libasn1util-samba4.so.0
-usr/lib/*/samba/libauth-unix-token-samba4.so.0
-usr/lib/*/samba/libauth-samba4.so.0
-usr/lib/*/samba/libauth4-samba4.so.0
-usr/lib/*/samba/libauthkrb5-samba4.so.0
-usr/lib/*/samba/libauthn-policy-util-samba4.so.0
-usr/lib/*/samba/libcli-cldap-samba4.so.0
-usr/lib/*/samba/libcli-ldap-common-samba4.so.0
-usr/lib/*/samba/libcli-ldap-samba4.so.0
-usr/lib/*/samba/libcli-nbt-samba4.so.0
-usr/lib/*/samba/libcli-smb-common-samba4.so.0
-usr/lib/*/samba/libcli-spoolss-samba4.so.0
-usr/lib/*/samba/libcliauth-samba4.so.0
-usr/lib/*/samba/libclidns-samba4.so.0
-usr/lib/*/samba/libcluster-samba4.so.0
-usr/lib/*/samba/libcmdline-contexts-samba4.so.0
-usr/lib/*/samba/libcmdline-samba4.so.0
-usr/lib/*/samba/libcommon-auth-samba4.so.0
-usr/lib/*/samba/libdb-glue-samba4.so.0
-usr/lib/*/samba/libdbwrap-samba4.so.0
-usr/lib/*/samba/libdcerpc-pkt-auth-samba4.so.0
-usr/lib/*/samba/libdcerpc-samba-samba4.so.0
-usr/lib/*/samba/libdcerpc-samba4.so.0
-usr/lib/*/samba/libdnsserver-common-samba4.so.0
-usr/lib/*/samba/libdsdb-garbage-collect-tombstones-samba4.so.0
-usr/lib/*/samba/libdsdb-module-samba4.so.0
-usr/lib/*/samba/libevents-samba4.so.0
-usr/lib/*/samba/libflag-mapping-samba4.so.0
-usr/lib/*/samba/libgenrand-samba4.so.0
-usr/lib/*/samba/libgensec-samba4.so.0
-usr/lib/*/samba/libgpext-samba4.so.0
-usr/lib/*/samba/libgpo-samba4.so.0
-usr/lib/*/samba/libgse-samba4.so.0
-usr/lib/*/samba/libhttp-samba4.so.0
-usr/lib/*/samba/libinterfaces-samba4.so.0
-usr/lib/*/samba/libiov-buf-samba4.so.0
-usr/lib/*/samba/libkrb5samba-samba4.so.0
-usr/lib/*/samba/libldbsamba-samba4.so.0
-usr/lib/*/samba/liblibcli-lsa3-samba4.so.0
-usr/lib/*/samba/liblibcli-netlogon3-samba4.so.0
-usr/lib/*/samba/liblibsmb-samba4.so.0
-usr/lib/*/samba/libmessages-dgm-samba4.so.0
-usr/lib/*/samba/libmessages-util-samba4.so.0
-usr/lib/*/samba/libmsghdr-samba4.so.0
-usr/lib/*/samba/libmsrpc3-samba4.so.0
-usr/lib/*/samba/libndr-samba-samba4.so.0
-usr/lib/*/samba/libndr-samba4.so.0
-usr/lib/*/samba/libnetif-samba4.so.0
-usr/lib/*/samba/libnpa-tstream-samba4.so.0
-usr/lib/*/samba/libpac-samba4.so.0
-usr/lib/*/samba/libposix-eadb-samba4.so.0
-usr/lib/*/samba/libprinting-migrate-samba4.so.0
-usr/lib/*/samba/libprocess-model-samba4.so.0
-usr/lib/*/samba/libregistry-samba4.so.0
-usr/lib/*/samba/libreplace-samba4.so.0
-usr/lib/*/samba/libsamba-cluster-support-samba4.so.0
-usr/lib/*/samba/libsamba-debug-samba4.so.0
-usr/lib/*/samba/libsamba-modules-samba4.so.0
-usr/lib/*/samba/libsamba-security-samba4.so.0
-usr/lib/*/samba/libsamba-sockets-samba4.so.0
-usr/lib/*/samba/libsamba3-util-samba4.so.0
-usr/lib/*/samba/libsamdb-common-samba4.so.0
-usr/lib/*/samba/libsocket-blocking-samba4.so.0
-usr/lib/*/samba/libscavenge-dns-records-samba4.so.0
-usr/lib/*/samba/libstable-sort-samba4.so.0
-usr/lib/*/samba/libsys-rw-samba4.so.0
-usr/lib/*/samba/libsecrets3-samba4.so.0
-usr/lib/*/samba/libserver-id-db-samba4.so.0
-usr/lib/*/samba/libserver-role-samba4.so.0
-usr/lib/*/samba/libservice-samba4.so.0
-usr/lib/*/samba/libsmb-transport-samba4.so.0
-usr/lib/*/samba/libsmbclient-raw-samba4.so.0
-usr/lib/*/samba/libsmbd-base-samba4.so.0
-usr/lib/*/samba/libsmbd-shim-samba4.so.0
-usr/lib/*/samba/libsmbldaphelper-samba4.so.0
-usr/lib/*/samba/libsmbpasswdparser-samba4.so.0
-usr/lib/*/samba/libtalloc-report-printf-samba4.so.0
-usr/lib/*/samba/libtdb-wrap-samba4.so.0
-usr/lib/*/samba/libtime-basic-samba4.so.0
-usr/lib/*/samba/libtrusts-util-samba4.so.0
-usr/lib/*/samba/libutil-reg-samba4.so.0
-usr/lib/*/samba/libutil-setid-samba4.so.0
-usr/lib/*/samba/libutil-tdb-samba4.so.0
-usr/lib/*/samba/libxattr-tdb-samba4.so.0
+usr/lib/*/samba/libCHARSET3-private-samba.so.0
+usr/lib/*/samba/libLIBWBCLIENT-OLD-private-samba.so.0
+usr/lib/*/samba/libMESSAGING-SEND-private-samba.so.0
+usr/lib/*/samba/libMESSAGING-private-samba.so.0
+usr/lib/*/samba/libREG-FULL-private-samba.so.0
+usr/lib/*/samba/libRPC-SERVER-LOOP-private-samba.so.0
+usr/lib/*/samba/libad-claims-private-samba.so.0
+usr/lib/*/samba/libaddns-private-samba.so.0
+usr/lib/*/samba/libads-private-samba.so.0
+usr/lib/*/samba/libasn1util-private-samba.so.0
+usr/lib/*/samba/libauth-unix-token-private-samba.so.0
+usr/lib/*/samba/libauth-private-samba.so.0
+usr/lib/*/samba/libauth4-private-samba.so.0
+usr/lib/*/samba/libauthkrb5-private-samba.so.0
+usr/lib/*/samba/libauthn-policy-util-private-samba.so.0
+usr/lib/*/samba/libcli-cldap-private-samba.so.0
+usr/lib/*/samba/libcli-ldap-common-private-samba.so.0
+usr/lib/*/samba/libcli-ldap-private-samba.so.0
+usr/lib/*/samba/libcli-nbt-private-samba.so.0
+usr/lib/*/samba/libcli-smb-common-private-samba.so.0
+usr/lib/*/samba/libcli-spoolss-private-samba.so.0
+usr/lib/*/samba/libcliauth-private-samba.so.0
+usr/lib/*/samba/libclidns-private-samba.so.0
+usr/lib/*/samba/libcluster-private-samba.so.0
+usr/lib/*/samba/libcmdline-contexts-private-samba.so.0
+usr/lib/*/samba/libcmdline-private-samba.so.0
+usr/lib/*/samba/libcommon-auth-private-samba.so.0
+usr/lib/*/samba/libdb-glue-private-samba.so.0
+usr/lib/*/samba/libdbwrap-private-samba.so.0
+usr/lib/*/samba/libdcerpc-pkt-auth-private-samba.so.0
+usr/lib/*/samba/libdcerpc-samba-private-samba.so.0
+usr/lib/*/samba/libdcerpc-samba4-private-samba.so.0
+usr/lib/*/samba/libdnsserver-common-private-samba.so.0
+usr/lib/*/samba/libdsdb-garbage-collect-tombstones-private-samba.so.0
+usr/lib/*/samba/libdsdb-module-private-samba.so.0
+usr/lib/*/samba/libevents-private-samba.so.0
+usr/lib/*/samba/libflag-mapping-private-samba.so.0
+usr/lib/*/samba/libgenrand-private-samba.so.0
+usr/lib/*/samba/libgensec-private-samba.so.0
+usr/lib/*/samba/libgpext-private-samba.so.0
+usr/lib/*/samba/libgpo-private-samba.so.0
+usr/lib/*/samba/libgse-private-samba.so.0
+usr/lib/*/samba/libhttp-private-samba.so.0
+usr/lib/*/samba/libinterfaces-private-samba.so.0
+usr/lib/*/samba/libiov-buf-private-samba.so.0
+usr/lib/*/samba/libkrb5samba-private-samba.so.0
+usr/lib/*/samba/libldbsamba-private-samba.so.0
+usr/lib/*/samba/liblibcli-lsa3-private-samba.so.0
+usr/lib/*/samba/liblibcli-netlogon3-private-samba.so.0
+usr/lib/*/samba/liblibsmb-private-samba.so.0
+usr/lib/*/samba/libmessages-dgm-private-samba.so.0
+usr/lib/*/samba/libmessages-util-private-samba.so.0
+usr/lib/*/samba/libmsghdr-private-samba.so.0
+usr/lib/*/samba/libmsrpc3-private-samba.so.0
+usr/lib/*/samba/libndr-samba-private-samba.so.0
+usr/lib/*/samba/libndr-samba4-private-samba.so.0
+usr/lib/*/samba/libnetif-private-samba.so.0
+usr/lib/*/samba/libnpa-tstream-private-samba.so.0
+usr/lib/*/samba/libpac-private-samba.so.0
+usr/lib/*/samba/libposix-eadb-private-samba.so.0
+usr/lib/*/samba/libprinting-migrate-private-samba.so.0
+usr/lib/*/samba/libprocess-model-private-samba.so.0
+usr/lib/*/samba/libregistry-private-samba.so.0
+usr/lib/*/samba/libreplace-private-samba.so.0
+usr/lib/*/samba/libsamba-cluster-support-private-samba.so.0
+usr/lib/*/samba/libsamba-debug-private-samba.so.0
+usr/lib/*/samba/libsamba-modules-private-samba.so.0
+usr/lib/*/samba/libsamba-security-private-samba.so.0
+usr/lib/*/samba/libsamba-sockets-private-samba.so.0
+usr/lib/*/samba/libsamba3-util-private-samba.so.0
+usr/lib/*/samba/libsamdb-common-private-samba.so.0
+usr/lib/*/samba/libsocket-blocking-private-samba.so.0
+usr/lib/*/samba/libscavenge-dns-records-private-samba.so.0
+usr/lib/*/samba/libstable-sort-private-samba.so.0
+usr/lib/*/samba/libsys-rw-private-samba.so.0
+usr/lib/*/samba/libsecrets3-private-samba.so.0
+usr/lib/*/samba/libserver-id-db-private-samba.so.0
+usr/lib/*/samba/libserver-role-private-samba.so.0
+usr/lib/*/samba/libservice-private-samba.so.0
+usr/lib/*/samba/libsmb-transport-private-samba.so.0
+usr/lib/*/samba/libsmbclient-raw-private-samba.so.0
+usr/lib/*/samba/libsmbd-base-private-samba.so.0
+usr/lib/*/samba/libsmbd-shim-private-samba.so.0
+usr/lib/*/samba/libsmbldaphelper-private-samba.so.0
+usr/lib/*/samba/libsmbpasswdparser-private-samba.so.0
+usr/lib/*/samba/libtalloc-report-printf-private-samba.so.0
+usr/lib/*/samba/libtdb-wrap-private-samba.so.0
+usr/lib/*/samba/libtime-basic-private-samba.so.0
+usr/lib/*/samba/libtrusts-util-private-samba.so.0
+usr/lib/*/samba/libutil-reg-private-samba.so.0
+usr/lib/*/samba/libutil-setid-private-samba.so.0
+usr/lib/*/samba/libutil-tdb-private-samba.so.0
+usr/lib/*/samba/libxattr-tdb-private-samba.so.0
 usr/lib/*/samba/process_model/*.so

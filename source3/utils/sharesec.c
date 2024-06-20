@@ -30,6 +30,7 @@ struct cli_state;
 #include "util_sd.h"
 #include "cmdline_contexts.h"
 #include "lib/util/string_wrappers.h"
+#include "lib/param/param.h"
 
 static TALLOC_CTX *ctx;
 
@@ -119,19 +120,19 @@ static int ace_compare(struct security_ace *ace1, struct security_ace *ace2)
 		return 0;
 
 	if (ace1->type != ace2->type)
-		return ace2->type - ace1->type;
+		return NUMERIC_CMP(ace2->type, ace1->type);
 
 	if (dom_sid_compare(&ace1->trustee, &ace2->trustee))
 		return dom_sid_compare(&ace1->trustee, &ace2->trustee);
 
 	if (ace1->flags != ace2->flags)
-		return ace1->flags - ace2->flags;
+		return NUMERIC_CMP(ace1->flags, ace2->flags);
 
 	if (ace1->access_mask != ace2->access_mask)
-		return ace1->access_mask - ace2->access_mask;
+		return NUMERIC_CMP(ace1->access_mask, ace2->access_mask);
 
 	if (ace1->size != ace2->size)
-		return ace1->size - ace2->size;
+		return NUMERIC_CMP(ace1->size, ace2->size);
 
 	return memcmp(ace1, ace2, sizeof(struct security_ace));
 }
@@ -336,6 +337,7 @@ int main(int argc, const char *argv[])
 	poptContext pc;
 	bool initialize_sid = False;
 	bool ok;
+	struct loadparm_context *lp_ctx = NULL;
 	struct poptOption long_options[] = {
 		POPT_AUTOHELP
 		{
@@ -450,8 +452,9 @@ int main(int argc, const char *argv[])
 		TALLOC_FREE(ctx);
 		exit(1);
 	}
+	lp_ctx = samba_cmdline_get_lp_ctx();
 	/* set default debug level to 1 regardless of what smb.conf sets */
-	lp_set_cmdline("log level", "1");
+	lpcfg_set_cmdline(lp_ctx, "log level", "1");
 
 	pc = samba_popt_get_context(getprogname(),
 				    argc,
@@ -602,6 +605,7 @@ int main(int argc, const char *argv[])
 	}
 
 done:
+	gfree_all();
 	poptFreeContext(pc);
 	talloc_destroy(ctx);
 

@@ -267,6 +267,7 @@ const char *cli_credentials_get_impersonate_principal(struct cli_credentials *cr
 const char *cli_credentials_get_self_service(struct cli_credentials *cred);
 const char *cli_credentials_get_target_service(struct cli_credentials *cred);
 enum credentials_use_kerberos cli_credentials_get_kerberos_state(struct cli_credentials *creds);
+enum credentials_obtained cli_credentials_get_kerberos_state_obtained(struct cli_credentials *creds);
 const char *cli_credentials_get_forced_sasl_mech(struct cli_credentials *cred);
 enum credentials_krb_forwardable cli_credentials_get_krb_forwardable(struct cli_credentials *creds);
 NTSTATUS cli_credentials_set_secrets(struct cli_credentials *cred,
@@ -353,5 +354,17 @@ int cli_credentials_get_aes256_key(struct cli_credentials *cred,
 				   struct loadparm_context *lp_ctx,
 				   const char *salt,
 				   DATA_BLOB *aes_256);
+
+/**
+ * Kerberos FAST handling
+ */
+
+NTSTATUS cli_credentials_set_krb5_fast_armor_credentials(struct cli_credentials *creds,
+							 struct cli_credentials *armor_creds,
+							 bool require_fast_armor);
+
+struct cli_credentials *cli_credentials_get_krb5_fast_armor_credentials(struct cli_credentials *creds);
+
+bool cli_credentials_get_krb5_require_fast_armor(struct cli_credentials *creds);
 
 #endif /* __CREDENTIALS_H__ */

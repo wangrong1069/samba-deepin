@@ -23,6 +23,13 @@
 
 #define SMB_SUICIDE_PACKET 0x74697865
 
+#include "replace.h"
+#include <tevent.h>
+#include "libcli/smb/smb_constants.h"
+#include "libcli/util/ntstatus.h"
+#include "lib/util/time.h"
+#include "lib/util/data_blob.h"
+
 struct smbXcli_conn;
 struct smbXcli_session;
 struct smbXcli_tcon;
@@ -474,7 +481,10 @@ NTSTATUS smbXcli_negprot_recv(
 NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 			 uint32_t timeout_msec,
 			 enum protocol_types min_protocol,
-			 enum protocol_types max_protocol);
+			 enum protocol_types max_protocol,
+			 struct smb2_negotiate_contexts *in_ctx,
+			 TALLOC_CTX *mem_ctx,
+			 struct smb2_negotiate_contexts **out_ctx);
 
 struct tevent_req *smb2cli_validate_negotiate_info_send(TALLOC_CTX *mem_ctx,
 						struct tevent_context *ev,
@@ -525,6 +535,11 @@ void smb2cli_session_start_replay(struct smbXcli_session *session);
 void smb2cli_session_stop_replay(struct smbXcli_session *session);
 void smb2cli_session_require_signed_response(struct smbXcli_session *session,
 					     bool require_signed_response);
+void smb2cli_session_torture_anonymous_signing(struct smbXcli_session *session,
+					       bool anonymous_signing);
+void smb2cli_session_torture_anonymous_encryption(struct smbXcli_session *session,
+						  bool anonymous_encryption);
+void smb2cli_session_torture_no_signing_disconnect(struct smbXcli_session *session);
 NTSTATUS smb2cli_session_update_preauth(struct smbXcli_session *session,
 					const struct iovec *iov);
 NTSTATUS smb2cli_session_set_session_key(struct smbXcli_session *session,
@@ -937,5 +952,23 @@ struct tevent_req *smb2cli_echo_send(TALLOC_CTX *mem_ctx,
 NTSTATUS smb2cli_echo_recv(struct tevent_req *req);
 NTSTATUS smb2cli_echo(struct smbXcli_conn *conn,
 		      uint32_t timeout_msec);
+
+struct tevent_req *smb2cli_ioctl_pipe_wait_send(TALLOC_CTX *mem_ctx,
+						struct tevent_context *ev,
+						struct smbXcli_conn *conn,
+						uint32_t timeout_msec,
+						struct smbXcli_session *session,
+						struct smbXcli_tcon *tcon,
+						const char *pipe_name,
+						uint64_t pipe_wait_timeout);
+
+NTSTATUS smb2cli_ioctl_pipe_wait_recv(struct tevent_req *req);
+
+NTSTATUS smb2cli_ioctl_pipe_wait(struct smbXcli_conn *conn,
+				 uint32_t timeout_msec,
+				 struct smbXcli_session *session,
+				 struct smbXcli_tcon *tcon,
+				 const char *pipe_name,
+				 uint64_t pipe_wait_timeout);
 
 #endif /* _SMBXCLI_BASE_H_ */

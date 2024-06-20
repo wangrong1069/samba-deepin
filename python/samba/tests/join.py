@@ -39,7 +39,7 @@ class JoinTestCase(DNSTKeyTest):
     def setUp(self):
         self.server = samba.tests.env_get_var_value("SERVER")
         self.server_ip = samba.tests.env_get_var_value("SERVER_IP")
-        super(JoinTestCase, self).setUp()
+        super().setUp()
         self.lp = samba.tests.env_loadparm()
         self.creds = self.get_credentials()
         self.netbios_name = "jointest1"
@@ -79,7 +79,7 @@ class JoinTestCase(DNSTKeyTest):
 
         self.join_ctx.cleanup_old_join(force=True)
 
-        super(JoinTestCase, self).tearDown()
+        super().tearDown()
 
     def test_join_makes_records(self):
         "create a query packet containing one query record via TCP"
@@ -156,7 +156,7 @@ class JoinTestCase(DNSTKeyTest):
         p.nscount = len(updates)
         p.nsrecs = updates
 
-        mac = self.sign_packet(p, self.key_name)
+        mac = self.sign_packet(p, self.tkey['name'])
         (response, response_p) = self.dns_transaction_udp(p, self.server_ip)
         self.assert_dns_rcode_equals(response, dns.DNS_RCODE_OK)
         self.verify_packet(response, response_p, mac)

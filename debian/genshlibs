@@ -62,6 +62,13 @@ for pkg in $(dh_listpackages); do
   done
   echo "${0##*/}: processing $pkg $ver"
 
+  if [ libsmbclient0 = $pkg ]; then
+     # run dh_makeshlibs to emit t64:Provides properly
+     # it should contain just one (public) library file
+     dh_makeshlibs -p $pkg -- -v$ver || rc=1
+     continue
+  fi
+
   # generate shlibs file: for public libs use >>$ver, for private =$ver
   mkdir -p $pd/DEBIAN
   for x in $libs; do

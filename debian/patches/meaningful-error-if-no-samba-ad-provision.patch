@@ -2,6 +2,8 @@ From: Michael Tokarev <mjt@tls.msk.ru>
 Date: Fri, 2 Dec 2022 10:54:31 +0300
 Updated: Thu, 03 Aug 2023 17:06:24 +0300
 Subject: print meaningful error message if samba-ad-provision is not installed
+Debian-Specific: yes
+Forwarded: not-needed
 
 ---
  python/samba/provision/common.py | 5 ++++-

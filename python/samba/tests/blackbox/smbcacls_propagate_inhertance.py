@@ -1,4 +1,4 @@
-# Blackbox tests for smbcaclcs
+# Blackbox tests for smbcacls
 #
 # Copyright (C) Noel Power noel.power@suse.com
 #
@@ -22,7 +22,7 @@ import os
 class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
 
     def setUp(self):
-        super(InheritanceSmbCaclsTests, self).setUp()
+        super().setUp()
 
         # create toplevel testdir structure with desired ACL(s)
         #
@@ -62,7 +62,7 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
         if self.share != "tmp":
             self.dirpath = os.path.join(os.environ["LOCAL_PATH"],self.share)
             self.dirpath = os.path.join(self.dirpath,self.testdir)
-        super(InheritanceSmbCaclsTests, self).tearDown()
+        super().tearDown()
 
     def test_simple_oi_add(self):
         """test smbcacls '--propagate-inheritance --add' which attempts to add the ACL
@@ -334,7 +334,7 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
             self.assertTrue(self.file_ace_check(self.f1, child_file_ace) == False)
 
             # nested dir  'oi_dir/nested/' should have CI|I|READ
-            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str);
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.nested_dir, child_dir_ace))
 
             # nested file 'oi_dir/nested/file-2' should NOT have inherited I/READ
@@ -342,7 +342,7 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
             self.assertTrue(self.file_ace_check(self.f2, child_file_ace) == False)
 
             # nested dir  'oi_dir/nested/nested_again' should have CI|I|READ
-            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str);
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.nested_again_dir, child_dir_ace))
 
             # nested file 'oi_dir/nested/nested_again/file-3' should NOT have inherited I/READ
@@ -410,7 +410,7 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
             dir_ace = self.ace_parse_str(dir_acl_str)
             self.assertTrue(self.file_ace_check(self.oi_dir, dir_ace) == False)
 
-            child_file_ace = self.ace_parse_str(file_inherited_ace_str);
+            child_file_ace = self.ace_parse_str(file_inherited_ace_str)
             # nested file 'oi_dir/file-1' should NOT have inherited I/READ
             self.assertTrue(self.file_ace_check(self.f1, child_file_ace) == False)
 
@@ -481,7 +481,7 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
                             dir_mod_acl_str, self.oi_dir])
 
             # check top level container 'oi_dir' has CI/CHANGE
-            dir_ace = self.ace_parse_str(dir_mod_acl_str);
+            dir_ace = self.ace_parse_str(dir_mod_acl_str)
             self.assertTrue(self.file_ace_check(self.oi_dir, dir_ace))
 
             # nested file 'oi_dir/file-1' should NOT have inherited I/CHANGE
@@ -553,23 +553,23 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
             self.assertTrue(self.file_ace_check(self.oi_dir, dir_ace))
 
             # nested file 'oi_dir/file-1' should have inherited I/READ
-            child_file_ace = self.ace_parse_str(file_inherited_ace_str);
+            child_file_ace = self.ace_parse_str(file_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.f1, child_file_ace))
 
             # nested dir  'oi_dir/nested/' should have OI|CI|I|READ
-            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str);
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.nested_dir, child_dir_ace))
 
             # nested file 'oi_dir/nested/file-2' should have inherited I/READ
-            child_file_ace = self.ace_parse_str(file_inherited_ace_str);
+            child_file_ace = self.ace_parse_str(file_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.f2, child_file_ace))
 
             # nested dir  'oi_dir/nested/nested_again' should have OI|CI|I|READ
-            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str);
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.nested_again_dir, child_dir_ace))
 
             # nested file 'oi_dir/nested/nested_again/file-3' should have inherited I/READ
-            child_file_ace = self.ace_parse_str(file_inherited_ace_str);
+            child_file_ace = self.ace_parse_str(file_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.f3, child_file_ace))
 
         except BlackboxProcessError as e:
@@ -720,24 +720,24 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
             self.assertTrue(self.file_ace_check(self.oi_dir, dir_ace))
 
             # nested file 'oi_dir/file-1' should have inherited I|CHANGE
-            child_file_ace = self.ace_parse_str(file_mod_inherited_ace_str);
-            self.assertTrue(self.file_ace_check(self.f1, child_file_ace));
+            child_file_ace = self.ace_parse_str(file_mod_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.f1, child_file_ace))
 
             # nested dir  'oi_dir/nested/' should have OI|CI|I|CHANGE
             child_dir_ace = self.ace_parse_str(dir_mod_inherited_ace_str)
             self.file_ace_check(self.nested_dir, child_dir_ace)
 
             # nested file 'oi_dir/nested/file-2' should have inherited I|CHANGE
-            child_file_ace = self.ace_parse_str(file_mod_inherited_ace_str);
-            self.assertTrue(self.file_ace_check(self.f2, child_file_ace));
+            child_file_ace = self.ace_parse_str(file_mod_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.f2, child_file_ace))
 
             # nested dir  'oi_dir/nested/nested_again' should have OI|CI|I|CHANGE
             child_dir_ace = self.ace_parse_str(dir_mod_inherited_ace_str)
             self.file_ace_check(self.nested_again_dir, child_dir_ace)
 
             # nested file 'oi_dir/nested/nested_again/file-3' should have inherited I|CHANGE
-            child_file_ace = self.ace_parse_str(file_mod_inherited_ace_str);
-            self.assertTrue(self.file_ace_check(self.f3, child_file_ace));
+            child_file_ace = self.ace_parse_str(file_mod_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.f3, child_file_ace))
 
         except BlackboxProcessError as e:
             self.fail(str(e))
@@ -1286,5 +1286,113 @@ class InheritanceSmbCaclsTests(SmbCaclsBlockboxTestBase):
             child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
             self.assertTrue(self.file_ace_check(self.f2, child_dir_ace) == False)
 
+        except BlackboxProcessError as e:
+            self.fail(str(e))
+
+    def test_simple_iocioi_add(self):
+        """test smbcacls '--propagate-inheritance --add' which attempts to add the ACL
+        for the file and additionally use inheritance rules to propagate appropriate
+        changes to children
+
+        This test adds an ACL with (IO)(CI)(OI)(READ)
+
+        before:
+
+        +-tar_test_dir/    (OI)(CI)(I)(F)
+          +-oi_dir/        (OI)(CI)(I)(F)
+          | +-file.1            (I)(F)
+          | +-nested/      (OI)(CI)(I)(F)
+          |   +-file.2          (I)(F)
+          |   +-nested_again/     (OI)(CI)(I)(F)
+          |     +-file.3          (I)(F)
+
+        after/expected:
+
+        +-tar_test_dir/    (OI)(CI)(I)(F)
+          +-oi_dir/        (OI)(CI)(I)(F), (IO)(CI)(OI)(READ)
+          | +-file.1            (I)(F), (I)(READ)
+          | +-nested/      (OI)(CI)(I)(F), (I)(CI)(OI)(READ)
+          |   +-file.2          (I)(F), (I)(READ)
+          |   +-nested_again/     (OI)(CI)(I)(F), (I)(CI)(OI)(READ)
+          |     +-file.3          (I)(F), (I)(READ)"""
+
+        dir_add_acl_str = "ACL:%s:ALLOWED/OI|CI|IO/READ" % self.user
+        obj_inherited_ace_str = "ACL:%s:ALLOWED/I/READ" % self.user
+        dir_inherited_ace_str = "ACL:%s:ALLOWED/OI|CI|I/READ" % self.user
+
+        try:
+
+            self.smb_cacls(["--propagate-inheritance", "--add",
+                            dir_add_acl_str, self.oi_dir])
+
+            # check top level container 'oi_dir' has IO|CI|OI/READ
+            dir_ace = self.ace_parse_str(dir_add_acl_str)
+            self.assertTrue(self.file_ace_check(self.oi_dir, dir_ace))
+
+            # file 'oi_dir/file-1' should  have inherited I/READ
+            child_file_ace = self.ace_parse_str(obj_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.f1, child_file_ace))
+
+            # nested dir  'oi_dir/nested/' should have I|CI|OI/READ
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.nested_dir, child_dir_ace))
+
+            # nested file 'oi_dir/nested/file-2' should  have inherited I/READ
+            self.assertTrue(self.file_ace_check(self.f2, child_file_ace))
+
+            # nested_again dir  'oi_dir/nested/nested_again' should have I|CI|OI/READ
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.nested_again_dir, child_dir_ace))
+            # nested_again file 'oi_dir/nested/nested_again/file-3' should  have inherited I/READ
+            self.assertTrue(self.file_ace_check(self.f3, child_file_ace))
+        except BlackboxProcessError as e:
+            self.fail(str(e))
+
+    def test_simple_ioci_add(self):
+        """test smbcacls '--propagate-inheritance --add' which attempts to add the ACL
+        for the file and additionally use inheritance rules to propagate appropriate
+        changes to children
+
+        This test adds an ACL with (IO)(CI)(READ)
+
+        before:
+
+        +-tar_test_dir/    (OI)(CI)(I)(F)
+          +-oi_dir/        (OI)(CI)(I)(F)
+          | +-file.1            (I)(F)
+          | +-nested/      (OI)(CI)(I)(F)
+          |   +-file.2          (I)(F)
+          |   +-nested_again/     (OI)(CI)(I)(F)
+          |     +-file.3          (I)(F)
+
+        after/expected:
+
+        +-tar_test_dir/    (OI)(CI)(I)(F)
+          +-oi_dir/        (OI)(CI)(I)(F), (IO)(CI)(READ)
+          | +-file.1            (I)(F)
+          | +-nested/      (OI)(CI)(I)(F), (I)(CI)(READ)
+          |   +-file.2          (I)(F)
+          |   +-nested_again/     (OI)(CI)(I)(F), (I)(CI)(READ)
+          |     +-file.3          (I)(F)"""
+
+        dir_add_acl_str = "ACL:%s:ALLOWED/CI|IO/READ" % self.user
+        dir_inherited_ace_str = "ACL:%s:ALLOWED/CI|I/READ" % self.user
+
+        try:
+
+            self.smb_cacls(["--propagate-inheritance", "--add",
+                            dir_add_acl_str, self.oi_dir])
+
+            # check top level container 'oi_dir' has IO|CI/READ
+            dir_ace = self.ace_parse_str(dir_add_acl_str)
+            self.assertTrue(self.file_ace_check(self.oi_dir, dir_ace))
+
+            # nested dir  'oi_dir/nested/' should have I|CI/READ
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.nested_dir, child_dir_ace))
+
+            # nested_again dir  'oi_dir/nested/nested_again' should have I|CI/READ
+            child_dir_ace = self.ace_parse_str(dir_inherited_ace_str)
+            self.assertTrue(self.file_ace_check(self.nested_again_dir, child_dir_ace))
         except BlackboxProcessError as e:
             self.fail(str(e))

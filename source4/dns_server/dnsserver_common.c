@@ -68,6 +68,8 @@ uint8_t werr_to_dns_err(WERROR werr)
 		return DNS_RCODE_NOTZONE;
 	} else if (W_ERROR_EQUAL(DNS_ERR(BADKEY), werr)) {
 		return DNS_RCODE_BADKEY;
+	} else if (W_ERROR_EQUAL(WERR_ACCESS_DENIED, werr)) {
+		return DNS_RCODE_REFUSED;
 	}
 	DEBUG(5, ("No mapping exists for %s\n", win_errstr(werr)));
 	return DNS_RCODE_SERVFAIL;
@@ -125,7 +127,7 @@ WERROR dns_common_extract(struct ldb_context *samdb,
 
 		ret = samdb_dns_host_name(samdb, &dnsHostName);
 		if (ret != LDB_SUCCESS || dnsHostName == NULL) {
-			DEBUG(0, ("Failed to get dnsHostName from rootDSE"));
+			DEBUG(0, ("Failed to get dnsHostName from rootDSE\n"));
 			return DNS_ERR(SERVER_FAILURE);
 		}
 
@@ -642,7 +644,7 @@ static int rec_cmp(const struct dnsp_DnssrvRpcRecord *r1,
 		 * The records are sorted with higher types first,
 		 * which puts tombstones (type 0) last.
 		 */
-		return r2->wType - r1->wType;
+		return NUMERIC_CMP(r2->wType, r1->wType);
 	}
 	/*
 	 * Then we need to sort from the oldest to newest timestamp.
@@ -650,7 +652,7 @@ static int rec_cmp(const struct dnsp_DnssrvRpcRecord *r1,
 	 * Note that dwTimeStamp == 0 (never expiring) records come first,
 	 * then the ones whose expiry is soonest.
 	 */
-	return r1->dwTimeStamp - r2->dwTimeStamp;
+	return NUMERIC_CMP(r1->dwTimeStamp, r2->dwTimeStamp);
 }
 
 /*
@@ -912,7 +914,7 @@ WERROR dns_get_zone_properties(struct ldb_context *samdb,
 			/*
 			 * If we can't pull it, then there is no valid
 			 * data to load into the zone, so ignore this
-			 * as Micosoft does.  Windows can load an
+			 * as Microsoft does.  Windows can load an
 			 * invalid property with a zero length into
 			 * the dnsProperty attribute.
 			 */
@@ -1034,6 +1036,12 @@ WERROR dns_common_replace(struct ldb_context *samdb,
 			 * record.
 			 */
 			if (records[i].data.EntombedTime != 0) {
+				if (rec_count != 1 && DEBUGLVL(DBGLVL_NOTICE)) {
+					DBG_NOTICE("tombstone record [%u] has "
+						   "%u neighbour records.\n",
+						   i, rec_count - 1);
+					NDR_PRINT_DEBUG(dnsp_DnssrvRpcRecord, &records[i]);
+				}
 				was_tombstoned = true;
 			}
 			continue;
@@ -1402,7 +1410,7 @@ static int dns_common_sort_zones(struct ldb_message **m1, struct ldb_message **m
 	/* If the string lengths are not equal just sort by length */
 	if (l1 != l2) {
 		/* If m1 is the larger zone name, return it first */
-		return l2 - l1;
+		return NUMERIC_CMP(l2, l1);
 	}
 
 	/*TODO: We need to compare DNs here, we want the DomainDNSZones first */
@@ -1540,7 +1548,7 @@ bool samba_dns_name_equal(const char *name1, const char *name2)
  * This becomes (NTTIME)-1ULL a.k.a. UINT64_MAX, 0xffffffffffffffff thence
  * 512409557 in hours since 1601. That in turn is 0xfffffffaf2028800 or
  * 18446744052000000000 in NTTIME (rounded to the hour), which might be
- * presented as -21709551616 or -0x50dfd7800, because NTITME is not completely
+ * presented as -21709551616 or -0x50dfd7800, because NTTIME is not completely
  * dedicated to being unsigned. If it gets shown as a year, it will be around
  * 60055.
  *

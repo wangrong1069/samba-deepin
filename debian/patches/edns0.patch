@@ -1,0 +1,58 @@
+From: Michael Tokarev <mjt@tls.msk.ru>
+Subject: Minimal EDNS0 support for built-in DNS client
+Date: Mon, 26 Feb 2024 14:15:00 +0300
+Forwarded: yes
+Bug: https://bugzilla.samba.org/show_bug.cgi?id=15536
+
+Currently, samba built-in DNS client is UDP-only (it does
+support TCP mode, but not all components use it).  In
+particular, when winbind queries list of AD DCs (SRV
+record) which can be quite large, it uses UDP-only query.
+And at the same time, samba DNS client does not support
+EDNS0 at all, so the reply is limited to standard DNS
+packet size which is 512 bytes.
+
+Add minimal EDNS0 OPT record to ADDITIONAL section when
+sending a DNS request out, indicating we can accept
+DNS packets up to 4Kb in size.
+
+Since DNSSEC is in wide use today and DNSSEC requires
+EDNS0, it is okay to assume ENDS0 is widely supported
+these days, so there should be no regressions when
+enabling EDNS0.
+
+Signed-off-by: Michael Tokarev <mjt@tls.msk.ru>
+
+diff --git a/libcli/dns/dns.c b/libcli/dns/dns.c
+index 943b4d5b33e..81144601bb8 100644
+--- a/libcli/dns/dns.c
++++ b/libcli/dns/dns.c
+@@ -422,6 +422,7 @@ struct tevent_req *dns_cli_request_send(TALLOC_CTX *mem_ctx,
+ 	struct dns_cli_request_state *state;
+ 	struct dns_name_question question;
+ 	struct dns_name_packet out_packet;
++	struct dns_res_rec edns0_opt;
+ 	enum ndr_err_code ndr_err;
+ 
+ 	req = tevent_req_create(mem_ctx, &state,
+@@ -443,11 +444,19 @@ struct tevent_req *dns_cli_request_send(TALLOC_CTX *mem_ctx,
+ 		.question_type = qtype, .question_class = qclass
+ 	};
+ 
++	edns0_opt = (struct dns_res_rec) {
++		.name = "",
++		.rr_type = DNS_QTYPE_OPT,
++		.rr_class = 4096 /* 4096 bytes UDP buffer size */
++	};
++
+ 	out_packet = (struct dns_name_packet) {
+ 		.id = state->req_id,
+ 		.operation = DNS_OPCODE_QUERY | DNS_FLAG_RECURSION_DESIRED,
+ 		.qdcount = 1,
+-		.questions = &question
++		.questions = &question,
++		.arcount = 1,
++		.additional = &edns0_opt
+ 	};
+ 
+ 	ndr_err = ndr_push_struct_blob(

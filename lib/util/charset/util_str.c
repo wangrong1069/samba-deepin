@@ -26,6 +26,7 @@
 #include "system/locale.h"
 #include "charset.h"
 #include "lib/util/fault.h"
+#include "lib/util/tsort.h"
 
 #ifdef strcasecmp
 #undef strcasecmp
@@ -79,10 +80,10 @@ _PUBLIC_ int strcasecmp_m_handle(struct smb_iconv_handle *iconv_handle,
 			continue;
 		}
 
-		return l1 - l2;
+		return NUMERIC_CMP(l1, l2);
 	}
 
-	return *s1 - *s2;
+	return NUMERIC_CMP(*s1, *s2);
 }
 
 /**
@@ -156,14 +157,14 @@ _PUBLIC_ int strncasecmp_m_handle(struct smb_iconv_handle *iconv_handle,
 			continue;
 		}
 
-		return l1 - l2;
+		return NUMERIC_CMP(l1, l2);
 	}
 
 	if (n == 0) {
 		return 0;
 	}
 
-	return *s1 - *s2;
+	return NUMERIC_CMP(*s1, *s2);
 }
 
 /**
@@ -200,8 +201,8 @@ _PUBLIC_ bool strcsequal(const char *s1,const char *s2)
 
 /**
  * Calculate the number of units (8 or 16-bit, depending on the
- * destination charset), that would be needed to convert the input
- * string which is expected to be in in src_charset encoding to the
+ * destination charset) that would be needed to convert the input
+ * string, which is expected to be in src_charset encoding, to the
  * destination charset (which should be a unicode charset).
  */
 _PUBLIC_ size_t strlen_m_ext_handle(struct smb_iconv_handle *ic,
@@ -287,8 +288,8 @@ _PUBLIC_ size_t strlen_m_ext_handle(struct smb_iconv_handle *ic,
 
 /**
  * Calculate the number of units (8 or 16-bit, depending on the
- * destination charset), that would be needed to convert the input
- * string which is expected to be in in src_charset encoding to the
+ * destination charset) that would be needed to convert the input
+ * string, which is expected to be in src_charset encoding, to the
  * destination charset (which should be a unicode charset).
  */
 _PUBLIC_ size_t strlen_m_ext(const char *s, charset_t src_charset, charset_t dst_charset)
@@ -324,7 +325,7 @@ _PUBLIC_ size_t strlen_m_ext_term_null(const char *s,
 
 /**
  * Calculate the number of 16-bit units that would be needed to convert
- * the input string which is expected to be in CH_UNIX encoding to UTF16.
+ * the input string, which is expected to be in CH_UNIX encoding, to UTF16.
  *
  * This will be the same as the number of bytes in a string for single
  * byte strings, but will be different for multibyte.

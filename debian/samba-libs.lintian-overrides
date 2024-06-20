@@ -12,7 +12,7 @@ samba-libs: shared-library-symbols-not-tracked *
 # deliberate, a synonym for misspelled parameter
 samba-libs: spelling-error-in-binary prefered preferred */libsamba-hostconfig.so.*
 # simple libs:
-samba-libs: hardening-no-fortify-functions */samba/libauth-samba4.so.*
-samba-libs: hardening-no-fortify-functions */samba/libcli-ldap-samba4.so.*
-samba-libs: hardening-no-fortify-functions */samba/libsmb-transport-samba4.so.*
-samba-libs: hardening-no-fortify-functions */samba/libsys-rw-samba4.so.*
+samba-libs: hardening-no-fortify-functions */samba/libauth-private-samba.so.*
+samba-libs: hardening-no-fortify-functions */samba/libcli-ldap-private-samba.so.*
+samba-libs: hardening-no-fortify-functions */samba/libsmb-transport-private-samba.so.*
+samba-libs: hardening-no-fortify-functions */samba/libsys-rw-private-samba.so.*

@@ -10,8 +10,8 @@ usr/bin/ltdbtool
 usr/bin/onnode
 usr/bin/ping_pong
 usr/libexec/ctdb/
-usr/lib/*/samba/libctdb-event-client-samba4.so.0
-usr/lib/*/samba/libtalloc-report-samba4.so.0
+usr/lib/*/samba/libctdb-event-client-private-samba.so.0
+usr/lib/*/samba/libtalloc-report-private-samba.so.0
 usr/sbin/ctdbd
 usr/share/ctdb/events/legacy/*.script
 usr/share/man/man1/ctdb.1

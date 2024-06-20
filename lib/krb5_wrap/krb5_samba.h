@@ -23,6 +23,9 @@
 #ifndef _KRB5_SAMBA_H
 #define _KRB5_SAMBA_H
 
+#include "lib/util/data_blob.h"
+#include "libcli/util/ntstatus.h"
+
 #ifdef HAVE_KRB5
 
 #define KRB5_PRIVATE    1       /* this file uses PRIVATE interfaces! */
@@ -83,6 +86,34 @@
 #endif
 #if defined(CKSUMTYPE_HMAC_SHA1_96_AES256) && !defined(CKSUMTYPE_HMAC_SHA1_96_AES_256)
 #define CKSUMTYPE_HMAC_SHA1_96_AES_256 CKSUMTYPE_HMAC_SHA1_96_AES256
+#endif
+
+/*
+ * RFC8009 encryption types' defines have different names:
+ *
+ * KRB5_ENCTYPE_AES128_CTS_HMAC_SHA256_128 in Heimdal
+ * ENCTYPE_AES128_CTS_HMAC_SHA256_128 in MIT
+ *
+ * and
+ *
+ * KRB5_ENCTYPE_AES256_CTS_HMAC_SHA384_192 in Heimdal
+ * ENCTYPE_AES256_CTS_HMAC_SHA384_192 in MIT
+ */
+#if !defined(ENCTYPE_AES128_CTS_HMAC_SHA256_128)
+#define ENCTYPE_AES128_CTS_HMAC_SHA256_128 KRB5_ENCTYPE_AES128_CTS_HMAC_SHA256_128
+#endif
+#if !defined(ENCTYPE_AES256_CTS_HMAC_SHA384_192)
+#define ENCTYPE_AES256_CTS_HMAC_SHA384_192 KRB5_ENCTYPE_AES256_CTS_HMAC_SHA384_192
+#endif
+
+/*
+ * Same for older encryption types, rename to have the same defines
+ */
+#if !defined(ENCTYPE_AES128_CTS_HMAC_SHA1_96)
+#define ENCTYPE_AES128_CTS_HMAC_SHA1_96 KRB5_ENCTYPE_AES128_CTS_HMAC_SHA1_96
+#endif
+#if !defined(ENCTYPE_AES256_CTS_HMAC_SHA1_96)
+#define ENCTYPE_AES256_CTS_HMAC_SHA1_96 KRB5_ENCTYPE_AES256_CTS_HMAC_SHA1_96
 #endif
 
 /*
@@ -397,10 +428,11 @@ int smb_krb5_create_key_from_string(krb5_context context,
 #endif
 #endif
 
-char *smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
-					 krb5_context context,
-					 krb5_const_principal principal,
-					 unsigned int component);
+krb5_error_code smb_krb5_principal_get_comp_string(TALLOC_CTX *mem_ctx,
+						   krb5_context context,
+						   krb5_const_principal principal,
+						   unsigned int component,
+						   char **out);
 
 krb5_error_code smb_krb5_copy_data_contents(krb5_data *p,
 					    const void *data,

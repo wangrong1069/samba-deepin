@@ -39,9 +39,11 @@ struct sessionid {
 	fstring ip_addr_str;
 	time_t connect_start;
 	uint16_t connection_dialect;
+	bool authenticated;
 	uint8_t encryption_flags;
 	uint16_t cipher;
 	uint16_t signing;
 	uint8_t signing_flags;
+	const struct smbXsrv_session_global0 *global;
 };
 

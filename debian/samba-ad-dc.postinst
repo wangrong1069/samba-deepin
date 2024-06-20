@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+# begin-remove-after: released:trixie
+# protective diversion of files moved from / to /usr, to avoid file loss.
+# Only for upgrades.
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ]; then
+	dpkg-divert --package #PACKAGE# --no-rename \
+		--divert /lib/systemd/system/samba-ad-dc.service.usr-is-merged \
+		--remove /lib/systemd/system/samba-ad-dc.service
+fi
+# end-remove-after
+
+#DEBHELPER#
+
+exit 0

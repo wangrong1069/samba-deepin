@@ -5,7 +5,6 @@ smbclient-pager.patch
 usershare.patch
 heimdal-rfc3454.txt
 add-so-version-to-private-libraries
-smbd.service-Run-update-apparmor-samba-profile-befor.patch
 fix-nfs-service-name-to-nfs-kernel-server.patch
 ctdb-config-enable-syslog-by-default.patch
 Force-LDB-as-standalone.patch
@@ -23,3 +22,7 @@ meaningful-error-if-no-samba-ad-provision.patch
 meaningful-error-if-no-python3-markdown.patch
 ctdb-use-run-instead-of-var-run.patch
 silence-can-not-convert-group-sid.diff
+edns0.patch
+passchange-error-message.patch
+lower-dns-lookup-mismatch-messages.patch
+make-python-optional.diff

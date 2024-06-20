@@ -1,0 +1,6 @@
+usr/sbin/samba
+usr/share/man/man8/samba.8
+usr/sbin/samba_dnsupdate
+usr/sbin/samba_spnupdate
+usr/sbin/samba_upgradedns
+usr/sbin/samba_kcc

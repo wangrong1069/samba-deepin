@@ -1,11 +1,12 @@
 [Unit]
 Description=Samba Winbind Daemon
 Documentation=man:winbindd(8) man:samba(7) man:smb.conf(5)
-After=network.target nmb.service
+After=network.target nmbd.service
+Before=nss-user-lookup.target
 
 [Service]
 Type=notify
-PIDFile=/ruin/samba/winbindd.pid
+PIDFile=/run/samba/winbindd.pid
 EnvironmentFile=-/etc/default/samba
 ExecStart=/usr/sbin/winbindd --foreground --no-process-group $WINBINDOPTIONS
 ExecReload=/bin/kill -HUP $MAINPID

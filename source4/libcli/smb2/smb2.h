@@ -128,6 +128,8 @@ struct smb2_session {
 	struct gensec_security *gensec;
 	struct smbXcli_session *smbXcli;
 	bool needs_bind;
+	bool anonymous_session_key;
+	DATA_BLOB forced_session_key;
 };
 
 
@@ -166,7 +168,7 @@ struct smb2_request {
 	uint16_t credit_charge;
 
 	/* information on what to do with a reply when it is received
-	   asyncronously. If this is not setup when a reply is received then
+	   asynchronously. If this is not setup when a reply is received then
 	   the reply is discarded
 
 	   The private pointer is private to the caller of the client

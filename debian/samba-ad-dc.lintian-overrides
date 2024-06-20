@@ -1,0 +1,3 @@
+# begin-remove-after: trixie
+diversion-for-unknown-file lib/systemd/system/samba-ad-dc.service [preinst:*]
+# end-remove-after

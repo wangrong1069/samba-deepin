@@ -2,3 +2,9 @@ etc/sysconfig/samba
 usr/share/man/man7/traffic_replay.7
 usr/share/man/man7/traffic_learner.7
 usr/share/samba/setup
+# new experimental windows search client
+usr/bin/wspsearch
+usr/share/man/man1/wspsearch.1
+# downgrade db to pre-4.8 version, hardly needed anymore:
+usr/sbin/samba_downgrade_db
+usr/share/man/man8/samba_downgrade_db.8

@@ -504,7 +504,8 @@ static bool apply_lp_set_cmdline(void)
  Initialise the global parameter structure.
 ***************************************************************************/
 
-static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
+void loadparm_s3_init_globals(struct loadparm_context *lp_ctx,
+			      bool reinit_globals)
 {
 	static bool done_init = false;
 	char *s = NULL;
@@ -608,7 +609,7 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
  	 */
 	Globals.nmbd_bind_explicit_broadcast = true;
 
-	s = talloc_asprintf(talloc_tos(), "Samba %s", samba_version_string());
+	s = talloc_asprintf(Globals.ctx, "Samba %s", samba_version_string());
 	if (s == NULL) {
 		smb_panic("init_globals: ENOMEM");
 	}
@@ -996,6 +997,8 @@ static void init_globals(struct loadparm_context *lp_ctx, bool reinit_globals)
 	Globals.rpc_start_on_demand_helpers = true;
 
 	Globals.ad_dc_functional_level = DS_DOMAIN_FUNCTION_2008_R2,
+
+	Globals.acl_claims_evaluation = ACL_CLAIMS_EVALUATION_AD_DC_ONLY;
 
 	/* Now put back the settings that were set with lp_set_cmdline() */
 	apply_lp_set_cmdline();
@@ -2761,24 +2764,6 @@ static bool lp_set_cmdline_helper(const char *pszParmName, const char *pszParmVa
 	return false;
 }
 
-bool lp_set_cmdline(const char *pszParmName, const char *pszParmValue)
-{
-	bool ret;
-	TALLOC_CTX *frame = talloc_stackframe();
-	struct loadparm_context *lp_ctx;
-
-	lp_ctx = setup_lp_context(frame);
-	if (lp_ctx == NULL) {
-		TALLOC_FREE(frame);
-		return false;
-	}
-
-	ret = lpcfg_set_cmdline(lp_ctx, pszParmName, pszParmValue);
-
-	TALLOC_FREE(frame);
-	return ret;
-}
-
 /***************************************************************************
  Process a parameter.
 ***************************************************************************/
@@ -4003,7 +3988,7 @@ static bool lp_load_ex(const char *pszFname,
 
 	lp_ctx = setup_lp_context(talloc_tos());
 
-	init_globals(lp_ctx, reinit_globals);
+	loadparm_s3_init_globals(lp_ctx, reinit_globals);
 
 	free_file_list();
 
@@ -4057,7 +4042,7 @@ static bool lp_load_ex(const char *pszFname,
 			/* start over */
 			DEBUG(1, ("lp_load_ex: changing to config backend "
 				  "registry\n"));
-			init_globals(lp_ctx, true);
+			loadparm_s3_init_globals(lp_ctx, true);
 
 			TALLOC_FREE(lp_ctx);
 
@@ -4695,12 +4680,12 @@ void widelinks_warning(int snum)
 			"These parameters are incompatible. "
 			"Wide links will be disabled for this share.\n",
 			 lp_const_servicename(snum));
-		} else if (lp_smb3_unix_extensions()) {
-			DBG_ERR("Share '%s' has wide links and SMB3 unix "
-			"extensions enabled. "
-			"These parameters are incompatible. "
-			"Wide links will be disabled for this share.\n",
-			 lp_const_servicename(snum));
+		} else if (lp_smb3_unix_extensions(snum)) {
+			DBG_ERR("Share '%s' has wide links and SMB3 Unix "
+				"extensions enabled. "
+				"These parameters are incompatible. "
+				"Wide links will be disabled for this share.\n",
+				lp_const_servicename(snum));
 		}
 	}
 }
@@ -4708,7 +4693,7 @@ void widelinks_warning(int snum)
 bool lp_widelinks(int snum)
 {
 	/* wide links is always incompatible with unix extensions */
-	if (lp_smb1_unix_extensions() || lp_smb3_unix_extensions()) {
+	if (lp_smb1_unix_extensions() || lp_smb3_unix_extensions(snum)) {
 		/*
 		 * Unless we have "allow insecure widelinks"
 		 * turned on.
@@ -4847,17 +4832,4 @@ uint32_t lp_get_async_dns_timeout(void)
 	 * as per the man page.
 	 */
 	return MAX(Globals.async_dns_timeout, 1);
-}
-
-bool lp_smb3_unix_extensions(void)
-{
-	/*
-	 * FIXME: If this gets always enabled, check source3/selftest/tests.py
-	 * and source3/wscript for HAVE_SMB3_UNIX_EXTENSIONS.
-	 */
-#if defined(DEVELOPER)
-	return lp__smb3_unix_extensions();
-#else
-	return false;
-#endif
 }

@@ -3,12 +3,12 @@ echo 'usr/lib/*/libldb.so.*'
 # lib/ldb/wscript: (sizeof(size_t) >= 8), >=64bit is required for lmdb
 if [ 64 -le "$(dpkg-architecture -qDEB_HOST_ARCH_BITS)" ]
 then
-    echo 'usr/lib/*/samba/libldb-mdb-int-samba4.so.0'
+    echo 'usr/lib/*/samba/libldb-mdb-int-private-samba.so.0'
     echo 'usr/lib/*/samba/ldb/mdb.so'
 fi
-echo 'usr/lib/*/samba/libldb-key-value-samba4.so.0'
-echo 'usr/lib/*/samba/libldb-tdb-err-map-samba4.so.0'
-echo 'usr/lib/*/samba/libldb-tdb-int-samba4.so.0'
+echo 'usr/lib/*/samba/libldb-key-value-private-samba.so.0'
+echo 'usr/lib/*/samba/libldb-tdb-err-map-private-samba.so.0'
+echo 'usr/lib/*/samba/libldb-tdb-int-private-samba.so.0'
 
 echo 'usr/lib/*/samba/ldb/asq.so'
 echo 'usr/lib/*/samba/ldb/ldap.so'

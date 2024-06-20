@@ -42,6 +42,7 @@ COMMON = [
     'ccache',
     'curl',
     'chrpath',
+    'codespell',
     'flex',
     'gcc',
     'gdb',
@@ -58,6 +59,7 @@ COMMON = [
     'rng-tools',
     'rsync',
     'sed',
+    'shfmt',
     'sudo',  # docker images has no sudo by default
     'tar',
     'tree',
@@ -134,8 +136,7 @@ PKGS = [
     ('', 'rpcsvc-proto-devel'), # for <rpcsvc/rquota.h> header
     ('mawk', 'gawk'),
     ('', 'mold'),
-    ('', 'ShellCheck'),
-    ('', 'shfmt'),
+    ('shellcheck', 'ShellCheck'),
     ('', 'crypto-policies-scripts'),
 
     ('python3', 'python3'),
@@ -156,8 +157,6 @@ PKGS = [
 
     # perl
     ('libparse-yapp-perl', 'perl-Parse-Yapp'),
-    ('libjson-perl', 'perl-JSON'),
-    ('', 'perl-JSON-Parse'),
     ('perl-modules', ''),
     ('', 'perl-FindBin'),
     ('', 'perl-Archive-Tar'),
@@ -241,6 +240,9 @@ CENTOS8S_YUM_BOOTSTRAP = r"""
 #!/bin/bash
 {GENERATED_MARKER}
 set -xueo pipefail
+
+sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
 
 yum update -y
 yum install -y dnf-plugins-core
@@ -421,6 +423,7 @@ DEB_DISTS = {
         'vagrant_box': 'debian/bullseye64',
         'replace': {
             'language-pack-en': '',   # included in locales
+            'shfmt': '',
         }
     },
     'debian11-32bit': {
@@ -428,6 +431,7 @@ DEB_DISTS = {
         'vagrant_box': 'debian/bullseye32',
         'replace': {
             'language-pack-en': '',   # included in locales
+            'shfmt': '',
         }
     },
     'debian12': {
@@ -451,6 +455,7 @@ DEB_DISTS = {
         'vagrant_box': 'ubuntu/bionic64',
         'replace': {
             'liburing-dev': '',   # not available
+            'shfmt': '',
         }
     },
     'ubuntu1804-32bit': {
@@ -458,6 +463,7 @@ DEB_DISTS = {
         'vagrant_box': 'ubuntu/bionic32',
         'replace': {
             'liburing-dev': '',   # not available
+            'shfmt': '',
         }
     },
     'ubuntu2004': {
@@ -465,6 +471,7 @@ DEB_DISTS = {
         'vagrant_box': 'ubuntu/focal64',
         'replace': {
             'liburing-dev': '',   # not available
+            'shfmt': '',
         }
     },
     'ubuntu2204': {
@@ -516,6 +523,7 @@ RPM_DISTS = {
             'mold': '',
             'ShellCheck': '',
             'shfmt': '',
+            'codespell': '',
         }
     },
     'centos8s': {
@@ -533,11 +541,12 @@ RPM_DISTS = {
             'mold': '',
             'ShellCheck': '',
             'shfmt': '',
+            'codespell': '',
         }
     },
-    'fedora38': {
-        'docker_image': 'quay.io/fedora/fedora:38',
-        'vagrant_box': 'fedora/38-cloud-base',
+    'fedora39': {
+        'docker_image': 'quay.io/fedora/fedora:39',
+        'vagrant_box': 'fedora/39-cloud-base',
         'bootstrap': DNF_BOOTSTRAP,
         'replace': {
             'lsb-release': 'redhat-lsb',

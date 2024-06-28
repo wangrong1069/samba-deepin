@@ -252,27 +252,18 @@ static int ldb_parse_tree_collect_acl_attrs(const struct ldb_module *module,
 			return 0;
 		}
 
+		FALL_THROUGH;
+	case LDB_OP_EQUALITY:
 		if (ldb_attr_always_visible(tree->u.present.attr)) {
 			/* No need to check this attribute. */
 			return 0;
 		}
 
-		break;
-
-	case LDB_OP_EQUALITY:
-		if (ldb_attr_always_visible(tree->u.equality.attr)) {
-			/* No need to check this attribute. */
-			return 0;
-		}
-
-		break;
-
+		FALL_THROUGH;
 	default:			/* single attribute in tree */
-		break;
+		attr = ldb_parse_tree_get_attr(tree);
+		return attr_vec_add_unique(mem_ctx, attrs, attr);
 	}
-
-	attr = ldb_parse_tree_get_attr(tree);
-	return attr_vec_add_unique(mem_ctx, attrs, attr);
 }
 
 /*

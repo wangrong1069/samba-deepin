@@ -33,25 +33,30 @@ static PyObject *py_get_context(PyObject *self, PyObject *Py_UNUSED(ignored))
 	PyObject *py_loadparm;
 	const struct loadparm_s3_helpers *s3_context;
 	const struct loadparm_context *s4_context;
-	TALLOC_CTX *frame = talloc_stackframe();
+	TALLOC_CTX *mem_ctx;
+
+	mem_ctx = talloc_new(NULL);
+	if (mem_ctx == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
 
 	s3_context = loadparm_s3_helpers();
 
-	s4_context = loadparm_init_s3(frame, s3_context);
+	s4_context = loadparm_init_s3(mem_ctx, s3_context);
 	if (s4_context == NULL) {
-		talloc_free(frame);
 		PyErr_NoMemory();
 		return NULL;
 	}
 
 	py_loadparm = pytalloc_steal(loadparm_Type, discard_const_p(struct loadparm_context, s4_context));
 	if (py_loadparm == NULL) {
-		talloc_free(frame);
+		talloc_free(mem_ctx);
 		PyErr_NoMemory();
 		return NULL;
 	}
 
-	talloc_free(frame);
+	talloc_free(mem_ctx);
 
 	return py_loadparm;
 }

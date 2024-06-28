@@ -132,7 +132,7 @@ static NTSTATUS gpo_sync_files(struct sync_context *ctx)
 }
 
 /****************************************************************
- synchronisation callback
+ syncronisation call back
 ****************************************************************/
 
 static NTSTATUS gpo_sync_func(struct file_info *info,

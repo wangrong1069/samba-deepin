@@ -37,7 +37,7 @@ from samba.dcerpc import drsblobs
 class EncryptedSecretsTests(TestCase):
 
     def setUp(self):
-        super().setUp()
+        super(EncryptedSecretsTests, self).setUp()
         self.lp = samba.tests.env_loadparm()
         self.creds = Credentials()
         self.session = system_session()

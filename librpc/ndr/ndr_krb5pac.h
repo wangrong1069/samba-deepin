@@ -22,4 +22,5 @@
 
 #include "librpc/gen_ndr/ndr_krb5pac.h"
 
-size_t _ndr_size_PAC_INFO(const union PAC_INFO *r, uint32_t level, libndr_flags flags);
+size_t _ndr_size_PAC_INFO(const union PAC_INFO *r, uint32_t level, int flags);
+

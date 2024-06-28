@@ -35,7 +35,6 @@
 #include "system/filesys.h"
 #include "lib/cmdline/cmdline.h"
 #include "lib/param/loadparm.h"
-#include "lib/param/param.h"
 #include "lib/crypto/gnutls_helpers.h"
 #include "cmdline_contexts.h"
 
@@ -229,21 +228,16 @@ static bool do_idmap_check(void)
 
 			if ((c->low >= x->low && c->low <= x->high) ||
 			    (c->high >= x->low && c->high <= x->high)) {
-				/*
-				 * Allow overlapping ranges for idmap_ad
-				 * and idmap_nss
-				 */
+				/* Allow overlapping ranges for idmap_ad */
 				ok = strequal(c->backend, x->backend);
 				if (ok) {
-					ok = strequal(c->backend, "ad") ||
-					     strequal(c->backend, "nss");
+					ok = strequal(c->backend, "ad");
 					if (ok) {
 						fprintf(stderr,
-							"NOTE: The idmap_%s "
+							"NOTE: The idmap_ad "
 							"range for the domain "
 							"%s overlaps with the "
 							"range of %s.\n\n",
-							c->backend,
 							c->domain_name,
 							x->domain_name);
 						continue;
@@ -895,7 +889,6 @@ static void do_per_share_checks(int s)
 	};
 
 	TALLOC_CTX *frame = talloc_stackframe();
-	struct loadparm_context *lp_ctx = NULL;
 
 	smb_init_locale();
 
@@ -907,14 +900,13 @@ static void do_per_share_checks(int s)
 		ret = 1;
 		goto done;
 	}
-	lp_ctx = samba_cmdline_get_lp_ctx();
 
 	/*
 	 * Set the default debug level to 1.
 	 * Allow it to be overridden by the command line,
 	 * not by smb.conf.
 	 */
-	lpcfg_set_cmdline(lp_ctx, "log level", "1");
+	lp_set_cmdline("log level", "1");
 
 	pc = samba_popt_get_context(getprogname(),
 				    argc,

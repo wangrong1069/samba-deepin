@@ -58,22 +58,22 @@ void setup_stat(struct stat *st,
 {
 	st->st_mode = 0;
 
-	if (attr & FILE_ATTRIBUTE_DIRECTORY) {
-		st->st_mode = (S_IFDIR | 0555);
+	if (IS_DOS_DIR(attr)) {
+		st->st_mode = SMBC_DIR_MODE;
 	} else {
-		st->st_mode = (S_IFREG | 0444);
+		st->st_mode = SMBC_FILE_MODE;
 	}
 
-	if (attr & FILE_ATTRIBUTE_ARCHIVE) {
+	if (IS_DOS_ARCHIVE(attr)) {
 		st->st_mode |= S_IXUSR;
 	}
-	if (attr & FILE_ATTRIBUTE_SYSTEM) {
+	if (IS_DOS_SYSTEM(attr)) {
 		st->st_mode |= S_IXGRP;
 	}
-	if (attr & FILE_ATTRIBUTE_HIDDEN) {
+	if (IS_DOS_HIDDEN(attr)) {
 		st->st_mode |= S_IXOTH;
 	}
-	if (!(attr & FILE_ATTRIBUTE_READONLY)) {
+	if (!IS_DOS_READONLY(attr)) {
 		st->st_mode |= S_IWUSR;
 	}
 
@@ -90,7 +90,7 @@ void setup_stat(struct stat *st,
 	st->st_uid = getuid();
 	st->st_gid = getgid();
 
-	if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+	if (IS_DOS_DIR(attr)) {
 		st->st_nlink = 2;
 	} else {
 		st->st_nlink = 1;

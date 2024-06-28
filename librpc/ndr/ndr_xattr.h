@@ -23,11 +23,11 @@
 #define _LIBRPC_NDR_NDR_XATTR_H
 
 _PUBLIC_ enum ndr_err_code ndr_push_xattr_DOSATTRIB(struct ndr_push *ndr,
-						ndr_flags_type ndr_flags,
+						int ndr_flags,
 						const struct xattr_DOSATTRIB *r);
 
 _PUBLIC_ enum ndr_err_code ndr_pull_xattr_DOSATTRIB(struct ndr_pull *ndr,
-						ndr_flags_type ndr_flags,
+						int ndr_flags,
 						struct xattr_DOSATTRIB *r);
 
 _PUBLIC_ void ndr_print_xattr_DOSATTRIB(struct ndr_print *ndr,

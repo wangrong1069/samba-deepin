@@ -618,7 +618,6 @@ sub provision_raw_prepare($$$$$$$$$$$$$$)
 	$ctx->{statedir} = "$prefix_abs/statedir";
 	$ctx->{cachedir} = "$prefix_abs/cachedir";
 	$ctx->{winbindd_socket_dir} = "$prefix_abs/wbsock";
-	$ctx->{nmbd_socket_dir} = "$prefix_abs/nmbsock";
 	$ctx->{ntp_signd_socket_dir} = "$prefix_abs/ntp_signd_socket";
 	$ctx->{nsswrap_passwd} = "$ctx->{etcdir}/passwd";
 	$ctx->{nsswrap_group} = "$ctx->{etcdir}/group";
@@ -775,7 +774,6 @@ sub provision_raw_step1($$)
 	state directory = $ctx->{statedir}
 	cache directory = $ctx->{cachedir}
 	winbindd socket directory = $ctx->{winbindd_socket_dir}
-	nmbd:socket dir = $ctx->{nmbd_socket_dir}
 	ntp signd socket directory = $ctx->{ntp_signd_socket_dir}
 	winbind separator = /
 	interfaces = $interfaces
@@ -2378,7 +2376,7 @@ sub check_env($$)
 	ad_dc_no_nss         => ["dns_hub"],
 	ad_dc_no_ntlm        => ["dns_hub"],
 
-	fl2008r2dc           => ["ad_dc", "nt4_dc"],
+	fl2008r2dc           => ["ad_dc"],
 	fl2003dc             => ["ad_dc"],
 	fl2000dc             => ["ad_dc"],
 
@@ -2573,75 +2571,24 @@ sub setup_fl2003dc
 
 sub setup_fl2008r2dc
 {
-	my ($self, $path, $ad_dc_vars, $nt4_dc_vars) = @_;
+	my ($self, $path, $dc_vars) = @_;
 
 	my $env = $self->provision_fl2008r2dc($path);
 
-	if (!defined $env) {
-	    return $env;
+	if (defined $env) {
+	        if (not defined($self->check_or_start($env, "standard"))) {
+		        return undef;
+		}
+
+		my $upn_array = ["$env->{REALM}.upn"];
+		my $spn_array = ["$env->{REALM}.spn"];
+
+		if ($self->setup_namespaces($env, $upn_array, $spn_array) != 0) {
+			return undef;
+		}
+
+		$env = $self->setup_trust($env, $dc_vars, "forest", "");
 	}
-
-	if (not defined($self->check_or_start($env, "standard"))) {
-	    return undef;
-	}
-
-	my $upn_array = ["$env->{REALM}.upn"];
-	my $spn_array = ["$env->{REALM}.spn"];
-
-	if ($self->setup_namespaces($env, $upn_array, $spn_array) != 0) {
-	    return undef;
-	}
-
-	$env = $self->setup_trust($env, $ad_dc_vars, "forest", "");
-	if (!defined $env) {
-	    return undef;
-	}
-
-	my $net = Samba::bindir_path($self, "net");
-	my $smbcontrol = Samba::bindir_path($self, "smbcontrol");
-
-	my $trustpw = "TrUsTpW";
-	$trustpw .= "$env->{SOCKET_WRAPPER_DEFAULT_IFACE}";
-	$trustpw .= "$nt4_dc_vars->{SOCKET_WRAPPER_DEFAULT_IFACE}";
-
-	my $cmd = "";
-	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$env->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
-	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$env->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
-	$cmd .= "$net rpc trust create ";
-	$cmd .= "otherdomainsid=$nt4_dc_vars->{SAMSID} ";
-	$cmd .= "otherdomain=$nt4_dc_vars->{DOMAIN} ";
-	$cmd .= "other_netbios_domain=$nt4_dc_vars->{DOMAIN} ";
-	$cmd .= "trustpw=$trustpw ";
-	$cmd .= "$env->{CONFIGURATION} ";
-	$cmd .= "-U $env->{DOMAIN}/$env->{USERNAME}\%$env->{PASSWORD} ";
-
-	if (system($cmd) != 0) {
-		warn("net rpc trust create failed\n$cmd");
-		return undef;
-	}
-
-	$cmd = "";
-	$cmd .= "SOCKET_WRAPPER_DEFAULT_IFACE=\"$nt4_dc_vars->{SOCKET_WRAPPER_DEFAULT_IFACE}\" ";
-	$cmd .= "SELFTEST_WINBINDD_SOCKET_DIR=\"$nt4_dc_vars->{SELFTEST_WINBINDD_SOCKET_DIR}\" ";
-	$cmd .= "$net rpc trustdom establish $env->{DOMAIN} -U/%$trustpw $nt4_dc_vars->{CONFIGURATION}";
-
-	if (system($cmd) != 0) {
-		warn("add failed\n$cmd");
-		return undef;
-	}
-
-	# Reload trusts
-	$cmd = "$smbcontrol winbindd reload-config $nt4_dc_vars->{CONFIGURATION}";
-
-	if (system($cmd) != 0) {
-		warn("add failed\n$cmd");
-		return undef;
-	}
-
-	$env->{NT4_TRUST_SERVER} = $nt4_dc_vars->{SERVER};
-	$env->{NT4_TRUST_SERVER_IP} = $nt4_dc_vars->{SERVER_IP};
-	$env->{NT4_TRUST_DOMAIN} = $nt4_dc_vars->{DOMAIN};
-	$env->{NT4_TRUST_DOMSID} = $nt4_dc_vars->{DOMSID};
 
 	return $env;
 }
@@ -3422,7 +3369,7 @@ sub setup_restoredc
 	}
 
 	#
-	# As we create the same domain as a clone
+	# As we create a the same domain as a clone
 	# we need a separate resolv.conf!
 	#
 	$ctx->{resolv_conf} = "$ctx->{etcdir}/resolv.conf";
@@ -3527,7 +3474,7 @@ sub setup_offlinebackupdc
 	}
 
 	#
-	# As we create the same domain as a clone
+	# As we create a the same domain as a clone
 	# we need a separate resolv.conf!
 	#
 	$ctx->{resolv_conf} = "$ctx->{etcdir}/resolv.conf";
@@ -3691,7 +3638,7 @@ sub setup_customdc
 	}
 
 	#
-	# As we create the same domain as a clone
+	# As we create a the same domain as a clone
 	# we need a separate resolv.conf!
 	#
 	$ctx->{resolv_conf} = "$ctx->{etcdir}/resolv.conf";

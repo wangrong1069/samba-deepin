@@ -171,9 +171,3 @@ emitted_tag_enums(const Symbol *s)
 {
     ((Symbol *)(uintptr_t)s)->emitted_tag_enums = 1;
 }
-
-void
-emitted_asn1(const Symbol *s)
-{
-    ((Symbol *)(uintptr_t)s)->emitted_asn1 = 1;
-}

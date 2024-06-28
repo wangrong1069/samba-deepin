@@ -1,154 +1,131 @@
-import re
-
-from waflib import Utils, Task, Errors, Logs
+import os, re
+from waflib import Utils, Task, Errors
+from waflib.TaskGen import extension, taskgen_method, feature
 from waflib.Configure import conf
-from waflib.TaskGen import extension, taskgen_method
-
-HAXE_COMPILERS = {
-    'JS': {'tgt': '--js', 'ext_out': ['.js']},
-    'LUA': {'tgt': '--lua', 'ext_out': ['.lua']},
-    'SWF': {'tgt': '--swf', 'ext_out': ['.swf']},
-    'NEKO': {'tgt': '--neko', 'ext_out': ['.n']},
-    'PHP': {'tgt': '--php', 'ext_out': ['.php']},
-    'CPP': {'tgt': '--cpp', 'ext_out': ['.h', '.cpp']},
-    'CPPIA': {'tgt': '--cppia', 'ext_out': ['.cppia']},
-    'CS': {'tgt': '--cs', 'ext_out': ['.cs']},
-    'JAVA': {'tgt': '--java', 'ext_out': ['.java']},
-    'JVM': {'tgt': '--jvm', 'ext_out': ['.jar']},
-    'PYTHON': {'tgt': '--python', 'ext_out': ['.py']},
-    'HL': {'tgt': '--hl', 'ext_out': ['.hl']},
-    'HLC': {'tgt': '--hl', 'ext_out': ['.h', '.c']},
-}
 
 @conf
-def check_haxe_pkg(self, **kw):
-    self.find_program('haxelib')
-    libs = kw.get('libs')
-    if not libs or not (type(libs) == str or (type(libs) == list and all(isinstance(s, str) for s in libs))):
-        self.fatal('Specify correct libs value in ensure call')
-        return
-    fetch = kw.get('fetch')
-    if not fetch is None and not type(fetch) == bool:
-        self.fatal('Specify correct fetch value in ensure call')
+def libname_haxe(self, libname):
+	return libname
 
-    libs = [libs] if type(libs) == str else libs
-    halt = False
-    for lib in libs:
-        try:
-            self.start_msg('Checking for library %s' % lib)
-            output = self.cmd_and_log(self.env.HAXELIB + ['list', lib])
-        except Errors.WafError:
-            self.end_msg(False)
-            self.fatal('Can\'t run haxelib list, ensuring halted')
-            return
+@conf
+def check_lib_haxe(self, libname, uselib_store=None):
+	haxe_libs = [node.name for node in self.root.find_node('haxe_libraries').ant_glob()]
+	changed = False
+	self.start_msg('Checking for library %s' % libname)
+	if libname + '.hxml' in haxe_libs:
+		self.end_msg('yes')
+	else:
+		changed = True
+		try:
+			cmd = self.env.LIX + ['+lib', libname]
+			res = self.cmd_and_log(cmd)
+			if (res):
+				raise Errors.WafError(res)
+			else:
+				self.end_msg('downloaded', color = 'YELLOW')
+		except Errors.WafError as e:
+			self.end_msg('no', color = 'RED')
+			self.fatal('Getting %s has failed' % libname)
 
-        if lib in output:
-            self.end_msg(lib in output)
-        else:
-            if not fetch:
-                self.end_msg(False)
-                halt = True
-                continue
-            try:
-                status = self.exec_command(self.env.HAXELIB + ['install', lib])
-                if status:
-                    self.end_msg(False)
-                    self.fatal('Can\'t get %s with haxelib, ensuring halted' % lib)
-                    return
-                else:
-                    self.end_msg('downloaded', color='YELLOW')
-            except Errors.WafError:
-                self.end_msg(False)
-                self.fatal('Can\'t run haxelib install, ensuring halted')
-                return
-        postfix = kw.get('uselib_store') or lib.upper()
-        self.env.append_unique('LIB_' + postfix, lib)
+	postfix = uselib_store if uselib_store else libname.upper()
+	self.env['LIB_' + postfix] += [self.libname_haxe(libname)]
+	return changed
 
-    if halt:
-        self.fatal('Can\'t find libraries in haxelib list, ensuring halted')
-        return
+@conf
+def check_libs_haxe(self, libnames, uselib_store=None):
+	changed = False
+	for libname in Utils.to_list(libnames):
+		if self.check_lib_haxe(libname, uselib_store):
+			changed = True
+	return changed
+
+@conf
+def ensure_lix_pkg(self, *k, **kw):
+	if kw.get('compiler') == 'hx':
+		if isinstance(kw.get('libs'), list) and len(kw.get('libs')):
+			changed = self.check_libs_haxe(kw.get('libs'), kw.get('uselib_store'))
+			if changed:
+				try:
+					cmd = self.env.LIX + ['download']
+					res = self.cmd_and_log(cmd)
+					if (res):
+						raise Errors.WafError(res)
+				except Errors.WafError as e:
+					self.fatal('lix download has failed')
+		else:
+			self.check_lib_haxe(kw.get('lib'), kw.get('uselib_store'))
+
+@conf
+def haxe(bld, *k, **kw):
+	task_gen = bld(*k, **kw)
 
 class haxe(Task.Task):
-    vars = ['HAXE_VERSION', 'HAXE_FLAGS']
-    ext_in = ['.hx']
+	vars = ['HAXE', 'HAXE_VERSION', 'HAXEFLAGS']
+	ext_out = ['.hl', '.c', '.h']
 
-    def run(self):
-        cmd = self.env.HAXE + self.env.HAXE_FLAGS_DEFAULT + self.env.HAXE_FLAGS
-        return self.exec_command(cmd)
-
-for COMP in HAXE_COMPILERS:
-    # create runners for each compile target
-    type("haxe_" + COMP, (haxe,), {'ext_out': HAXE_COMPILERS[COMP]['ext_out']})
+	def run(self):
+		cmd = self.env.HAXE + self.env.HAXEFLAGS
+		return self.exec_command(cmd, stdout = open(os.devnull, 'w'))
 
 @taskgen_method
-def init_haxe(self):
-    errmsg = '%s not found, specify correct value'
-    try:
-        compiler = HAXE_COMPILERS[self.compiler]
-        comp_tgt = compiler['tgt']
-        comp_mod = '/main.c' if self.compiler == 'HLC' else ''
-    except (AttributeError, KeyError):
-        self.bld.fatal(errmsg % 'COMPILER' + ': ' + ', '.join(HAXE_COMPILERS.keys()))
-        return
+def init_haxe_task(self, node):
+	def addflags(flags):
+		self.env.append_value('HAXEFLAGS', flags)
 
-    self.env.append_value(
-        'HAXE_FLAGS',
-        [comp_tgt, self.path.get_bld().make_node(self.target + comp_mod).abspath()])
-    if hasattr(self, 'use'):
-        if not (type(self.use) == str or type(self.use) == list):
-            self.bld.fatal(errmsg % 'USE')
-            return
-        self.use = [self.use] if type(self.use) == str else self.use
+	if node.suffix() == '.hxml':
+		addflags(self.path.abspath() + '/' + node.name)
+	else:
+		addflags(['-main', node.name])
+	addflags(['-hl', self.path.get_bld().make_node(self.target).abspath()])
+	addflags(['-cp', self.path.abspath()])
+	addflags(['-D', 'resourcesPath=%s' % getattr(self, 'res', '')])
+	if hasattr(self, 'use'):
+		for dep in self.use:
+			if self.env['LIB_' + dep]:
+				for lib in self.env['LIB_' + dep]: addflags(['-lib', lib])
 
-        for dep in self.use:
-            if self.env['LIB_' + dep]:
-                for lib in self.env['LIB_' + dep]:
-                    self.env.append_value('HAXE_FLAGS', ['-lib', lib])
+@extension('.hx', '.hxml')
+def haxe_file(self, node):
+	if len(self.source) > 1:
+		self.bld.fatal('Use separate task generators for multiple files')
 
-    if hasattr(self, 'res'):
-        if not type(self.res) == str:
-            self.bld.fatal(errmsg % 'RES')
-            return
-        self.env.append_value('HAXE_FLAGS', ['-D', 'resourcesPath=%s' % self.res])
+	try:
+		haxetask = self.haxetask
+	except AttributeError:
+		haxetask = self.haxetask = self.create_task('haxe')
+		self.init_haxe_task(node)
 
-@extension('.hx')
-def haxe_hook(self, node):
-    if len(self.source) > 1:
-        self.bld.fatal('Use separate task generators for multiple files')
-        return
-
-    src = node
-    tgt = self.path.get_bld().find_or_declare(self.target)
-
-    self.init_haxe()
-    self.create_task('haxe_' + self.compiler, src, tgt)
+	haxetask.inputs.append(node)
+	haxetask.outputs.append(self.path.get_bld().make_node(self.target))
 
 @conf
-def check_haxe(self, mini=None, maxi=None):
-    self.start_msg('Checking for haxe version')
-    try:
-        curr = re.search(
-            r'(\d+.?)+',
-            self.cmd_and_log(self.env.HAXE + ['-version'])).group()
-    except Errors.WafError:
-        self.end_msg(False)
-        self.fatal('Can\'t get haxe version')
-        return
+def find_haxe(self, min_version):
+	npx = self.env.NPX = self.find_program('npx')
+	self.env.LIX = npx + ['lix']
+	npx_haxe = self.env.HAXE = npx + ['haxe']
+	try:
+		output = self.cmd_and_log(npx_haxe + ['-version'])
+	except Errors.WafError:
+		haxe_version = None
+	else:
+		ver = re.search(r'\d+.\d+.\d+', output).group().split('.')
+		haxe_version = tuple([int(x) for x in ver])
 
-    if mini and Utils.num2ver(curr) < Utils.num2ver(mini):
-        self.end_msg('wrong', color='RED')
-        self.fatal('%s is too old, need >= %s' % (curr, mini))
-        return
-    if maxi and Utils.num2ver(curr) > Utils.num2ver(maxi):
-        self.end_msg('wrong', color='RED')
-        self.fatal('%s is too new, need <= %s' % (curr, maxi))
-        return
-    self.end_msg(curr, color='GREEN')
-    self.env.HAXE_VERSION = curr
+	self.msg('Checking for haxe version',
+	         haxe_version, haxe_version and haxe_version >= min_version)
+	if npx_haxe and haxe_version < min_version:
+		self.fatal('haxe version %r is too old, need >= %r' % (haxe_version, min_version))
+
+	self.env.HAXE_VERSION = haxe_version
+	return npx_haxe
+
+@conf
+def check_haxe(self, min_version=(4,1,4)):
+	if self.env.HAXE_MINVER:
+		min_version = self.env.HAXE_MINVER
+	find_haxe(self, min_version)
 
 def configure(self):
-    self.env.append_value(
-        'HAXE_FLAGS_DEFAULT',
-        ['-D', 'no-compilation', '-cp', self.path.abspath()])
-    Logs.warn('Default flags: %s' % ' '.join(self.env.HAXE_FLAGS_DEFAULT))
-    self.find_program('haxe')
+	self.env.HAXEFLAGS = []
+	self.check_haxe()
+	self.add_os_flags('HAXEFLAGS', dup = False)

@@ -27,7 +27,7 @@ class ProvisionUserPasswordTestCase(SambaToolCmdTest):
     """Test for crypt() hashed passwords"""
 
     def setUp(self):
-        super().setUp()
+        super(ProvisionUserPasswordTestCase, self).setUp()
         self.tempsambadir = os.path.join(self.tempdir, "samba")
         os.mkdir(self.tempsambadir)
 
@@ -63,5 +63,5 @@ class ProvisionUserPasswordTestCase(SambaToolCmdTest):
         self.assertNotEqual(0, result)
 
     def tearDown(self):
-        super().tearDown()
+        super(ProvisionUserPasswordTestCase, self).tearDown()
         shutil.rmtree(self.tempsambadir)

@@ -36,7 +36,6 @@ int main(int argc, char **argv)
 {
 	const char **const_argv = discard_const_p(const char *, argv);
 	TALLOC_CTX *frame = talloc_stackframe();
-	struct loadparm_context *lp_ctx = NULL;
 	struct tevent_context *ev = NULL;
 	struct cli_credentials *creds = NULL;
 	struct rpc_pipe_client *rpccli = NULL;
@@ -89,8 +88,7 @@ int main(int argc, char **argv)
 		TALLOC_FREE(frame);
 		exit(1);
 	}
-	lp_ctx = samba_cmdline_get_lp_ctx();
-	lpcfg_set_cmdline(lp_ctx, "log level", "1");
+	lp_set_cmdline("log level", "1");
 
 	pc = samba_popt_get_context(getprogname(),
 				    argc,

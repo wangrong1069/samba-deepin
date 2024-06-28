@@ -73,7 +73,7 @@ struct tevent_req *tstream_npa_connect_send(TALLOC_CTX *mem_ctx,
 	int ret;
 	enum ndr_err_code ndr_err;
 	char *lower_case_npipe;
-	struct named_pipe_auth_req_info8 *info8;
+	struct named_pipe_auth_req_info7 *info7;
 
 	req = tevent_req_create(mem_ctx, &state,
 				struct tstream_npa_connect_state);
@@ -119,41 +119,41 @@ struct tevent_req *tstream_npa_connect_send(TALLOC_CTX *mem_ctx,
 		goto post;
 	}
 
-	state->auth_req.level = 8;
-	info8 = &state->auth_req.info.info8;
+	state->auth_req.level = 7;
+	info7 = &state->auth_req.info.info7;
 
-	info8->transport = transport;
-	SMB_ASSERT(info8->transport == transport); /* Assert no overflow */
+	info7->transport = transport;
+	SMB_ASSERT(info7->transport == transport); /* Assert no overflow */
 
-	info8->remote_client_name = remote_client_name_in;
-	info8->remote_client_addr =
+	info7->remote_client_name = remote_client_name_in;
+	info7->remote_client_addr =
 		tsocket_address_inet_addr_string(remote_client_addr, state);
-	if (!info8->remote_client_addr) {
+	if (!info7->remote_client_addr) {
 		/* errno might be EINVAL */
 		tevent_req_error(req, errno);
 		goto post;
 	}
-	info8->remote_client_port =
+	info7->remote_client_port =
 		tsocket_address_inet_port(remote_client_addr);
-	if (!info8->remote_client_name) {
-		info8->remote_client_name = info8->remote_client_addr;
+	if (!info7->remote_client_name) {
+		info7->remote_client_name = info7->remote_client_addr;
 	}
 
-	info8->local_server_name = local_server_name_in;
-	info8->local_server_addr =
+	info7->local_server_name = local_server_name_in;
+	info7->local_server_addr =
 		tsocket_address_inet_addr_string(local_server_addr, state);
-	if (!info8->local_server_addr) {
+	if (!info7->local_server_addr) {
 		/* errno might be EINVAL */
 		tevent_req_error(req, errno);
 		goto post;
 	}
-	info8->local_server_port =
+	info7->local_server_port =
 		tsocket_address_inet_port(local_server_addr);
-	if (!info8->local_server_name) {
-		info8->local_server_name = info8->local_server_addr;
+	if (!info7->local_server_name) {
+		info7->local_server_name = info7->local_server_addr;
 	}
 
-	info8->session_info =
+	info7->session_info =
 		discard_const_p(struct auth_session_info_transport,
 				session_info);
 
@@ -352,10 +352,10 @@ int _tstream_npa_connect_recv(struct tevent_req *req,
 
 	npas->unix_stream = talloc_move(stream, &state->unix_stream);
 	switch (state->auth_rep.level) {
-	case 8:
-		npas->file_type = state->auth_rep.info.info8.file_type;
-		device_state = state->auth_rep.info.info8.device_state;
-		allocation_size = state->auth_rep.info.info8.allocation_size;
+	case 7:
+		npas->file_type = state->auth_rep.info.info7.file_type;
+		device_state = state->auth_rep.info.info7.device_state;
+		allocation_size = state->auth_rep.info.info7.allocation_size;
 		break;
 	}
 
@@ -1008,8 +1008,6 @@ int _tstream_npa_existing_socket(TALLOC_CTX *mem_ctx,
 	if (ret == -1) {
 		return -1;
 	}
-	/* as server we want to fail early */
-	tstream_bsd_fail_readv_first_error(transport, true);
 	return _tstream_npa_existing_stream(
 		mem_ctx, &transport, file_type, _stream, location);
 }
@@ -1090,7 +1088,7 @@ static void tstream_npa_accept_existing_reply(struct tevent_req *subreq)
 			tevent_req_data(req, struct tstream_npa_accept_state);
 	struct named_pipe_auth_req *pipe_request;
 	struct named_pipe_auth_rep pipe_reply;
-	struct named_pipe_auth_req_info8 i8;
+	struct named_pipe_auth_req_info7 i7;
 	enum ndr_err_code ndr_err;
 	DATA_BLOB in, out;
 	int err;
@@ -1153,28 +1151,28 @@ static void tstream_npa_accept_existing_reply(struct tevent_req *subreq)
 		NDR_PRINT_DEBUG(named_pipe_auth_req, pipe_request);
 	}
 
-	ZERO_STRUCT(i8);
+	ZERO_STRUCT(i7);
 
-	if (pipe_request->level != 8) {
+	if (pipe_request->level != 7) {
 		DEBUG(0, ("Unknown level %u\n", pipe_request->level));
 		pipe_reply.level = 0;
 		pipe_reply.status = NT_STATUS_INVALID_LEVEL;
 		goto reply;
 	}
 
-	pipe_reply.level = 8;
+	pipe_reply.level = 7;
 	pipe_reply.status = NT_STATUS_OK;
-	pipe_reply.info.info8.file_type = state->file_type;
-	pipe_reply.info.info8.device_state = state->device_state;
-	pipe_reply.info.info8.allocation_size = state->alloc_size;
+	pipe_reply.info.info7.file_type = state->file_type;
+	pipe_reply.info.info7.device_state = state->device_state;
+	pipe_reply.info.info7.allocation_size = state->alloc_size;
 
-	i8 = pipe_request->info.info8;
-	if (i8.local_server_addr == NULL) {
+	i7 = pipe_request->info.info7;
+	if (i7.local_server_addr == NULL) {
 		pipe_reply.status = NT_STATUS_INVALID_ADDRESS;
 		DEBUG(2, ("Missing local server address\n"));
 		goto reply;
 	}
-	if (i8.remote_client_addr == NULL) {
+	if (i7.remote_client_addr == NULL) {
 		pipe_reply.status = NT_STATUS_INVALID_ADDRESS;
 		DEBUG(2, ("Missing remote client address\n"));
 		goto reply;
@@ -1182,14 +1180,14 @@ static void tstream_npa_accept_existing_reply(struct tevent_req *subreq)
 
 	ret = tsocket_address_inet_from_strings(state,
 						"ip",
-						i8.local_server_addr,
-						i8.local_server_port,
+						i7.local_server_addr,
+						i7.local_server_port,
 						&state->local_server_addr);
 	if (ret != 0) {
 		DEBUG(2,
 		      ("Invalid local server address[%s:%u] - %s\n",
-		       i8.local_server_addr,
-		       i8.local_server_port,
+		       i7.local_server_addr,
+		       i7.local_server_port,
 		       strerror(errno)));
 		pipe_reply.status = NT_STATUS_INVALID_ADDRESS;
 		goto reply;
@@ -1197,14 +1195,14 @@ static void tstream_npa_accept_existing_reply(struct tevent_req *subreq)
 
 	ret = tsocket_address_inet_from_strings(state,
 						"ip",
-						i8.remote_client_addr,
-						i8.remote_client_port,
+						i7.remote_client_addr,
+						i7.remote_client_port,
 						&state->remote_client_addr);
 	if (ret != 0) {
 		DEBUG(2,
 		      ("Invalid remote client address[%s:%u] - %s\n",
-		       i8.remote_client_addr,
-		       i8.remote_client_port,
+		       i7.remote_client_addr,
+		       i7.remote_client_port,
 		       strerror(errno)));
 		pipe_reply.status = NT_STATUS_INVALID_ADDRESS;
 		goto reply;
@@ -1215,7 +1213,7 @@ reply:
 	ndr_err = ndr_push_struct_blob(&out, state, &pipe_reply,
 			(ndr_push_flags_fn_t)ndr_push_named_pipe_auth_rep);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		DEBUG(2, ("Error encoding structure: %s\n",
+		DEBUG(2, ("Error encoding structure: %s",
 			  ndr_map_error2string(ndr_err)));
 		tevent_req_error(req, EIO);
 		return;
@@ -1237,7 +1235,7 @@ reply:
 				     state->plain,
 				     &state->out_iov, 1);
 	if (tevent_req_nomem(subreq, req)) {
-		DEBUG(0, ("no memory for tstream_writev_send\n"));
+		DEBUG(0, ("no memory for tstream_writev_send"));
 		return;
 	}
 
@@ -1261,15 +1259,15 @@ static void tstream_npa_accept_existing_done(struct tevent_req *subreq)
 	tevent_req_done(req);
 }
 
-static struct named_pipe_auth_req_info8 *
-copy_npa_info8(TALLOC_CTX *mem_ctx,
-	       const struct named_pipe_auth_req_info8 *src)
+static struct named_pipe_auth_req_info7 *
+copy_npa_info7(TALLOC_CTX *mem_ctx,
+	       const struct named_pipe_auth_req_info7 *src)
 {
-	struct named_pipe_auth_req_info8 *dst = NULL;
+	struct named_pipe_auth_req_info7 *dst = NULL;
 	DATA_BLOB blob;
 	enum ndr_err_code ndr_err;
 
-	dst = talloc_zero(mem_ctx, struct named_pipe_auth_req_info8);
+	dst = talloc_zero(mem_ctx, struct named_pipe_auth_req_info7);
 	if (dst == NULL) {
 		return NULL;
 	}
@@ -1278,9 +1276,9 @@ copy_npa_info8(TALLOC_CTX *mem_ctx,
 		&blob,
 		dst,
 		src,
-		(ndr_push_flags_fn_t)ndr_push_named_pipe_auth_req_info8);
+		(ndr_push_flags_fn_t)ndr_push_named_pipe_auth_req_info7);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		DBG_WARNING("ndr_push_named_pipe_auth_req_info8 failed: %s\n",
+		DBG_WARNING("ndr_push_named_pipe_auth_req_info7 failed: %s\n",
 			    ndr_errstr(ndr_err));
 		TALLOC_FREE(dst);
 		return NULL;
@@ -1290,10 +1288,10 @@ copy_npa_info8(TALLOC_CTX *mem_ctx,
 		&blob,
 		dst,
 		dst,
-		(ndr_pull_flags_fn_t)ndr_pull_named_pipe_auth_req_info8);
+		(ndr_pull_flags_fn_t)ndr_pull_named_pipe_auth_req_info7);
 	TALLOC_FREE(blob.data);
 	if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-		DBG_WARNING("ndr_push_named_pipe_auth_req_info8 failed: %s\n",
+		DBG_WARNING("ndr_push_named_pipe_auth_req_info7 failed: %s\n",
 			    ndr_errstr(ndr_err));
 		TALLOC_FREE(dst);
 		return NULL;
@@ -1307,7 +1305,7 @@ int _tstream_npa_accept_existing_recv(
 	int *perrno,
 	TALLOC_CTX *mem_ctx,
 	struct tstream_context **stream,
-	struct named_pipe_auth_req_info8 **info8,
+	struct named_pipe_auth_req_info7 **info7,
 	enum dcerpc_transport_t *transport,
 	struct tsocket_address **remote_client_addr,
 	char **_remote_client_name,
@@ -1318,8 +1316,8 @@ int _tstream_npa_accept_existing_recv(
 {
 	struct tstream_npa_accept_state *state =
 			tevent_req_data(req, struct tstream_npa_accept_state);
-	struct named_pipe_auth_req_info8 *i8 =
-		&state->pipe_request->info.info8;
+	struct named_pipe_auth_req_info7 *i7 =
+		&state->pipe_request->info.info7;
 	struct tstream_npa *npas;
 	int ret;
 
@@ -1360,24 +1358,24 @@ int _tstream_npa_accept_existing_recv(
 	npas->unix_stream = state->plain;
 	npas->file_type = state->file_type;
 
-	if (info8 != NULL) {
+	if (info7 != NULL) {
 		/*
-		 * Make a full copy of "info8" because further down we
+		 * Make a full copy of "info7" because further down we
 		 * talloc_move() away substructures from
 		 * state->pipe_request.
 		 */
-		struct named_pipe_auth_req_info8 *dst =
-			copy_npa_info8(mem_ctx, i8);
+		struct named_pipe_auth_req_info7 *dst =
+			copy_npa_info7(mem_ctx, i7);
 		if (dst == NULL) {
 			*perrno = ENOMEM;
 			tevent_req_received(req);
 			return -1;
 		}
-		*info8 = dst;
+		*info7 = dst;
 	}
 
 	if (transport != NULL) {
-		*transport = i8->transport;
+		*transport = i7->transport;
 	}
 	if (remote_client_addr != NULL) {
 		*remote_client_addr = talloc_move(
@@ -1386,7 +1384,7 @@ int _tstream_npa_accept_existing_recv(
 	if (_remote_client_name != NULL) {
 		*_remote_client_name = discard_const_p(
 			char,
-			talloc_move(mem_ctx, &i8->remote_client_name));
+			talloc_move(mem_ctx, &i7->remote_client_name));
 	}
 	if (local_server_addr != NULL) {
 		*local_server_addr = talloc_move(
@@ -1395,10 +1393,10 @@ int _tstream_npa_accept_existing_recv(
 	if (local_server_name != NULL) {
 		*local_server_name = discard_const_p(
 			char,
-			talloc_move(mem_ctx, &i8->local_server_name));
+			talloc_move(mem_ctx, &i7->local_server_name));
 	}
 	if (session_info != NULL) {
-		*session_info = talloc_move(mem_ctx, &i8->session_info);
+		*session_info = talloc_move(mem_ctx, &i7->session_info);
 	}
 
 	tevent_req_received(req);

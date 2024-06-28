@@ -103,7 +103,7 @@ enum socket_state {
 #define SOCKET_FLAG_ENCRYPT      0x00000008 /* This socket
 					     * implementation requires
 					     * that re-sends be
-					     * consistent, because it
+					     * consistant, because it
 					     * is encrypting data.
 					     * This modifies the
 					     * TESTNONBLOCK case */

@@ -431,6 +431,12 @@ static bool preopen_parse_fname(const char *fname, uint64_t *pnum,
 		 * parsing the string into a number
 		 */
 
+		if (*pnum_digits < 1) {
+			/*
+			 * We need at least one digit
+			 */
+			return false;
+		}
 		if (*pnum_digits > PREOPEN_MAX_DIGITS) {
 			/*
 			 * a string with as much digits as

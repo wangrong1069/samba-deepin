@@ -3240,7 +3240,7 @@ static NTSTATUS test_sparse_get(struct torture_context *torture,
 
 /*
  * Manually test setting and clearing sparse flag. Intended for file system
- * specific tests to toggle the flag through SMB and check the status in the
+ * specifc tests to toggle the flag through SMB and check the status in the
  * file system.
  */
 bool test_ioctl_set_sparse(struct torture_context *tctx)
@@ -5609,7 +5609,7 @@ static bool test_ioctl_trim_simple(struct torture_context *torture,
 
 	torture_assert_int_equal(torture, trim_rsp.num_ranges_processed, 1, "");
 
-	/* second half of the file should remain consistent */
+	/* second half of the file should remain consitent */
 	ok = check_pattern(torture, tree, tmp_ctx, fh, trim_chunk_len,
 			   trim_chunk_len, trim_chunk_len);
 	torture_assert(torture, ok, "non-trimmed range inconsistent");
@@ -7389,68 +7389,6 @@ static bool test_ioctl_bug14788_NETWORK_INTERFACE(struct torture_context *tortur
 }
 
 /*
- * basic regression test for BUG 15664
- * https://bugzilla.samba.org/show_bug.cgi?id=15664
- */
-static bool test_ioctl_copy_chunk_bug15644(struct torture_context *torture,
-					   struct smb2_tree *tree)
-{
-	struct smb2_handle dest_h;
-	NTSTATUS status;
-	union smb_ioctl ioctl;
-	TALLOC_CTX *tmp_ctx = talloc_new(tree);
-	struct srv_copychunk chunk;
-	struct srv_copychunk_copy cc_copy;
-	enum ndr_err_code ndr_ret;
-	bool ok;
-
-	ok = test_setup_create_fill(torture,
-				    tree,
-				    tmp_ctx,
-				    FNAME2,
-				    &dest_h,
-				    0,
-				    SEC_RIGHTS_FILE_ALL,
-				    FILE_ATTRIBUTE_NORMAL);
-	torture_assert(torture, ok, "dest file create fill");
-
-	ZERO_STRUCT(ioctl);
-	ioctl.smb2.level = RAW_IOCTL_SMB2;
-	ioctl.smb2.in.file.handle = dest_h;
-	ioctl.smb2.in.function = FSCTL_SRV_COPYCHUNK;
-	ioctl.smb2.in.max_output_response = sizeof(struct srv_copychunk_rsp);
-	ioctl.smb2.in.flags = SMB2_IOCTL_FLAG_IS_FSCTL;
-
-	ZERO_STRUCT(chunk);
-	ZERO_STRUCT(cc_copy);
-	/* overwrite the resume key with a bogus value */
-	memcpy(cc_copy.source_key, "deadbeefdeadbeefdeadbeef", 24);
-	cc_copy.chunk_count = 1;
-	cc_copy.chunks = &chunk;
-	cc_copy.chunks[0].source_off = 0;
-	cc_copy.chunks[0].target_off = 0;
-	cc_copy.chunks[0].length = 4096;
-
-	ndr_ret = ndr_push_struct_blob(&ioctl.smb2.in.out, tmp_ctx,
-				       &cc_copy,
-			(ndr_push_flags_fn_t)ndr_push_srv_copychunk_copy);
-	torture_assert_ndr_success(torture, ndr_ret,
-				   "ndr_push_srv_copychunk_copy");
-
-	/* Server 2k12 returns NT_STATUS_OBJECT_NAME_NOT_FOUND */
-	status = smb2_ioctl(tree, tmp_ctx, &ioctl.smb2);
-	torture_assert_ntstatus_equal(torture, status,
-				      NT_STATUS_OBJECT_NAME_NOT_FOUND,
-				      "FSCTL_SRV_COPYCHUNK");
-
-	status = smb2_util_close(tree, dest_h);
-	torture_assert_ntstatus_ok(torture, status, "close");
-
-	talloc_free(tmp_ctx);
-	return true;
-}
-
-/*
  * testing of SMB2 ioctls
  */
 struct torture_suite *torture_smb2_ioctl_init(TALLOC_CTX *ctx)
@@ -7482,8 +7420,6 @@ struct torture_suite *torture_smb2_ioctl_init(TALLOC_CTX *ctx)
 				     test_ioctl_copy_chunk_dest_lck);
 	torture_suite_add_1smb2_test(suite, "copy_chunk_bad_key",
 				     test_ioctl_copy_chunk_bad_key);
-	torture_suite_add_1smb2_test(suite, "copy_chunk_bug15644",
-				     test_ioctl_copy_chunk_bug15644);
 	torture_suite_add_1smb2_test(suite, "copy_chunk_src_is_dest",
 				     test_ioctl_copy_chunk_src_is_dest);
 	torture_suite_add_1smb2_test(suite, "copy_chunk_src_is_dest_overlap",

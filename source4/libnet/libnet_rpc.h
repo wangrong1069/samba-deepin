@@ -21,7 +21,7 @@
 #include "librpc/rpc/dcerpc.h"
 
 /*
- * struct definition for connecting to a dcerpc interface
+ * struct definition for connecting to a dcerpc inferface
  */
 
 enum libnet_RpcConnect_level {

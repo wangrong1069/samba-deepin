@@ -17,6 +17,7 @@
 
 """Subunit test protocol."""
 
+import samba
 import unittest
 
 

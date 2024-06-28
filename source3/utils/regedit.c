@@ -19,7 +19,6 @@
 
 #include "includes.h"
 #include "lib/cmdline/cmdline.h"
-#include "lib/param/param.h"
 #include "lib/util/data_blob.h"
 #include "lib/registry/registry.h"
 #include "regedit.h"
@@ -774,7 +773,6 @@ int main(int argc, char **argv)
 	struct registry_context *ctx;
 	WERROR rv;
 	bool ok;
-	struct loadparm_context *lp_ctx = NULL;
 
 	frame = talloc_stackframe();
 
@@ -788,8 +786,7 @@ int main(int argc, char **argv)
 		TALLOC_FREE(frame);
 		exit(1);
 	}
-	lp_ctx = samba_cmdline_get_lp_ctx();
-	lpcfg_set_cmdline(lp_ctx, "log level", "0");
+	lp_set_cmdline("log level", "0");
 
 	/* process options */
 	pc = samba_popt_get_context(getprogname(),
@@ -826,8 +823,6 @@ int main(int argc, char **argv)
 	}
 
 	display_window(frame, ctx);
-
-	gfree_all();
 
 	TALLOC_FREE(frame);
 

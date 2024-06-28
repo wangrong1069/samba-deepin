@@ -184,7 +184,7 @@ void tevent_set_default_backend(const char *backend);
  *
  * @param[in]  fd       The file descriptor to base the event on.
  *
- * @param[in]  flags    #TEVENT_FD_READ, #TEVENT_FD_WRITE or #TEVENT_FD_ERROR.
+ * @param[in]  flags    #TEVENT_FD_READ or #TEVENT_FD_WRITE
  *
  * @param[in]  handler  The callback handler for the event.
  *
@@ -535,8 +535,8 @@ void tevent_fd_set_auto_close(struct tevent_fd *fde);
  *
  * @param[in] fde  File descriptor event to query
  *
- * @return The flags set on the event. See #TEVENT_FD_READ,
- * #TEVENT_FD_WRITE and #TEVENT_FD_ERROR
+ * @return The flags set on the event. See #TEVENT_FD_READ and
+ * #TEVENT_FD_WRITE
  */
 uint16_t tevent_fd_get_flags(struct tevent_fd *fde);
 
@@ -544,8 +544,8 @@ uint16_t tevent_fd_get_flags(struct tevent_fd *fde);
  * Set flags on a file descriptor event
  *
  * @param[in] fde    File descriptor event to set
- * @param[in] flags  Flags to set on the event. See #TEVENT_FD_READ,
- * #TEVENT_FD_WRITE and #TEVENT_FD_ERROR
+ * @param[in] flags  Flags to set on the event. See #TEVENT_FD_READ and
+ * #TEVENT_FD_WRITE
  */
 void tevent_fd_set_flags(struct tevent_fd *fde, uint16_t flags);
 
@@ -563,25 +563,13 @@ void tevent_set_abort_fn(void (*abort_fn)(const char *reason));
 /* bits for file descriptor event flags */
 
 /**
- * Monitor a file descriptor for data to be read and errors
- *
- * Note: we map this from/to POLLIN, POLLHUP, POLLERR and
- * where available POLLRDHUP
+ * Monitor a file descriptor for data to be read
  */
 #define TEVENT_FD_READ 1
 /**
  * Monitor a file descriptor for writeability
- *
- * Note: we map this from/to POLLOUT
  */
 #define TEVENT_FD_WRITE 2
-/**
- * Monitor a file descriptor for errors
- *
- * Note: we map this from/to POLLHUP, POLLERR and
- * where available POLLRDHUP
- */
-#define TEVENT_FD_ERROR 4
 
 /**
  * Convenience function for declaring a tevent_fd writable
@@ -596,12 +584,6 @@ void tevent_set_abort_fn(void (*abort_fn)(const char *reason));
 	tevent_fd_set_flags(fde, tevent_fd_get_flags(fde) | TEVENT_FD_READ)
 
 /**
- * Convenience function for declaring a tevent_fd waiting for errors
- */
-#define TEVENT_FD_WANTERROR(fde) \
-	tevent_fd_set_flags(fde, tevent_fd_get_flags(fde) | TEVENT_FD_ERROR)
-
-/**
  * Convenience function for declaring a tevent_fd non-writable
  */
 #define TEVENT_FD_NOT_WRITEABLE(fde) \
@@ -612,12 +594,6 @@ void tevent_set_abort_fn(void (*abort_fn)(const char *reason));
  */
 #define TEVENT_FD_NOT_READABLE(fde) \
 	tevent_fd_set_flags(fde, tevent_fd_get_flags(fde) & ~TEVENT_FD_READ)
-
-/**
- * Convenience function for declaring a tevent_fd not waiting for errors
- */
-#define TEVENT_FD_NOT_WANTERROR(fde) \
-	tevent_fd_set_flags(fde, tevent_fd_get_flags(fde) & ~TEVENT_FD_ERROR)
 
 /**
  * Debug level of tevent
@@ -649,7 +625,7 @@ typedef void (*tevent_debug_fn)(void *context,
  * Set destination for tevent debug messages
  *
  * As of version 0.15.0 the invocation of
- * the debug function for individual messages
+ * the debug function for indiviual messages
  * is limited by the current max_debug_level,
  * which means TEVENT_DEBUG_TRACE messages
  * are not passed by default:
@@ -1679,7 +1655,7 @@ bool tevent_req_set_profile(struct tevent_req *req);
 struct tevent_req_profile;
 
 /**
- * @brief Get a request's profile for inspection
+ * @brief Get the a request's profile for inspection
  *
  * @param[in] req The request to get the profile from
  *
@@ -2461,7 +2437,7 @@ struct tevent_queue_entry *_tevent_queue_add_optimize_empty(
  * must be the first one in the queue! Otherwise it calls abort().
  *
  * @note You can't use this together with tevent_queue_add_optimize_empty()
- * because the trigger function doesn't have access to the queue entry
+ * because the trigger function don't have access to the quene entry
  * in the case of an empty queue.
  *
  * @param[in]  queue_entry The queue entry to rearm.
@@ -2694,7 +2670,7 @@ int tevent_re_initialise(struct tevent_context *ev);
  * @ingroup tevent
  *
  * The following structure and registration functions are exclusively
- * needed for people writing and plugging a different event engine.
+ * needed for people writing and pluggin a different event engine.
  * There is nothing useful for normal tevent user in here.
  * @{
  */

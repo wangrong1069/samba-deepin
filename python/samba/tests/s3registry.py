@@ -31,12 +31,12 @@ for p in ["../../../../../testdata/samba3", "../../../../testdata/samba3"]:
 class RegistryTestCase(TestCase):
 
     def setUp(self):
-        super().setUp()
+        super(RegistryTestCase, self).setUp()
         self.registry = Registry(os.path.join(DATADIR, "registry"))
 
     def tearDown(self):
         self.registry.close()
-        super().tearDown()
+        super(RegistryTestCase, self).tearDown()
 
     def test_length(self):
         self.assertEqual(28, len(self.registry))

@@ -26,14 +26,14 @@ class UserCheckPwdTestCase(SambaToolCmdTest):
     samdb = None
 
     def setUp(self):
-        super().setUp()
+        super(UserCheckPwdTestCase, self).setUp()
         self.samdb = self.getSamDB("-H", "ldap://%s" % os.environ["DC_SERVER"],
                                    "-U%s%%%s" % (os.environ["DC_USERNAME"], os.environ["DC_PASSWORD"]))
         self.old_min_pwd_age = self.samdb.get_minPwdAge()
         self.samdb.set_minPwdAge("0")
 
     def tearDown(self):
-        super().tearDown()
+        super(UserCheckPwdTestCase, self).tearDown()
         self.samdb.set_minPwdAge(self.old_min_pwd_age)
 
     def _test_checkpassword(self, user, bad_password, good_password, desc):

@@ -55,11 +55,11 @@ static void debug_dsdcinfo_flags(int lvl, uint32_t flags)
 
 	if (flags & DS_FORCE_REDISCOVERY)
 		DEBUGADD(lvl,("DS_FORCE_REDISCOVERY "));
-	if (flags & 0x00000002)
+	if (flags & 0x000000002)
 		DEBUGADD(lvl,("0x00000002 "));
-	if (flags & 0x00000004)
+	if (flags & 0x000000004)
 		DEBUGADD(lvl,("0x00000004 "));
-	if (flags & 0x00000008)
+	if (flags & 0x000000008)
 		DEBUGADD(lvl,("0x00000008 "));
 	if (flags & DS_DIRECTORY_SERVICE_REQUIRED)
 		DEBUGADD(lvl,("DS_DIRECTORY_SERVICE_REQUIRED "));
@@ -196,29 +196,7 @@ static NTSTATUS store_cldap_reply(TALLOC_CTX *mem_ctx,
 	/* FIXME */
 	r->sockaddr_size = 0x10; /* the w32 winsock addr size */
 	r->sockaddr.sockaddr_family = 2; /* AF_INET */
-	if (is_ipaddress_v4(addr)) {
-		r->sockaddr.pdc_ip = talloc_strdup(mem_ctx, addr);
-		if (r->sockaddr.pdc_ip == NULL) {
-			return NT_STATUS_NO_MEMORY;
-		}
-	} else {
-		/*
-		 * ndr_push_NETLOGON_SAM_LOGON_RESPONSE_EX will
-		 * fail with an ipv6 address.
-		 *
-		 * This matches windows behaviour in the CLDAP
-		 * response when NETLOGON_NT_VERSION_5EX_WITH_IP
-		 * is used.
-		 *
-		 * Windows returns the ipv4 address of the ipv6
-		 * server interface and falls back to 127.0.0.1
-		 * if there's no ipv4 address.
-		 */
-		r->sockaddr.pdc_ip = talloc_strdup(mem_ctx, "127.0.0.1");
-		if (r->sockaddr.pdc_ip == NULL) {
-			return NT_STATUS_NO_MEMORY;
-		}
-	}
+	r->sockaddr.pdc_ip = talloc_strdup(mem_ctx, addr);
 
 	ndr_err = ndr_push_struct_blob(&blob, mem_ctx, r,
 		       (ndr_push_flags_fn_t)ndr_push_NETLOGON_SAM_LOGON_RESPONSE_EX);
@@ -951,11 +929,6 @@ static NTSTATUS process_dc_netbios(TALLOC_CTX *mem_ctx,
 	if (flags & DS_PDC_REQUIRED) {
 		name_type = NBT_NAME_PDC;
 	}
-
-	/*
-	 * It's 2024 we always want an AD style response!
-	 */
-	nt_version |= NETLOGON_NT_VERSION_AVOID_NT4EMUL;
 
 	nt_version |= map_ds_flags_to_nt_version(flags);
 

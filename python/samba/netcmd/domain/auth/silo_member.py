@@ -21,35 +21,42 @@
 #
 
 import samba.getopt as options
+from ldb import Dn
 from samba.netcmd import Command, CommandError, Option, SuperCommand
 from samba.netcmd.domain.models import AuthenticationSilo, User
 from samba.netcmd.domain.models.exceptions import ModelError
 
 
-class cmd_domain_auth_silo_member_grant(Command):
-    """Grant a member access to an authentication silo."""
+class cmd_domain_auth_silo_member_add(Command):
+    """Add a member to an authentication silo."""
 
     synopsis = "%prog -H <URL> [options]"
 
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
-        "hostopts": options.HostOptions,
     }
 
     takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server.",
+               type=str, metavar="URL", dest="ldap_url"),
         Option("--name",
                help="Name of authentication silo (required).",
-               dest="name", action="store", type=str, required=True),
+               dest="name", action="store", type=str),
         Option("--member",
-               help="Member to grant access to the silo (DN or account name).",
-               dest="member", action="store", type=str, required=True),
+               help="Member to add to the silo (DN or account name).",
+               dest="member", action="store", type=str),
     ]
 
-    def run(self, hostopts=None, sambaopts=None, credopts=None,
+    def run(self, ldap_url=None, sambaopts=None, credopts=None,
             name=None, member=None):
 
-        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
+        if not name:
+            raise CommandError("Argument --name is required.")
+        if not member:
+            raise CommandError("Argument --member is required.")
+
+        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
 
         try:
             silo = AuthenticationSilo.get(ldb, cn=name)
@@ -60,29 +67,32 @@ class cmd_domain_auth_silo_member_grant(Command):
         if silo is None:
             raise CommandError(f"Authentication silo {name} not found.")
 
+        # Try a Dn first, then sAMAccountName.
         try:
-            user = User.find(ldb, member)
+            user_query = {"dn": Dn(ldb, member)}
+        except ValueError:
+            user_query = {"username": member}
+
+        try:
+            user = User.get(ldb, **user_query)
         except ModelError as e:
             raise CommandError(e)
 
         # Ensure the user actually exists first.
         if user is None:
-            raise CommandError(f"User {member} not found.")
+            raise CommandError(f"User '{member}' not found.")
 
-        # Grant access to member.
+        # Set the assigned silo.
+        user.assigned_silo = silo.dn
+
+        # Add member and save user.
         try:
-            silo.grant(ldb, user)
+            silo.add_member(ldb, user)
+            user.save(ldb)
         except ModelError as e:
             raise CommandError(e)
 
-        # Display silo assigned status.
-        if user.assigned_silo and user.assigned_silo == silo.dn:
-            status = "assigned"
-        else:
-            status = "unassigned"
-
-        print(f"User {user} granted access to the authentication silo {name} ({status}).",
-              file=self.outf)
+        self.outf.write(f"User '{user.name}' added to the {name} silo.\n")
 
 
 class cmd_domain_auth_silo_member_list(Command):
@@ -93,21 +103,25 @@ class cmd_domain_auth_silo_member_list(Command):
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
-        "hostopts": options.HostOptions,
     }
 
     takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server.",
+               type=str, metavar="URL", dest="ldap_url"),
         Option("--name",
                help="Name of authentication silo (required).",
-               dest="name", action="store", type=str, required=True),
+               dest="name", action="store", type=str),
         Option("--json", help="Output results in JSON format.",
                dest="output_format", action="store_const", const="json"),
     ]
 
-    def run(self, hostopts=None, sambaopts=None, credopts=None,
+    def run(self, ldap_url=None, sambaopts=None, credopts=None,
             name=None, output_format=None):
 
-        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
+        if not name:
+            raise CommandError("Argument --name is required.")
+
+        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
 
         try:
             silo = AuthenticationSilo.get(ldb, cn=name)
@@ -129,33 +143,39 @@ class cmd_domain_auth_silo_member_list(Command):
             self.print_json([member.as_dict() for member in members])
         else:
             for member in members:
-                print(member.dn, file=self.outf)
+                self.outf.write(f"{member.dn}\n")
 
 
-class cmd_domain_auth_silo_member_revoke(Command):
-    """Revoke a member from an authentication silo."""
+class cmd_domain_auth_silo_member_remove(Command):
+    """Remove a member from an authentication silo."""
 
     synopsis = "%prog -H <URL> [options]"
 
     takes_optiongroups = {
         "sambaopts": options.SambaOptions,
         "credopts": options.CredentialsOptions,
-        "hostopts": options.HostOptions,
     }
 
     takes_options = [
+        Option("-H", "--URL", help="LDB URL for database or target server.",
+               type=str, metavar="URL", dest="ldap_url"),
         Option("--name",
                help="Name of authentication silo (required).",
-               dest="name", action="store", type=str, required=True),
+               dest="name", action="store", type=str),
         Option("--member",
-               help="Member to revoke from the silo (DN or account name).",
-               dest="member", action="store", type=str, required=True),
+               help="Member to remove from the silo (DN or account name).",
+               dest="member", action="store", type=str),
     ]
 
-    def run(self, hostopts=None, sambaopts=None, credopts=None,
+    def run(self, ldap_url=None, sambaopts=None, credopts=None,
             name=None, member=None):
 
-        ldb = self.ldb_connect(hostopts, sambaopts, credopts)
+        if not name:
+            raise CommandError("Argument --name is required.")
+        if not member:
+            raise CommandError("Argument --member is required.")
+
+        ldb = self.ldb_connect(ldap_url, sambaopts, credopts)
 
         try:
             silo = AuthenticationSilo.get(ldb, cn=name)
@@ -166,36 +186,39 @@ class cmd_domain_auth_silo_member_revoke(Command):
         if silo is None:
             raise CommandError(f"Authentication silo {name} not found.")
 
+        # Try a Dn first, then sAMAccountName.
         try:
-            user = User.find(ldb, member)
+            user_query = {"dn": Dn(ldb, member)}
+        except ValueError:
+            user_query = {"username": member}
+
+        try:
+            user = User.get(ldb, **user_query)
         except ModelError as e:
             raise CommandError(e)
 
         # Ensure the user actually exists first.
         if user is None:
-            raise CommandError(f"User {member} not found.")
+            raise CommandError(f"User '{member}' not found.")
 
-        # Revoke member access.
+        # Unset the assigned silo.
+        user.assigned_silo = None
+
+        # Remove member and save user.
         try:
-            silo.revoke(ldb, user)
+            silo.remove_member(ldb, user)
+            user.save(ldb)
         except ModelError as e:
             raise CommandError(e)
 
-        # Display silo assigned status.
-        if user.assigned_silo and user.assigned_silo == silo.dn:
-            status = "assigned"
-        else:
-            status = "unassigned"
-
-        print(f"User {user} revoked from the authentication silo {name} ({status}).",
-              file=self.outf)
+        self.outf.write(f"User '{user.name}' removed from the {name} silo.\n")
 
 
 class cmd_domain_auth_silo_member(SuperCommand):
     """Manage members in an authentication silo."""
 
     subcommands = {
-        "grant": cmd_domain_auth_silo_member_grant(),
+        "add": cmd_domain_auth_silo_member_add(),
         "list": cmd_domain_auth_silo_member_list(),
-        "revoke": cmd_domain_auth_silo_member_revoke(),
+        "remove": cmd_domain_auth_silo_member_remove(),
     }

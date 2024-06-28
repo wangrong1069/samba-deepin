@@ -34,7 +34,6 @@
 #include "lib/gencache.h"
 #include "librpc/gen_ndr/dns.h"
 #include "lib/util/util_net.h"
-#include "lib/util/tsort.h"
 #include "lib/util/string_wrappers.h"
 
 /* nmbd.c sets this to True. */
@@ -645,12 +644,7 @@ static struct tevent_req *nb_trans_send(
 		return tevent_req_post(req, ev);
 	}
 
-	subreq = nb_packet_reader_send(state,
-				       ev,
-				       global_nmbd_socket_dir(),
-				       type,
-				       state->trn_id,
-				       NULL);
+	subreq = nb_packet_reader_send(state, ev, type, state->trn_id, NULL);
 	if (tevent_req_nomem(subreq, req)) {
 		return tevent_req_post(req, ev);
 	}
@@ -1088,15 +1082,8 @@ bool name_status_find(const char *q_name,
 }
 
 /*
- * comparison function used by sort_addr_list
- *
- * This comparison is intransitive in sort if a socket has an invalid
- * family (i.e., not IPv4 or IPv6), or an interface doesn't support
- * the family. Say we have sockaddrs with IP versions {4,5,6}, of
- * which 5 is invalid. By this function, 4 == 5 and 6 == 5, but 4 !=
- * 6. This is of course a consequence of cmp() being unable to
- * communicate error.
- */
+  comparison function used by sort_addr_list
+*/
 
 static int addr_compare(const struct sockaddr_storage *ss1,
 			const struct sockaddr_storage *ss2)
@@ -1184,7 +1171,7 @@ static int addr_compare(const struct sockaddr_storage *ss1,
 			max_bits2 += 128;
 		}
 	}
-	return NUMERIC_CMP(max_bits2, max_bits1);
+	return max_bits2 - max_bits1;
 }
 
 /*

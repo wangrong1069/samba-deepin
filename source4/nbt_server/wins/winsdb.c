@@ -32,7 +32,6 @@
 #include "lib/socket/netif.h"
 #include "param/param.h"
 #include "lib/util/smb_strtox.h"
-#include "lib/util/tsort.h"
 
 #undef strcasecmp
 
@@ -350,7 +349,7 @@ static int winsdb_addr_sort_list (struct winsdb_addr **p1, struct winsdb_addr **
 	 * then the replica addresses with the newest to the oldest address
 	 */
 	if (a2->expire_time != a1->expire_time) {
-		return NUMERIC_CMP(a2->expire_time, a1->expire_time);
+		return a2->expire_time - a1->expire_time;
 	}
 
 	if (strcmp(a2->wins_owner, h->local_owner) == 0) {
@@ -361,7 +360,7 @@ static int winsdb_addr_sort_list (struct winsdb_addr **p1, struct winsdb_addr **
 		a1_owned = true;
 	}
 
-	return NUMERIC_CMP(a2_owned, a1_owned);
+	return a2_owned - a1_owned;
 }
 
 struct winsdb_addr **winsdb_addr_list_add(struct winsdb_handle *h, const struct winsdb_record *rec,

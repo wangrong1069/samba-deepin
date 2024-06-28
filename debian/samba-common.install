@@ -1,3 +1,0 @@
-debian/is-configured usr/share/samba/
-debian/panic-action usr/share/samba/
-debian/gdbcommands etc/samba/

@@ -39,6 +39,7 @@ from samba.tests.password_hash import (
     PassWordHashTests,
     get_package,
     USER_NAME,
+    USER_PASS
 )
 from samba.samdb import SamDB
 from samba.ndr import ndr_unpack
@@ -54,6 +55,9 @@ def attid_equal(a1, a2):
 
 
 class PassWordHashLDAPTests(PassWordHashTests):
+
+    def setUp(self):
+        super(PassWordHashLDAPTests, self).setUp()
 
     # Get the supplemental credentials for the user under test
     def get_supplemental_creds_drs(self):

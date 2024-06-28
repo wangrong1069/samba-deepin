@@ -324,8 +324,7 @@ static struct printer_handle *find_printer_index_by_hnd(struct pipes_struct *p,
 					  struct printer_handle,
 					  &status);
 	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(2,("find_printer_index_by_hnd: Printer handle not found: %s\n",
-			 nt_errstr(status)));
+		DEBUG(2,("find_printer_index_by_hnd: Printer handle not found: "));
 		return NULL;
 	}
 
@@ -763,7 +762,7 @@ static WERROR open_printer_hnd(struct pipes_struct *p,
 }
 
 /***************************************************************************
- check to see if the client notify handle is monitoring the notification
+ check to see if the client motify handle is monitoring the notification
  given by (notify_type, notify_field).
  **************************************************************************/
 
@@ -1100,7 +1099,7 @@ static void construct_info_data(struct spoolss_Notify *info_data,
 				uint16_t field, int id);
 
 /***********************************************************************
- Send a change notification message on all handles which have a call
+ Send a change notifation message on all handles which have a call
  back registered
  **********************************************************************/
 
@@ -2177,7 +2176,7 @@ static WERROR spoolss_dpd_version(TALLOC_CTX *mem_ctx,
 	/*
 	 * now delete any associated files if delete_files is
 	 * true. Even if this part fails, we return success
-	 * because the driver does not exist any more
+	 * because the driver doesn not exist any more
 	 */
 	if (delete_files) {
 		delete_driver_files(session_info, info);
@@ -3494,7 +3493,7 @@ static bool construct_notify_jobs_info(struct messaging_context *msg_ctx,
 						      struct spoolss_Notify,
 						      info->count + 1);
 		if (info->notifies == NULL) {
-			DEBUG(2,("construct_notify_jobs_info: failed to enlarge buffer info->data!\n"));
+			DEBUG(2,("construct_notify_jobs_info: failed to enlarg buffer info->data!\n"));
 			return false;
 		}
 
@@ -5796,7 +5795,7 @@ static WERROR construct_printer_driver_info_level(TALLOC_CTX *mem_ctx,
 	}
 
 	/* these are allocated on mem_ctx and not tmp_ctx because they are
-	 * the 'return value' and need to outlive this call */
+	 * the 'return value' and need to utlive this call */
 	switch (level) {
 	case 1:
 		result = fill_printer_driver_info1(mem_ctx, &r->info1, driver, servername);
@@ -7592,7 +7591,7 @@ static WERROR enumjobs_level2(TALLOC_CTX *mem_ctx,
 							pinfo2->printername,
 							&devmode);
 		if (!W_ERROR_IS_OK(result)) {
-			DEBUG(3, ("Can't proceed w/o a devmode!\n"));
+			DEBUG(3, ("Can't proceed w/o a devmode!"));
 			goto err_pdb_drop;
 		}
 
@@ -8255,7 +8254,7 @@ static WERROR fill_port_2(TALLOC_CTX *mem_ctx,
 
 
 /****************************************************************************
- wrapper around the enum ports command
+ wrapper around the enumer ports command
 ****************************************************************************/
 
 static WERROR enumports_hook(TALLOC_CTX *ctx, int *count, char ***lines)
@@ -8576,7 +8575,7 @@ static WERROR spoolss_addprinterex_level_2(struct pipes_struct *p,
 	}
 
 	if (devmode == NULL) {
-		info2_mask &= ~SPOOLSS_PRINTER_INFO_DEVMODE;
+		info2_mask = ~SPOOLSS_PRINTER_INFO_DEVMODE;
 	}
 
 	err = update_dsspooler(p->mem_ctx,
@@ -8732,7 +8731,7 @@ WERROR _spoolss_AddPrinterDriverEx(struct pipes_struct *p,
 	}
 
 	/*
-	 * I think this is where the DrvUpgradePrinter() hook would be
+	 * I think this is where he DrvUpgradePrinter() hook would be
 	 * be called in a driver's interface DLL on a Windows NT 4.0/2k
 	 * server.  Right now, we just need to send ourselves a message
 	 * to update each printer bound to this driver.   --jerry
@@ -9313,7 +9312,7 @@ WERROR _spoolss_SetForm(struct pipes_struct *p,
 	if ((session_info->unix_token->uid != sec_initial_uid()) &&
 	     !security_token_has_privilege(session_info->security_token,
 					   SEC_PRIV_PRINT_OPERATOR)) {
-		DEBUG(2,("_spoolss_SetForm: denied by insufficient permissions.\n"));
+		DEBUG(2,("_spoolss_Setform: denied by insufficient permissions.\n"));
 		return WERR_ACCESS_DENIED;
 	}
 
@@ -9817,7 +9816,7 @@ static WERROR getjob_level_2(TALLOC_CTX *mem_ctx,
 						pinfo2->printername,
 						&devmode);
 		if (!W_ERROR_IS_OK(result)) {
-			DEBUG(3, ("Can't proceed w/o a devmode!\n"));
+			DEBUG(3, ("Can't proceed w/o a devmode!"));
 			return result;
 		}
 	}
@@ -10119,7 +10118,7 @@ WERROR _spoolss_SetPrinterDataEx(struct pipes_struct *p,
 
 	/*
 	 * Access check : NT returns "access denied" if you make a
-	 * SetPrinterData call without the necessary privilege.
+	 * SetPrinterData call without the necessary privildge.
 	 * we were originally returning OK if nothing changed
 	 * which made Win2k issue **a lot** of SetPrinterData
 	 * when connecting to a printer  --jerry
@@ -10437,6 +10436,18 @@ WERROR _spoolss_EnumPrinterDataEx(struct pipes_struct *p,
 		goto done;
 	}
 
+#if 0 /* FIXME - gd */
+	/* housekeeping information in the reply */
+
+	/* Fix from Martin Zielinski <mz@seh.de> - ensure
+	 * the hand marshalled container size is a multiple
+	 * of 4 bytes for RPC alignment.
+	 */
+
+	if (needed % 4) {
+		needed += 4-(needed % 4);
+	}
+#endif
 	*r->out.count	= count;
 	*r->out.info	= info;
 

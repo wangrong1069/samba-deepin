@@ -521,11 +521,6 @@ static int net_ads_info_json(ADS_STRUCT *ads)
 		goto failure;
 	}
 
-	ret = json_add_string (&jsobj, "Workgroup", ads->config.workgroup);
-	if (ret != 0) {
-		goto failure;
-	}
-
 	ret = json_add_string (&jsobj, "Realm", ads->config.realm);
 	if (ret != 0) {
 		goto failure;
@@ -632,7 +627,6 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 
 	d_printf(_("LDAP server: %s\n"), addr);
 	d_printf(_("LDAP server name: %s\n"), ads->config.ldap_server_name);
-	d_printf(_("Workgroup: %s\n"), ads->config.workgroup);
 	d_printf(_("Realm: %s\n"), ads->config.realm);
 	d_printf(_("Bind Path: %s\n"), ads->config.bind_path);
 	d_printf(_("LDAP port: %d\n"), ads->ldap.port);
@@ -1146,8 +1140,6 @@ static int ads_user_info(struct net_context *c, int argc, const char **argv)
 
 	ret = 0;
 out:
-	TALLOC_FREE(escaped_user);
-	TALLOC_FREE(searchstring);
 	ads_msgfree(ads, res);
 	TALLOC_FREE(tmp_ctx);
 	return ret;
@@ -1683,7 +1675,7 @@ static WERROR check_ads_config( void )
 	}
 
 	if ( lp_security() == SEC_ADS && !*lp_realm()) {
-		d_fprintf(stderr, _("realm must be set in %s for ADS "
+		d_fprintf(stderr, _("realm must be set in in %s for ADS "
 			  "join to succeed.\n"), get_dyn_CONFIGFILE());
 		return WERR_INVALID_PARAMETER;
 	}

@@ -111,14 +111,11 @@ static int resolve_oids_parse_tree_need(struct ldb_context *ldb,
 		return resolve_oids_parse_tree_need(ldb, schema,
 						tree->u.isnot.child);
 	case LDB_OP_EQUALITY:
-		attr = tree->u.equality.attr;
-		valp = &tree->u.equality.value;
-		break;
 	case LDB_OP_GREATER:
 	case LDB_OP_LESS:
 	case LDB_OP_APPROX:
-		attr = tree->u.comparison.attr;
-		valp = &tree->u.comparison.value;
+		attr = tree->u.equality.attr;
+		valp = &tree->u.equality.value;
 		break;
 	case LDB_OP_SUBSTRING:
 		attr = tree->u.substring.attr;
@@ -303,14 +300,11 @@ static int resolve_oids_parse_tree_replace(struct ldb_context *ldb,
 		return resolve_oids_parse_tree_replace(ldb, schema,
 						tree->u.isnot.child);
 	case LDB_OP_EQUALITY:
-		attrp = &tree->u.equality.attr;
-		valp = &tree->u.equality.value;
-		break;
 	case LDB_OP_GREATER:
 	case LDB_OP_LESS:
 	case LDB_OP_APPROX:
-		attrp = &tree->u.comparison.attr;
-		valp = &tree->u.comparison.value;
+		attrp = &tree->u.equality.attr;
+		valp = &tree->u.equality.value;
 		break;
 	case LDB_OP_SUBSTRING:
 		attrp = &tree->u.substring.attr;

@@ -1,14 +1,9 @@
 # https://clang.llvm.org/docs/ClangFormatStyleOptions.html
-AlignAfterOpenBracket: Align
-AlignEscapedNewlines: Left
-AllowAllArgumentsOnNextLine: true
-AllowAllParametersOfDeclarationOnNextLine: false
-AllowShortFunctionsOnASingleLine: Empty
-AllowShortIfStatementsOnASingleLine: false
-AlwaysBreakAfterReturnType: None
 BasedOnStyle: LLVM
-BinPackArguments: false
-BinPackParameters: false
+IndentWidth: 8
+ContinuationIndentWidth: 8
+UseTab: true
+BreakBeforeBraces: Custom
 BraceWrapping:
     AfterEnum: false
     AfterFunction: true
@@ -17,17 +12,15 @@ BraceWrapping:
     AfterExternBlock: true
     BeforeElse: false
     BeforeWhile: false
-    AfterControlStatement: MultiLine
-BreakBeforeBinaryOperators: None
-BreakBeforeBraces: Custom
+AllowShortIfStatementsOnASingleLine: false
 ColumnLimit: 80
-ContinuationIndentWidth: 8
 IndentCaseLabels: false
-IndentGotoLabels: false
-IndentWidth: 8
-PenaltyBreakAssignment: 200
-PenaltyBreakBeforeFirstCallParameter: 100
-PenaltyReturnTypeOnItsOwnLine: 1000
+AlignAfterOpenBracket: Align
+BinPackParameters: false
+BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllArgumentsOnNextLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AlwaysBreakAfterReturnType: None
+AlignEscapedNewlines: Left
 SortIncludes: false
-UseTab: true
-WhitespaceSensitiveMacros: ['DEBUG']

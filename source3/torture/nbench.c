@@ -274,11 +274,8 @@ static struct tevent_req *nbench_cmd_send(TALLOC_CTX *mem_ctx,
 			tevent_req_nterror(req, NT_STATUS_INVALID_PARAMETER);
 			return tevent_req_post(req, ev);
 		}
-		subreq = cli_close_send(state,
-					ev,
-					nb_state->cli,
-					state->ft->fnum,
-					0);
+		subreq = cli_close_send(
+			state, ev, nb_state->cli, state->ft->fnum);
 		break;
 	}
 	case NBENCH_CMD_MKDIR: {

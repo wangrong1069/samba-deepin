@@ -26,6 +26,8 @@ from samba.credentials import Credentials, SMB_ENCRYPTION_REQUIRED, SMB_ENCRYPTI
 from samba import NTSTATUSError
 
 class RpcBindingTests(RpcInterfaceTestCase):
+    def setUp(self):
+        super(RpcBindingTests, self).setUp()
 
     def get_user_creds(self):
         c = Credentials()

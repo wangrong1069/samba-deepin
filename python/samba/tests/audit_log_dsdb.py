@@ -40,7 +40,7 @@ class AuditLogDsdbTests(AuditLogTestBase):
     def setUp(self):
         self.message_type = MSG_DSDB_LOG
         self.event_type = DSDB_EVENT_NAME
-        super().setUp()
+        super(AuditLogDsdbTests, self).setUp()
 
         self.server_ip = os.environ["SERVER_IP"]
 
@@ -92,7 +92,7 @@ class AuditLogDsdbTests(AuditLogTestBase):
 
     def tearDown(self):
         self.discardMessages()
-        super().tearDown()
+        super(AuditLogDsdbTests, self).tearDown()
 
     def haveExpectedTxn(self, expected):
         if self.context["txnMessage"] is not None:

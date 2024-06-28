@@ -21,6 +21,7 @@ from samba.tests.samdb import SamDBTestCase
 from samba.samdb import SamDB
 import ldb
 import os
+import samba
 import gc
 import time
 

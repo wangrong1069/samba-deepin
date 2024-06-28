@@ -24,6 +24,7 @@ os.environ["PYTHONUNBUFFERED"] = "1"
 import samba
 import random
 from samba.tests import TestCase
+from samba import NTSTATUSError
 from samba import credentials
 from samba.ntstatus import NT_STATUS_NOTIFY_CLEANUP
 from samba.samba3 import libsmb_samba_internal as libsmb
@@ -36,7 +37,7 @@ test_dir = os.path.join('notify_test_%d' % random.randint(0, 0xFFFF))
 
 class SMBNotifyTests(TestCase):
     def setUp(self):
-        super().setUp()
+        super(SMBNotifyTests, self).setUp()
         self.server = samba.tests.env_get_var_value("SERVER")
 
         # create an SMB connection to the server
@@ -73,7 +74,7 @@ class SMBNotifyTests(TestCase):
         self.smb_conn_unpriv = libsmb.Conn(self.server, self.share, self.lp, creds_unpriv)
 
     def tearDown(self):
-        super().tearDown()
+        super(SMBNotifyTests, self).tearDown()
         try:
             self.smb_conn.deltree(test_dir)
         except:

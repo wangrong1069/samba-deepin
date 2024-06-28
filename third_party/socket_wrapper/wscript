@@ -2,7 +2,7 @@
 
 import os
 
-VERSION = "1.4.3"
+VERSION = "1.4.2"
 
 
 def configure(conf):
@@ -10,7 +10,6 @@ def configure(conf):
         conf.DEFINE('USING_SYSTEM_SOCKET_WRAPPER', 1)
         libsocket_wrapper_so_path = 'libsocket_wrapper.so'
     else:
-        conf.CHECK_HEADERS('gnu/lib-names.h')
 
         if conf.CONFIG_SET("HAVE___THREAD"):
             conf.DEFINE("HAVE_GCC_THREAD_LOCAL_STORAGE", 1)
@@ -111,7 +110,7 @@ def configure(conf):
 def build(bld):
     if not bld.CONFIG_SET("USING_SYSTEM_SOCKET_WRAPPER"):
         # We need to do it this way or the library wont work.
-        # We need force_unversioned=True as symbol versioning
+        # Using private_library=True will add symbol version which
         # breaks preloading!
         bld.SAMBA_LIBRARY('socket_wrapper',
                           source='socket_wrapper.c',
@@ -122,5 +121,4 @@ def build(bld):
                               VERSION),
                           deps='dl pthread tirpc',
                           install=False,
-                          force_unversioned=True,
                           realname='libsocket-wrapper.so')

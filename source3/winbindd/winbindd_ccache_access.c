@@ -26,7 +26,6 @@
 #include "winbindd.h"
 #include "auth/gensec/gensec.h"
 #include "auth_generic.h"
-#include "lib/util/string_wrappers.h"
 
 #undef DBGC_CLASS
 #define DBGC_CLASS DBGC_WINBIND
@@ -184,10 +183,7 @@ static bool check_client_uid(struct winbindd_cli_state *state, uid_t uid)
 bool winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 {
 	struct winbindd_domain *domain;
-	char *name_namespace = NULL;
-	char *name_domain = NULL;
-	char *name_user = NULL;
-	char *auth_user = NULL;
+	fstring name_namespace, name_domain, name_user;
 	NTSTATUS result = NT_STATUS_NOT_SUPPORTED;
 	struct WINBINDD_MEMORY_CREDS *entry;
 	DATA_BLOB initial, challenge, auth;
@@ -203,20 +199,15 @@ bool winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 
 	/* Parse domain and username */
 
-	auth_user = state->request->data.ccache_ntlm_auth.user;
-	ok = canonicalize_username(state,
-				   &auth_user,
-				   &name_namespace,
-				   &name_domain,
-				   &name_user);
+	ok = canonicalize_username(state->request->data.ccache_ntlm_auth.user,
+				   name_namespace,
+				   name_domain,
+				   name_user);
 	if (!ok) {
 		DEBUG(5,("winbindd_ccache_ntlm_auth: cannot parse domain and user from name [%s]\n",
 			state->request->data.ccache_ntlm_auth.user));
 		return false;
 	}
-
-	fstrcpy(state->request->data.ccache_ntlm_auth.user, auth_user);
-	TALLOC_FREE(auth_user);
 
 	domain = find_auth_domain(state->request->flags, name_domain);
 
@@ -248,15 +239,11 @@ bool winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 		goto process_result;
 	}
 
-	TALLOC_FREE(name_namespace);
-	TALLOC_FREE(name_domain);
-	TALLOC_FREE(name_user);
 	/* Parse domain and username */
-	ok = parse_domain_user(state,
-			       state->request->data.ccache_ntlm_auth.user,
-			       &name_namespace,
-			       &name_domain,
-			       &name_user);
+	ok = parse_domain_user(state->request->data.ccache_ntlm_auth.user,
+			       name_namespace,
+			       name_domain,
+			       name_user);
 	if (!ok) {
 		DEBUG(10,("winbindd_dual_ccache_ntlm_auth: cannot parse "
 			"domain and user from name [%s]\n",
@@ -319,19 +306,13 @@ bool winbindd_ccache_ntlm_auth(struct winbindd_cli_state *state)
 	data_blob_free(&auth);
 
   process_result:
-	TALLOC_FREE(name_namespace);
-	TALLOC_FREE(name_domain);
-	TALLOC_FREE(name_user);
 	return NT_STATUS_IS_OK(result);
 }
 
 bool winbindd_ccache_save(struct winbindd_cli_state *state)
 {
 	struct winbindd_domain *domain;
-	char *name_namespace = NULL;
-	char *name_domain = NULL;
-	char *name_user = NULL;
-	char *save_user = NULL;
+	fstring name_namespace, name_domain, name_user;
 	NTSTATUS status;
 	bool ok;
 
@@ -347,21 +328,16 @@ bool winbindd_ccache_save(struct winbindd_cli_state *state)
 
 	/* Parse domain and username */
 
-
-	save_user = state->request->data.ccache_save.user;
-	ok = canonicalize_username(state,
-				   &save_user,
-				   &name_namespace,
-				   &name_domain,
-				   &name_user);
+	ok = canonicalize_username(state->request->data.ccache_save.user,
+				   name_namespace,
+				   name_domain,
+				   name_user);
 	if (!ok) {
 		DEBUG(5,("winbindd_ccache_save: cannot parse domain and user "
 			 "from name [%s]\n",
 			 state->request->data.ccache_save.user));
 		return false;
 	}
-
-	fstrcpy(state->request->data.ccache_save.user, save_user);
 
 	/*
 	 * The domain is checked here only for compatibility

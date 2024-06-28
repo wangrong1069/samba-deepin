@@ -220,7 +220,7 @@ class SmbDotConfTests(TestCase):
     ])
 
     def setUp(self):
-        super().setUp()
+        super(SmbDotConfTests, self).setUp()
         # create a minimal smb.conf file for testparm
         self.smbconf = os.path.join(self.tempdir, "paramtestsmb.conf")
         f = open(self.smbconf, 'w')
@@ -257,7 +257,7 @@ class SmbDotConfTests(TestCase):
             self.fail("Unable to load parameters")
 
     def tearDown(self):
-        super().tearDown()
+        super(SmbDotConfTests, self).tearDown()
         os.unlink(self.smbconf)
         os.unlink(self.blankconf)
 

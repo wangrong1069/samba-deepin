@@ -37,7 +37,6 @@
 #include "lib/smbd_shim.h"
 #include "system/filesys.h"
 #include "lib/global_contexts.h"
-#include "lib/param/param.h"
 
 /* List to hold groups of commands */
 static struct cmd_list {
@@ -206,8 +205,7 @@ static NTSTATUS cmd_debuglevel(struct vfs_state *vfs, TALLOC_CTX *mem_ctx, int a
 	}
 
 	if (argc == 2) {
-		struct loadparm_context *lp_ctx = samba_cmdline_get_lp_ctx();
-		lpcfg_set_cmdline(lp_ctx, "log level", argv[1]);
+		lp_set_cmdline("log level", argv[1]);
 	}
 
 	printf("debuglevel is %d\n", DEBUGLEVEL);

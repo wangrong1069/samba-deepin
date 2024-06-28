@@ -70,7 +70,7 @@ creds.set_krb_forwardable(credentials.NO_KRB_FORWARDABLE)
 
 class TestSimpleQueries(DNSTest):
     def setUp(self):
-        super().setUp()
+        super(TestSimpleQueries, self).setUp()
         global server, server_ip, lp, creds, timeout
         self.server = server_name
         self.server_ip = server_ip
@@ -302,7 +302,7 @@ class TestSimpleQueries(DNSTest):
 
 class TestDNSUpdates(DNSTest):
     def setUp(self):
-        super().setUp()
+        super(TestDNSUpdates, self).setUp()
         global server, server_ip, lp, creds, timeout
         self.server = server_name
         self.server_ip = server_ip
@@ -718,7 +718,7 @@ class TestComplexQueries(DNSTest):
         self.assert_dns_rcode_equals(response, dns.DNS_RCODE_OK)
 
     def setUp(self):
-        super().setUp()
+        super(TestComplexQueries, self).setUp()
 
         global server, server_ip, lp, creds, timeout
         self.server = server_name
@@ -990,7 +990,7 @@ class TestComplexQueries(DNSTest):
 
 class TestInvalidQueries(DNSTest):
     def setUp(self):
-        super().setUp()
+        super(TestInvalidQueries, self).setUp()
         global server, server_ip, lp, creds, timeout
         self.server = server_name
         self.server_ip = server_ip
@@ -1067,7 +1067,7 @@ class TestInvalidQueries(DNSTest):
 
 class TestZones(DNSTest):
     def setUp(self):
-        super().setUp()
+        super(TestZones, self).setUp()
         global server, server_ip, lp, creds, timeout
         self.server = server_name
         self.server_ip = server_ip
@@ -1089,7 +1089,7 @@ class TestZones(DNSTest):
                        str(self.samdb.get_default_basedn())
 
     def tearDown(self):
-        super().tearDown()
+        super(TestZones, self).tearDown()
 
         try:
             self.delete_zone(self.zone)
@@ -1761,7 +1761,7 @@ class TestZones(DNSTest):
 
 class TestRPCRoundtrip(DNSTest):
     def setUp(self):
-        super().setUp()
+        super(TestRPCRoundtrip, self).setUp()
         global server, server_ip, lp, creds
         self.server = server_name
         self.server_ip = server_ip
@@ -1771,6 +1771,9 @@ class TestRPCRoundtrip(DNSTest):
                                             (self.server_ip),
                                             self.lp,
                                             self.creds)
+
+    def tearDown(self):
+        super(TestRPCRoundtrip, self).tearDown()
 
     def rpc_update(self, fqn=None, data=None, wType=None, delete=False):
         fqn = fqn or ("rpctestrec." + self.get_dns_domain())

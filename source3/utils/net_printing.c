@@ -31,7 +31,6 @@
 #include "../librpc/gen_ndr/ndr_winreg.h"
 #include "util_tdb.h"
 #include "printing/nt_printing_migrate.h"
-#include "lib/param/param.h"
 
 #define FORMS_PREFIX "FORMS/"
 #define FORMS_PREFIX_LEN 6
@@ -253,7 +252,7 @@ static int net_printing_dump(struct net_context *c, int argc,
 	}
 
 	if (o->encoding != NULL) {
-		lpcfg_set_cmdline(c->lp_ctx, "dos charset", o->encoding);
+		lp_set_cmdline("dos charset", o->encoding);
 		d_fprintf(stderr, _("do string conversion from %s to %s\n"),
 				    lp_dos_charset(), lp_unix_charset());
 		do_string_conversion = true;
@@ -358,7 +357,7 @@ static int net_printing_dump(struct net_context *c, int argc,
 	ret = 0;
 
  done:
-	lpcfg_set_cmdline(c->lp_ctx, "dos charset", save_dos_charset);
+	lp_set_cmdline("dos charset", save_dos_charset);
 	talloc_free(ctx);
 	return ret;
 }
@@ -399,7 +398,7 @@ static NTSTATUS printing_migrate_internal(struct net_context *c,
 	}
 
 	if (o->encoding != NULL) {
-		lpcfg_set_cmdline(c->lp_ctx, "dos charset", o->encoding);
+		lp_set_cmdline("dos charset", o->encoding);
 		d_fprintf(stderr, _("do string conversion from %s to %s\n"),
 				    lp_dos_charset(), lp_unix_charset());
 		do_string_conversion = true;
@@ -523,7 +522,7 @@ static NTSTATUS printing_migrate_internal(struct net_context *c,
 	status = NT_STATUS_OK;
 
  done:
-	lpcfg_set_cmdline(c->lp_ctx, "dos charset", save_dos_charset);
+	lp_set_cmdline("dos charset", save_dos_charset);
 	talloc_free(tmp_ctx);
 	return status;
 }

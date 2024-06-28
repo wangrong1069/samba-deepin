@@ -28,8 +28,7 @@ class ErrorDef:
         self.err_code = None
         self.err_define = None
         self.err_string = ""
-        self.isWinError = False
-        self.linenum = None
+        self.linenum = ""
 
 def escapeString( input ):
     output = input.replace('"','\\"')
@@ -54,8 +53,6 @@ def parseErrorDescriptions( file_contents, isWinError, transformErrorFunction ):
             continue
         content = line.strip().split(None,1)
         # start new error definition ?
-        if len(content) == 0:
-            continue
         if line.startswith("0x"):
             newError = ErrorDef()
             newError.err_code = int(content[0],0)
@@ -79,6 +76,7 @@ def parseErrorDescriptions( file_contents, isWinError, transformErrorFunction ):
                             err.err_string = desc
                         else:
                             err.err_string = err.err_string + " " + desc
-        count = count + 1
+            count = count + 1
     print("parsed %d lines generated %d error definitions"%(count,len(errors)))
     return errors
+

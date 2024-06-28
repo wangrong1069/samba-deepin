@@ -7,6 +7,12 @@ sys.path.insert(0, 'bin/python')
 import os
 import samba
 import samba.getopt as options
+import random
+import tempfile
+import shutil
+import time
+
+from samba.netcmd.main import cmd_sambatool
 
 # We try to use the test infrastructure of Samba 4.3+, but if it
 # doesn't work, we are probably in a back-ported patch and trying to
@@ -26,7 +32,9 @@ except ImportError:
 
 from samba.samdb import SamDB
 from samba.auth import system_session
-from ldb import SCOPE_BASE
+from ldb import Message, MessageElement, Dn, LdbError
+from ldb import FLAG_MOD_ADD, FLAG_MOD_REPLACE, FLAG_MOD_DELETE
+from ldb import SCOPE_BASE, SCOPE_SUBTREE, SCOPE_ONELEVEL
 
 parser = optparse.OptionParser("ad_dc_multi_bind.py [options] <host>")
 sambaopts = options.SambaOptions(parser)
@@ -80,8 +88,7 @@ if "://" not in host:
 
 if ANCIENT_SAMBA:
     runner = SubunitTestRunner()
-    if not runner.run(unittest.TestLoader().loadTestsFromTestCase(
-            UserTests)).wasSuccessful():
+    if not runner.run(unittest.makeSuite(UserTests)).wasSuccessful():
         sys.exit(1)
     sys.exit(0)
 else:

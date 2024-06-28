@@ -644,7 +644,13 @@ int json_add_stringn(struct json_object *object,
 	}
 
 	if (value != NULL && len > 0) {
-		json_t *string = json_stringn(value, len);
+		json_t *string = NULL;
+		char buffer[len+1];
+
+		strncpy(buffer, value, len);
+		buffer[len] = '\0';
+
+		string = json_string(buffer);
 		if (string == NULL) {
 			DBG_ERR("Unable to add string [%s], "
 				"could not create string object\n",

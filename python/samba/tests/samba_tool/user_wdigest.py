@@ -48,7 +48,7 @@ class UserCmdWdigestTestCase(SambaToolCmdTest):
     samdb = None
 
     def setUp(self):
-        super().setUp()
+        super(UserCmdWdigestTestCase, self).setUp()
         self.lp = samba.tests.env_loadparm()
         self.samdb = self.getSamDB(
             "-H", "ldap://%s" % os.environ["DC_SERVER"],
@@ -71,7 +71,7 @@ class UserCmdWdigestTestCase(SambaToolCmdTest):
                               "Ensure user is created")
 
     def tearDown(self):
-        super().tearDown()
+        super(UserCmdWdigestTestCase, self).tearDown()
         result, out, err = self.runsubcmd("user", "delete", USER_NAME)
         self.assertCmdSuccess(result,
                               out,
@@ -89,7 +89,10 @@ class UserCmdWdigestTestCase(SambaToolCmdTest):
                               out,
                               err,
                               "Ensure getpassword runs")
-        self.assertEqual(err, "Got password OK\n", "getpassword")
+        self.assertEqual(err, "", "getpassword")
+        self.assertMatch(out,
+                         "Got password OK",
+                         "getpassword out[%s]" % out)
 
         if missing:
             self.assertTrue(attribute not in out)

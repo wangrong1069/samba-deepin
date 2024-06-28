@@ -173,7 +173,9 @@ static void pvfs_pending_lock_continue(void *private_data, enum pvfs_wait_notice
 	/* we've now got the pending lock. try and get the rest, which might
 	   lead to more pending locks */
 	for (i=pending->pending_lock+1;i<lck->lockx.in.lock_cnt;i++) {		
-		pending->pending_lock = i;
+		if (pending) {
+			pending->pending_lock = i;
+		}
 
 		status = brlock_lock(pvfs->brl_context,
 				  f->brl_handle,
@@ -182,19 +184,24 @@ static void pvfs_pending_lock_continue(void *private_data, enum pvfs_wait_notice
 				  locks[i].count,
 				  rw, pending);
 		if (!NT_STATUS_IS_OK(status)) {
-			/* a timed lock failed - setup a wait message to handle
-			   the pending lock notification or a timeout */
-			pending->wait_handle = pvfs_wait_message(pvfs, req, MSG_BRL_RETRY,
-								 pending->end_time,
-								 pvfs_pending_lock_continue,
-								 pending);
-			if (pending->wait_handle == NULL) {
-				pvfs_lock_async_failed(pvfs, req, f, locks, i, NT_STATUS_NO_MEMORY);
-				talloc_free(pending);
-			} else {
-				talloc_steal(pending, pending->wait_handle);
-				DLIST_ADD(f->pending_list, pending);
+			if (pending) {
+				/* a timed lock failed - setup a wait message to handle
+				   the pending lock notification or a timeout */
+				pending->wait_handle = pvfs_wait_message(pvfs, req, MSG_BRL_RETRY, 
+									 pending->end_time,
+									 pvfs_pending_lock_continue,
+									 pending);
+				if (pending->wait_handle == NULL) {
+					pvfs_lock_async_failed(pvfs, req, f, locks, i, NT_STATUS_NO_MEMORY);
+					talloc_free(pending);
+				} else {
+					talloc_steal(pending, pending->wait_handle);
+					DLIST_ADD(f->pending_list, pending);
+				}
+				return;
 			}
+			pvfs_lock_async_failed(pvfs, req, f, locks, i, status);
+			talloc_free(pending);
 			return;
 		}
 

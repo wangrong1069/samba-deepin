@@ -38,7 +38,6 @@ struct traverse_state {
 enum crypto_degree {
         CRYPTO_DEGREE_NONE,
         CRYPTO_DEGREE_PARTIAL,
-        CRYPTO_DEGREE_ANONYMOUS,
         CRYPTO_DEGREE_FULL
 };
 

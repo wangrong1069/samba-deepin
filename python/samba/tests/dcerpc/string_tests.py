@@ -32,12 +32,12 @@ class TestException(Exception):
 class StringTests(samba.tests.TestCase):
 
     def setUp(self):
-        super().setUp()
+        super(StringTests, self).setUp()
         talloc.enable_null_tracking()
         self.startup_blocks = talloc.total_blocks()
 
     def tearDown(self):
-        super().tearDown()
+        super(StringTests, self).tearDown()
         gc.collect()
         if talloc.total_blocks() != self.startup_blocks:
             talloc.report_full()

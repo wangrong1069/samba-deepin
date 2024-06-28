@@ -47,10 +47,9 @@ static size_t rpcecho_interfaces(
 	return num_ifaces;
 }
 
-static NTSTATUS rpcecho_servers(
+static size_t rpcecho_servers(
 	struct dcesrv_context *dce_ctx,
 	const struct dcesrv_endpoint_server ***_ep_servers,
-	size_t *_num_ep_servers,
 	void *private_data)
 {
 	static const struct dcesrv_endpoint_server *ep_servers[1] = { NULL };
@@ -71,8 +70,7 @@ static NTSTATUS rpcecho_servers(
 	}
 
 	*_ep_servers = ep_servers;
-	*_num_ep_servers = num_servers;
-	return NT_STATUS_OK;
+	return num_servers;
 }
 
 int main(int argc, const char *argv[])

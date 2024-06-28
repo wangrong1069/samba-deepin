@@ -281,36 +281,15 @@ static int ldb_canonicalise_Boolean(struct ldb_context *ldb, void *mem_ctx,
 }
 
 /*
- * compare two Booleans.
- *
- * According to RFC4517 4.2.2, "the booleanMatch rule is an equality matching
- * rule", meaning it isn't used for ordering.
- *
- * However, it seems conceivable that Samba could be coerced into sorting on a
- * field with Boolean syntax, so we might as well have consistent behaviour in
- * that case.
- *
- * The most probably values are {"FALSE", 5} and {"TRUE", 4}. To save time we
- * compare first by length, which makes FALSE > TRUE. This is somewhat
- * contrary to convention, but is how Samba has worked forever.
- *
- * If somehow we are comparing incompletely normalised values where the length
- * is the same (for example {"false", 5} and {"TRUE\0", 5}), the length is the
- * same, and we fall back to a strncasecmp. In this case, since "FALSE" is
- * alphabetically lower, we swap the order, so that "TRUE\0" again comes
- * before "FALSE".
- *
- * ldb_canonicalise_Boolean (just above) gives us a clue as to what we might
- * expect to cope with by way of invalid values.
- */
+  compare two Booleans
+*/
 static int ldb_comparison_Boolean(struct ldb_context *ldb, void *mem_ctx,
 			   const struct ldb_val *v1, const struct ldb_val *v2)
 {
 	if (v1->length != v2->length) {
-		return NUMERIC_CMP(v2->length, v1->length);
+		return v1->length - v2->length;
 	}
-	/* reversed, see long comment above */
-	return strncasecmp((char *)v2->data, (char *)v1->data, v1->length);
+	return strncasecmp((char *)v1->data, (char *)v2->data, v1->length);
 }
 
 
@@ -321,7 +300,7 @@ int ldb_comparison_binary(struct ldb_context *ldb, void *mem_ctx,
 			  const struct ldb_val *v1, const struct ldb_val *v2)
 {
 	if (v1->length != v2->length) {
-		return NUMERIC_CMP(v1->length, v2->length);
+		return v1->length - v2->length;
 	}
 	return memcmp(v1->data, v2->data, v1->length);
 }
@@ -393,27 +372,17 @@ utf8str:
 	b2 = ldb_casefold(ldb, mem_ctx, s2, n2);
 
 	if (!b1 || !b2) {
-		/*
-		 * One of the strings was not UTF8, so we have no
-		 * options but to do a binary compare.
-		 */
+		/* One of the strings was not UTF8, so we have no
+		 * options but to do a binary compare */
 		talloc_free(b1);
 		talloc_free(b2);
 		ret = memcmp(s1, s2, MIN(n1, n2));
 		if (ret == 0) {
-			if (n1 == n2) {
-				return 0;
-			}
+			if (n1 == n2) return 0;
 			if (n1 > n2) {
-				if (s1[n2] == '\0') {
-					return 0;
-				}
-				return 1;
+				return (int)ldb_ascii_toupper(s1[n2]);
 			} else {
-				if (s2[n1] == '\0') {
-					return 0;
-				}
-				return -1;
+				return -(int)ldb_ascii_toupper(s2[n1]);
 			}
 		}
 		return ret;
@@ -435,7 +404,7 @@ utf8str:
 		while (*u1 == ' ') u1++;
 		while (*u2 == ' ') u2++;
 	}
-	ret = NUMERIC_CMP(*u1, *u2);
+	ret = (int)(*u1 - *u2);
 
 	talloc_free(b1);
 	talloc_free(b2);

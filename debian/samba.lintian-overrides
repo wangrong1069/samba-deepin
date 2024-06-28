@@ -1,1 +1,1 @@
-samba: hardening-no-fortify-functions */samba/libmscat-private-samba.so.*
+samba: hardening-no-fortify-functions */samba/libmscat-samba4.so.*

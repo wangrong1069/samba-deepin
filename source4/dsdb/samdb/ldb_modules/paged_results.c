@@ -681,7 +681,6 @@ static int paged_search(struct ldb_module *module, struct ldb_request *req)
 		struct ldb_control *ext_ctrl;
 		struct ldb_control **controls;
 		static const char * const attrs[1] = { NULL };
-		void *ref = NULL;
 
 		if (paged_ctrl->size == 0) {
 			return LDB_ERR_OPERATIONS_ERROR;
@@ -706,15 +705,9 @@ static int paged_search(struct ldb_module *module, struct ldb_request *req)
 			struct ldb_request *req_extended_dn;
 			struct ldb_extended_dn_control *ext_ctrl_data;
 			req_extended_dn = talloc_zero(req, struct ldb_request);
-			if (req_extended_dn == NULL) {
-				return ldb_module_oom(module);
-			}
 			req_extended_dn->controls = req->controls;
 			ext_ctrl_data = talloc_zero(req,
 					struct ldb_extended_dn_control);
-			if (ext_ctrl_data == NULL) {
-				return ldb_module_oom(module);
-			}
 			ext_ctrl_data->type = 1;
 
 			ret = ldb_request_add_control(req_extended_dn,
@@ -740,37 +733,11 @@ static int paged_search(struct ldb_module *module, struct ldb_request *req)
 			return ret;
 		}
 
-		/*
-		 * LDB does not have a function to take a full copy of
-		 * this, but at least take a shallow copy
-		 */
-		ac->store->expr = ldb_parse_tree_copy_shallow(ac->store,
-							      req->op.search.tree);
-
-		if (ac->store->expr == NULL) {
-			return ldb_operr(ldb);
-		}
-
-		/*
-		 * As the above is only a shallow copy, take a
-		 * reference to ensure the values are kept around
-		 */
-		ref = talloc_reference(ac->store, req->op.search.tree);
-		if (ref == NULL) {
-			return ldb_module_oom(module);
-		}
+		ac->store->expr = talloc_steal(ac->store, req->op.search.tree);
 		ac->store->expr_str = ldb_filter_from_tree(ac->store,
 							  req->op.search.tree);
-		if (ac->store->expr_str == NULL) {
-			return ldb_module_oom(module);
-		}
-		if (req->op.search.attrs != NULL) {
-			ac->store->attrs = paged_copy_attrs(ac->store,
-							    req->op.search.attrs);
-			if (ac->store->attrs == NULL) {
-				return ldb_module_oom(module);
-			}
-		}
+		ac->store->attrs = paged_copy_attrs(ac->store,
+						    req->op.search.attrs);
 
 		/* save it locally and remove it from the list */
 		/* we do not need to replace them later as we

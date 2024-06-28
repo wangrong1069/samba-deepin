@@ -908,7 +908,6 @@ struct vfs_aio_state {
 };
 
 #define VFS_OPEN_HOW_RESOLVE_NO_SYMLINKS 1
-#define VFS_OPEN_HOW_WITH_BACKUP_INTENT 2
 
 struct vfs_open_how {
 	int flags;

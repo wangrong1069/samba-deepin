@@ -35,7 +35,6 @@
 #include "lib/tsocket/tsocket.h"
 #include "lib/global_contexts.h"
 #include "source3/lib/substitute.h"
-#include "source3/smbd/dir.h"
 
 /**********************************************************************
  Parse a DFS pathname of the form(s)
@@ -1684,7 +1683,7 @@ static int form_junctions(TALLOC_CTX *ctx,
 
 		if (cnt >= jn_remain) {
 			DEBUG(2, ("form_junctions: ran out of MSDFS "
-				"junction slots\n"));
+				"junction slots"));
 			TALLOC_FREE(talloced);
 			goto out;
 		}

@@ -38,7 +38,7 @@ def open_bytes(filename):
 
 class DCKeytabTests(tests.TestCase):
     def setUp(self):
-        super().setUp()
+        super(DCKeytabTests, self).setUp()
         self.lp = LoadParm()
         self.lp.load_default()
         self.creds = self.insta_creds(template=self.get_credentials())
@@ -46,7 +46,7 @@ class DCKeytabTests(tests.TestCase):
         self.principal = self.creds.get_principal()
 
     def tearDown(self):
-        super().tearDown()
+        super(DCKeytabTests, self).tearDown()
         os.remove(self.ktfile)
 
     def test_export_keytab(self):

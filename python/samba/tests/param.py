@@ -25,13 +25,13 @@ import os
 class LoadParmTestCase(samba.tests.TestCaseInTempDir):
 
     def setUp(self):
-        super().setUp()
+        super(LoadParmTestCase, self).setUp()
         self.tempf = os.path.join(self.tempdir, "test")
         open(self.tempf, 'w').write("empty")
 
     def tearDown(self):
         os.unlink(self.tempf)
-        super().tearDown()
+        super(LoadParmTestCase, self).tearDown()
 
     def test_init(self):
         file = param.LoadParm()

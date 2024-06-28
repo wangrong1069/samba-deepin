@@ -26,17 +26,47 @@ import samba
 from ldb import ERR_INVALID_CREDENTIALS, LdbError
 from samba import colour
 from samba.auth import system_session
-from samba.getopt import Option, OptionParser
+from samba.getopt import SambaOption, OptionError
 from samba.logger import get_samba_logger
 from samba.samdb import SamDB
-from samba.dcerpc.security import SDDLValueError
 
 from .encoders import JSONEncoder
+from .validators import ValidationError
+
+
+class Option(SambaOption):
+    ATTRS = SambaOption.ATTRS + ["validators"]
+    SUPPRESS_HELP = optparse.SUPPRESS_HELP
+
+    def run_validators(self, opt, value):
+        """Runs the list of validators on the current option.
+
+        If the validator raises ValidationError, turn that into CommandError
+        which gives nicer output.
+        """
+        validators = getattr(self, "validators") or []
+
+        for validator in validators:
+            try:
+                validator(opt, value)
+            except ValidationError as e:
+                raise CommandError(e)
+
+    def convert_value(self, opt, value):
+        """Override convert_value to run validators just after.
+
+        This can also be done in process() but there we would have to
+        replace the entire method.
+        """
+        value = super().convert_value(opt, value)
+        self.run_validators(opt, value)
+        return value
+
+
+# This help formatter does text wrapping and preserves newlines
 
 
 class PlainHelpFormatter(optparse.IndentedHelpFormatter):
-    """This help formatter does text wrapping and preserves newlines."""
-
     def format_description(self, description=""):
         desc_width = self.width - self.current_indent
         indent = " " * self.current_indent
@@ -116,34 +146,11 @@ class Command(object):
         else:
             print(f"{err}{klass}: {msg} - {evalue}", file=self.errf)
 
-    def _print_sddl_value_error(self, e):
-        generic_msg, specific_msg, position, sddl = e.args
-        print(f"{colour.c_DARK_RED('ERROR')}: {generic_msg}\n",
-              file=self.errf)
-        print(f' {sddl}', file=self.errf)
-        # If the SDDL contains non-ascii characters, the byte offset
-        # provided by the exception won't agree with the visual offset
-        # because those characters will be encoded as multiple bytes.
-        #
-        # To account for this we'll attempt to measure the string
-        # length of the specified number of bytes. That is not quite
-        # the same as the visual length, because the SDDL could
-        # contain zero-width, full-width, or combining characters, but
-        # it is closer.
-        try:
-            position = len((sddl.encode()[:position]).decode())
-        except ValueError:
-            # use the original position
-            pass
-
-        print(f"{colour.c_DARK_YELLOW('^'):>{position + 2}}", file=self.errf)
-        print(f' {specific_msg}', file=self.errf)
-
-    def ldb_connect(self, hostopts, sambaopts, credopts):
+    def ldb_connect(self, ldap_url, sambaopts, credopts):
         """Helper to connect to Ldb database using command line opts."""
         lp = sambaopts.get_loadparm()
         creds = credopts.get_credentials(lp)
-        return SamDB(hostopts.H, credentials=creds,
+        return SamDB(ldap_url, credentials=creds,
                      session_info=system_session(lp), lp=lp)
 
     def print_json(self, data):
@@ -168,7 +175,7 @@ class Command(object):
             message = "uncaught exception"
             force_traceback = True
 
-        if isinstance(e, optparse.OptParseError):
+        if isinstance(e, OptionError):
             print(evalue, file=self.errf)
             self.usage()
             force_traceback = False
@@ -187,10 +194,6 @@ class Command(object):
             else:
                 self._print_error(message, ldb_emsg, 'ldb')
 
-        elif isinstance(inner_exception, SDDLValueError):
-            self._print_sddl_value_error(inner_exception)
-            force_traceback = False
-
         elif isinstance(inner_exception, AssertionError):
             self._print_error(message, klass='assert')
             force_traceback = True
@@ -208,13 +211,11 @@ class Command(object):
             traceback.print_tb(etraceback, file=self.errf)
 
     def _create_parser(self, prog=None, epilog=None):
-        parser = OptionParser(
+        parser = optparse.OptionParser(
             usage=self.synopsis,
             description=self.full_description,
             formatter=PlainHelpFormatter(),
-            prog=prog,
-            epilog=epilog,
-            option_class=Option)
+            prog=prog, epilog=epilog)
         parser.add_options(self.takes_options)
         optiongroups = {}
         for name in sorted(self.takes_optiongroups.keys()):
@@ -240,19 +241,12 @@ class Command(object):
 
     def _run(self, *argv):
         parser, optiongroups = self._create_parser(self.command_name)
-
-        # Handle possible validation errors raised by parser
-        try:
-            opts, args = parser.parse_args(list(argv))
-        except Exception as e:
-            self.show_command_error(e)
-            return -1
-
+        opts, args = parser.parse_args(list(argv))
         # Filter out options from option groups
         kwargs = dict(opts.__dict__)
         for option_group in parser.option_groups:
             for option in option_group.option_list:
-                if option.dest is not None and option.dest in kwargs:
+                if option.dest is not None:
                     del kwargs[option.dest]
         kwargs.update(optiongroups)
 
@@ -344,7 +338,7 @@ class SuperCommand(Command):
                 sub = self.subcommands[a]
                 return sub._resolve(sub_path, *sub_args, outf=outf, errf=errf)
 
-            elif a in ['--help', 'help', None, '-h', '-V', '--version']:
+            elif a in [ '--help', 'help', None, '-h', '-V', '--version' ]:
                 # we pass these to the leaf node.
                 if a == 'help':
                     a = '--help'

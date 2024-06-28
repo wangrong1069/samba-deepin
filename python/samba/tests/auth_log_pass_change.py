@@ -41,7 +41,7 @@ USER_PASS = samba.generate_random_password(32, 32)
 class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
 
     def setUp(self):
-        super().setUp()
+        super(AuthLogPassChangeTests, self).setUp()
 
         self.server_ip = os.environ["SERVER_IP"]
 
@@ -70,6 +70,9 @@ class AuthLogPassChangeTests(samba.tests.auth_log_base.AuthLogTestBase):
 
     def _authDescription(self):
         return "samr_ChangePasswordUser4"
+
+    def tearDown(self):
+        super(AuthLogPassChangeTests, self).tearDown()
 
     def test_admin_change_password(self):
         def isLastExpectedMessage(msg):

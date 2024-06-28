@@ -54,7 +54,7 @@ enum test_wrong {
 
 /* Our very special and valued secret */
 /* No need to put const as we cast the array in uint8_t
- * we will get a warning about the discarded const
+ * we will get a warning about the discared const
  */
 static const char secret[] = "tata yoyo mais qu'est ce qu'il y a sous ton grand chapeau ?";
 
@@ -188,7 +188,7 @@ static struct dom_sid *get_user_sid(struct torture_context *tctx,
  * the version depends on the version parameter
  * the structure is returned as a blob.
  * The broken flag is to indicate if we want
- * to create a non conform to specification structure
+ * to create a non conform to specification structre
  */
 static DATA_BLOB *create_unencryptedsecret(TALLOC_CTX *mem_ctx,
 					   bool broken,
@@ -216,7 +216,7 @@ static DATA_BLOB *create_unencryptedsecret(TALLOC_CTX *mem_ctx,
 		if (broken) {
 			/* The magic value is correctly set by the NDR push
 			 * but we want to test the behavior of the server
-			 * if a different value is provided
+			 * if a differrent value is provided
 			 */
 			((uint8_t*)blob->data)[4] = 79; /* A great year !!! */
 		}
@@ -241,7 +241,7 @@ static DATA_BLOB *create_unencryptedsecret(TALLOC_CTX *mem_ctx,
 			/*
 			 * The magic value is correctly set by the NDR push
 			 * but we want to test the behavior of the server
-			 * if a different value is provided
+			 * if a differrent value is provided
 			 */
 			((uint8_t*)blob->data)[4] = 79; /* A great year !!! */
 		}
@@ -252,7 +252,7 @@ static DATA_BLOB *create_unencryptedsecret(TALLOC_CTX *mem_ctx,
 
 /*
  * Create an access check structure, the format depends on the version parameter.
- * If broken is specified then we create a structure that isn't conform to the
+ * If broken is specified then we create a stucture that isn't conform to the
  * specification.
  *
  * If the structure can't be created then NULL is returned.
@@ -264,25 +264,12 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 				      bool broken,
 				      uint32_t version)
 {
-	TALLOC_CTX *tmp_ctx = NULL;
-	DATA_BLOB *blob = NULL;
+	TALLOC_CTX *tmp_ctx = talloc_new(mem_ctx);
+	DATA_BLOB *blob = talloc_zero(mem_ctx, DATA_BLOB);
 	enum ndr_err_code ndr_err;
-	const struct dom_sid *sid = NULL;
+	const struct dom_sid *sid = get_user_sid(tctx, tmp_ctx, user);
 
-	tmp_ctx = talloc_new(mem_ctx);
-	if (tmp_ctx == NULL) {
-		return NULL;
-	}
-
-	sid = get_user_sid(tctx, tmp_ctx, user);
 	if (sid == NULL) {
-		talloc_free(tmp_ctx);
-		return NULL;
-	}
-
-	blob = talloc_zero(mem_ctx, DATA_BLOB);
-	if (blob == NULL) {
-		talloc_free(tmp_ctx);
 		return NULL;
 	}
 
@@ -290,7 +277,6 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		struct bkrp_access_check_v2 access_struct;
 		gnutls_hash_hd_t dig_ctx;
 		uint8_t nonce[32];
-		int rc;
 
 		ZERO_STRUCT(access_struct);
 		generate_random_buffer(nonce, sizeof(nonce));
@@ -301,8 +287,6 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		ndr_err = ndr_push_struct_blob(blob, blob, &access_struct,
 				(ndr_push_flags_fn_t)ndr_push_bkrp_access_check_v2);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-			talloc_free(blob);
-			talloc_free(tmp_ctx);
 			return NULL;
 		}
 
@@ -312,22 +296,12 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		 * so we reduce the size of what has to be calculated
 		 */
 
-		rc = gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA1);
-		if (rc != GNUTLS_E_SUCCESS) {
-			talloc_free(blob);
-			talloc_free(tmp_ctx);
-			return NULL;
-		}
-		rc = gnutls_hash(dig_ctx,
-				 blob->data,
-				 blob->length - sizeof(access_struct.hash));
+		gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA1);
+		gnutls_hash(dig_ctx,
+			    blob->data,
+			    blob->length - sizeof(access_struct.hash));
 		gnutls_hash_deinit(dig_ctx,
 				   blob->data + blob->length - sizeof(access_struct.hash));
-		if (rc != GNUTLS_E_SUCCESS) {
-			talloc_free(blob);
-			talloc_free(tmp_ctx);
-			return NULL;
-		}
 
 		/* Altering the SHA */
 		if (broken) {
@@ -339,7 +313,6 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		struct bkrp_access_check_v3 access_struct;
 		gnutls_hash_hd_t dig_ctx;
 		uint8_t nonce[32];
-		int rc;
 
 		ZERO_STRUCT(access_struct);
 		generate_random_buffer(nonce, sizeof(nonce));
@@ -350,8 +323,6 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		ndr_err = ndr_push_struct_blob(blob, blob, &access_struct,
 				(ndr_push_flags_fn_t)ndr_push_bkrp_access_check_v3);
 		if (!NDR_ERR_CODE_IS_SUCCESS(ndr_err)) {
-			talloc_free(blob);
-			talloc_free(tmp_ctx);
 			return NULL;
 		}
 
@@ -360,22 +331,12 @@ static DATA_BLOB *create_access_check(struct torture_context *tctx,
 		* so we reduce the size of what has to be calculated
 		*/
 
-		rc = gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA512);
-		if (rc != GNUTLS_E_SUCCESS) {
-			talloc_free(blob);
-			talloc_free(tmp_ctx);
-			return NULL;
-		}
-		rc = gnutls_hash(dig_ctx,
-				 blob->data,
-				 blob->length - sizeof(access_struct.hash));
+		gnutls_hash_init(&dig_ctx, GNUTLS_DIG_SHA512);
+		gnutls_hash(dig_ctx,
+			    blob->data,
+			    blob->length - sizeof(access_struct.hash));
 		gnutls_hash_deinit(dig_ctx,
 				   blob->data + blob->length - sizeof(access_struct.hash));
-		if (rc != GNUTLS_E_SUCCESS) {
-			talloc_free(blob);
-			talloc_free(tmp_ctx);
-			return NULL;
-		}
 
 		/* Altering the SHA */
 		if (broken) {

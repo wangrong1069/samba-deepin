@@ -90,40 +90,15 @@ bool pyldb_Object_AsDn(TALLOC_CTX *mem_ctx, PyObject *object,
 {
 	struct ldb_dn *odn;
 	PyTypeObject *PyLdb_Dn_Type;
-	bool is_dn;
 
 	if (ldb_ctx != NULL && (PyUnicode_Check(object))) {
-		const char *odn_str = NULL;
-
-		odn_str = PyUnicode_AsUTF8(object);
-		if (odn_str == NULL) {
-			return false;
-		}
-
-		odn = ldb_dn_new(mem_ctx, ldb_ctx, odn_str);
-		if (odn == NULL) {
-			PyErr_NoMemory();
-			return false;
-		}
-
+		odn = ldb_dn_new(mem_ctx, ldb_ctx, PyUnicode_AsUTF8(object));
 		*dn = odn;
 		return true;
 	}
 
 	if (ldb_ctx != NULL && PyBytes_Check(object)) {
-		const char *odn_str = NULL;
-
-		odn_str = PyBytes_AsString(object);
-		if (odn_str == NULL) {
-			return false;
-		}
-
-		odn = ldb_dn_new(mem_ctx, ldb_ctx, odn_str);
-		if (odn == NULL) {
-			PyErr_NoMemory();
-			return false;
-		}
-
+		odn = ldb_dn_new(mem_ctx, ldb_ctx, PyBytes_AsString(object));
 		*dn = odn;
 		return true;
 	}
@@ -133,9 +108,7 @@ bool pyldb_Object_AsDn(TALLOC_CTX *mem_ctx, PyObject *object,
 		return false;
 	}
 
-	is_dn = PyObject_TypeCheck(object, PyLdb_Dn_Type);
-	Py_DECREF(PyLdb_Dn_Type);
-	if (is_dn) {
+	if (PyObject_TypeCheck(object, PyLdb_Dn_Type)) {
 		*dn = pyldb_Dn_AS_DN(object);
 		return true;
 	}
@@ -146,8 +119,6 @@ bool pyldb_Object_AsDn(TALLOC_CTX *mem_ctx, PyObject *object,
 
 PyObject *pyldb_Dn_FromDn(struct ldb_dn *dn)
 {
-	TALLOC_CTX *mem_ctx = NULL;
-	struct ldb_dn *dn_ref = NULL;
 	PyLdbDnObject *py_ret;
 	PyTypeObject *PyLdb_Dn_Type;
 
@@ -155,31 +126,17 @@ PyObject *pyldb_Dn_FromDn(struct ldb_dn *dn)
 		Py_RETURN_NONE;
 	}
 
-	mem_ctx = talloc_new(NULL);
-	if (mem_ctx == NULL) {
-		return PyErr_NoMemory();
-	}
-
-	dn_ref = talloc_reference(mem_ctx, dn);
-	if (dn_ref == NULL) {
-		talloc_free(mem_ctx);
-		return PyErr_NoMemory();
-	}
-
 	PyLdb_Dn_Type = PyLdb_GetPyType("Dn");
 	if (PyLdb_Dn_Type == NULL) {
-		talloc_free(mem_ctx);
 		return NULL;
 	}
 
 	py_ret = (PyLdbDnObject *)PyLdb_Dn_Type->tp_alloc(PyLdb_Dn_Type, 0);
-	Py_DECREF(PyLdb_Dn_Type);
 	if (py_ret == NULL) {
-		talloc_free(mem_ctx);
 		PyErr_NoMemory();
 		return NULL;
 	}
-	py_ret->mem_ctx = mem_ctx;
-	py_ret->dn = dn;
+	py_ret->mem_ctx = talloc_new(NULL);
+	py_ret->dn = talloc_reference(py_ret->mem_ctx, dn);
 	return (PyObject *)py_ret;
 }

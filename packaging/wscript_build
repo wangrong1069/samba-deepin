@@ -4,8 +4,7 @@ systemd_services = [
     'systemd/smb.service',
     'systemd/nmb.service',
     'systemd/winbind.service',
-    'systemd/samba.service',
-    'systemd/samba-bgqd.service',
+    'systemd/samba.service'
 ]
 
 for srv in systemd_services:

@@ -125,15 +125,15 @@ def buildScript(buf, sections, group, user, ostype, machine, debug, pause):
             # that section headers contain user defined text.
             #
             if s == 'Global':
-                hdrstring = r'\[ *' + s + r' *\]'
+                hdrstring = '\[ *' + s + ' *\]'
             elif s == 'Group':
-                hdrstring = r'\[ *' + s + ' *- *' + group + r' *\]'
+                hdrstring = '\[ *' + s + ' *- *' + group + ' *\]'
             elif s == 'User':
-                hdrstring = r'\[ *' + s + ' *- *' + user + r' *\]'
+                hdrstring = '\[ *' + s + ' *- *' + user + ' *\]'
             elif s == 'OS':
-                hdrstring = r'\[ *' + s + ' *- *' + ostype + r' *\]'
+                hdrstring = '\[ *' + s + ' *- *' + ostype + ' *\]'
             elif s == 'Machine':
-	        hdrstring = r'\[ *' + s + ' *- *' + machine + r' *\]'
+	        hdrstring = '\[ *' + s + ' *- *' + machine + ' *\]'
 
             #
             # See if we have found a section header
@@ -187,7 +187,7 @@ def buildScript(buf, sections, group, user, ostype, machine, debug, pause):
                                 print "Error: No substitution text provided line: %d" % idx
                                 sys.exit(1)
 
-                            if varname in macros:
+                            if macros.has_key(varname):
                                 print "Warning: macro %s redefined line: %d" % (varname, idx)
 
                             macros[varname] = varsub

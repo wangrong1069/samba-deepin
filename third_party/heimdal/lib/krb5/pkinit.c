@@ -448,9 +448,7 @@ build_auth_pack(krb5_context context,
 		krb5_clear_error_message(context);
 		return ret;
 	    }
-	    ret = RAND_bytes(a->clientDHNonce->data, a->clientDHNonce->length);
-	    if (ret != 1)
-		return KRB5_CRYPTO_INTERNAL;
+	    RAND_bytes(a->clientDHNonce->data, a->clientDHNonce->length);
 	    ret = krb5_copy_data(context, a->clientDHNonce,
 				 &ctx->clientDHNonce);
 	    if (ret)
@@ -886,7 +884,7 @@ pk_verify_sign(krb5_context context,
     ret = hx509_get_one_cert(context->hx509ctx, signer_certs, &(*signer)->cert);
     if (ret) {
 	pk_copy_error(context, context->hx509ctx, ret,
-		      "Failed to get one of the signer certs");
+		      "Failed to get on of the signer certs");
 	goto out;
     }
 
@@ -1086,7 +1084,7 @@ pk_verify_host(krb5_context context,
 	    ret = KRB5_KDC_ERR_INVALID_CERTIFICATE;
 	    /* XXX: Lost in translation... */
 	    krb5_set_error_message(context, ret,
-				   N_("KDC has wrong realm name in "
+				   N_("KDC have wrong realm name in "
 				      "the certificate", ""));
 	}
     }
@@ -1930,7 +1928,7 @@ _krb5_pk_load_id(krb5_context context,
 	ret = hx509_revoke_init(context->hx509ctx, &id->revokectx);
 	if (ret) {
 	    pk_copy_error(context, context->hx509ctx, ret,
-			  "Failed to init revoke list");
+			  "Failed init revoke list");
 	    goto out;
 	}
 
@@ -1940,7 +1938,7 @@ _krb5_pk_load_id(krb5_context context,
 				       *revoke_list);
 	    if (ret) {
 		pk_copy_error(context, context->hx509ctx, ret,
-			      "Failed to load revoke list");
+			      "Failed load revoke list");
 		goto out;
 	    }
 	    revoke_list++;
@@ -1951,7 +1949,7 @@ _krb5_pk_load_id(krb5_context context,
     ret = hx509_verify_init_ctx(context->hx509ctx, &id->verify_ctx);
     if (ret) {
 	pk_copy_error(context, context->hx509ctx, ret,
-		      "Failed to init verify context");
+		      "Failed init verify context");
 	goto out;
     }
 
@@ -2080,7 +2078,7 @@ _krb5_parse_moduli_line(krb5_context context,
     m1->bits = atoi(p1);
     if (m1->bits == 0) {
 	krb5_set_error_message(context, ret,
-			       N_("moduli file %s has un-parsable "
+			       N_("moduli file %s have un-parsable "
 				  "bits on line %d", ""), file, lineno);
 	goto out;
     }
@@ -2294,7 +2292,7 @@ _krb5_dh_group_ok(krb5_context context, unsigned long bits,
 		    krb5_set_error_message(context,
 					   KRB5_KDC_ERR_DH_KEY_PARAMETERS_NOT_ACCEPTED,
 					   N_("PKINIT: DH group parameter %s "
-					      "not accepted, not enough bits "
+					      "no accepted, not enough bits "
 					      "generated", ""),
 					   moduli[i]->name);
 		    return KRB5_KDC_ERR_DH_KEY_PARAMETERS_NOT_ACCEPTED;
@@ -2306,7 +2304,7 @@ _krb5_dh_group_ok(krb5_context context, unsigned long bits,
     }
     krb5_set_error_message(context,
 			   KRB5_KDC_ERR_DH_KEY_PARAMETERS_NOT_ACCEPTED,
-			   N_("PKINIT: DH group parameter not ok", ""));
+			   N_("PKINIT: DH group parameter no ok", ""));
     return KRB5_KDC_ERR_DH_KEY_PARAMETERS_NOT_ACCEPTED;
 }
 #endif /* PKINIT */

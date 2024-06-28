@@ -593,19 +593,6 @@ void fill_ctdb_req_control_data(TALLOC_CTX *mem_ctx,
 
 	case CTDB_CONTROL_ENABLE_NODE:
 		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_DISCONNECTED:
-		cd->data.conn = talloc(mem_ctx, struct ctdb_connection);
-		assert(cd->data.conn != NULL);
-		fill_ctdb_connection(mem_ctx, cd->data.conn);
-		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_PASSED:
-		cd->data.conn = talloc(mem_ctx, struct ctdb_connection);
-		assert(cd->data.conn != NULL);
-		fill_ctdb_connection(mem_ctx, cd->data.conn);
-		break;
-
 	}
 }
 
@@ -994,14 +981,6 @@ void verify_ctdb_req_control_data(struct ctdb_req_control_data *cd,
 		break;
 
 	case CTDB_CONTROL_ENABLE_NODE:
-		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_DISCONNECTED:
-		verify_ctdb_connection(cd->data.conn, cd2->data.conn);
-		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_PASSED:
-		verify_ctdb_connection(cd->data.conn, cd2->data.conn);
 		break;
 	}
 }
@@ -1399,12 +1378,6 @@ void fill_ctdb_reply_control_data(TALLOC_CTX *mem_ctx,
 
 	case CTDB_CONTROL_ENABLE_NODE:
 		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_DISCONNECTED:
-		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_PASSED:
-		break;
 	}
 }
 
@@ -1741,12 +1714,6 @@ void verify_ctdb_reply_control_data(struct ctdb_reply_control_data *cd,
 		break;
 
 	case CTDB_CONTROL_ENABLE_NODE:
-		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_DISCONNECTED:
-		break;
-
-	case CTDB_CONTROL_TCP_CLIENT_PASSED:
 		break;
 	}
 }

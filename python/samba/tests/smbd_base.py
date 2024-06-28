@@ -29,7 +29,7 @@ class SmbdBaseTests(TestCaseInTempDir):
         return curr_umask
 
     def setUp(self):
-        super().setUp()
+        super(SmbdBaseTests, self).setUp()
         self.orig_umask = self.get_umask()
 
         # set an arbitrary umask - the underlying smbd code should override
@@ -45,4 +45,4 @@ class SmbdBaseTests(TestCaseInTempDir):
         # restore the original umask value (before we interfered with it)
         os.umask(self.orig_umask)
 
-        super().tearDown()
+        super(SmbdBaseTests, self).tearDown()

@@ -2,7 +2,7 @@
 
 if [ $# -lt 1 ]; then
 	cat <<EOF
-Usage: upgradeprovision-oldrelease.sh PREFIX RELEASE
+Usage: dbcheck.sh PREFIX RELEASE
 EOF
 	exit 1
 fi

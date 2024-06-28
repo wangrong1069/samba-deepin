@@ -29,7 +29,7 @@ class DowngradeTestBase(BlackboxTestCase):
     """Test that sambadowngradedatabase downgrades the samba database"""
 
     def setUp(self):
-        super().setUp()
+        super(DowngradeTestBase, self).setUp()
         if not hasattr(self, "backend"):
             self.fail("Subclass this class and set 'backend'")
 
@@ -62,7 +62,7 @@ class DowngradeTestBase(BlackboxTestCase):
                      "bind-dns",
                      "msg.lock")
         self.rm_files("names.tdb", "gencache.tdb")
-        super().tearDown()
+        super(DowngradeTestBase, self).tearDown()
 
     # Parse out the comments above each record that ldbdump produces
     # containing pack format version and KV level key for each record.

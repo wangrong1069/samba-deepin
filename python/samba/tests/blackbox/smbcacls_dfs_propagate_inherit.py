@@ -1,4 +1,4 @@
-# Blackbox tests for smbcacls
+# Blackbox tests for smbcaclcs
 #
 # Copyright (C) Noel Power noel.power@suse.com
 #
@@ -82,3 +82,6 @@ class DfsInheritanceSmbCaclsTests(InheritanceSmbCaclsTests):
         self.smb_cacls(["--modify", file_acl_str, self.f1])
         self.smb_cacls(["--modify", file_acl_str, self.f2])
         self.smb_cacls(["--modify", file_acl_str, self.f3])
+
+    def tearDown(self):
+        super(DfsInheritanceSmbCaclsTests, self).tearDown()

@@ -197,7 +197,7 @@ parse_pem_private_key(hx509_context context, const char *fn, int flags,
 	if (strcmp(enc, "4,ENCRYPTED") != 0) {
 	    hx509_set_error_string(context, 0, HX509_PARSING_KEY_FAILED,
 				   "Private key encrypted in unknown method %s "
-				   "in file %s",
+				   "in file",
 				   enc, fn);
 	    hx509_clear_error_string(context);
 	    return HX509_PARSING_KEY_FAILED;

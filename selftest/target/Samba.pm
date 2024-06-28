@@ -342,12 +342,10 @@ sub mk_krb5_conf($$)
 
 	if (defined($ENV{MITKRB5})) {
 		print KRB5CONF "
- # Set the grace clockskew to 5 seconds
+ # Set the grace clocskew to 5 seconds
  # This is especially required by samba3.raw.session krb5 and
  # reauth tests when not using Heimdal
  clockskew = 5
- # To allow the FL 2000 DC to still work for now
- allow_rc4 = yes
     ";
 	}
 
@@ -921,13 +919,6 @@ my @exported_envvars = (
 	"TRUST_E_BOTH_DOMAIN",
 	"TRUST_E_BOTH_REALM",
 
-	# stuff related to a trusted NT4 domain,
-	# used for one-way trust fl2008r2dc <- nt4_dc
-	"NT4_TRUST_SERVER",
-	"NT4_TRUST_SERVER_IP",
-	"NT4_TRUST_DOMAIN",
-	"NT4_TRUST_DOMSID",
-
 	# domain controller stuff
 	"DC_SERVER",
 	"DC_SERVER_IP",
@@ -944,7 +935,7 @@ my @exported_envvars = (
 	"SAMSID",
 
 	# only use these 2 as a last resort. Some tests need to test both client-
-	# side and server-side. In this case, run as default client, and access
+	# side and server-side. In this case, run as default client, ans access
 	# server's smb.conf as needed, typically using:
 	#  param.LoadParm(filename_for_non_global_lp=os.environ['SERVERCONFFILE'])
 	"SERVERCONFFILE",
@@ -993,7 +984,6 @@ my @exported_envvars = (
 	"RESOLV_WRAPPER_HOSTS",
 
 	# ctdb stuff
-	"CTDB_PREFIX",
 	"NUM_NODES",
 	"CTDB_BASE",
 	"CTDB_SOCKET",

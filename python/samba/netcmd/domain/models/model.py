@@ -27,11 +27,10 @@ from ldb import ERR_NO_SUCH_OBJECT, FLAG_MOD_ADD, FLAG_MOD_REPLACE, LdbError,\
     Message, MessageElement, SCOPE_BASE, SCOPE_SUBTREE, binary_encode
 from samba.sd_utils import SDUtils
 
-from .exceptions import DeleteError, DoesNotExist, FieldError,\
+from .exceptions import DeleteError, DoesNotExist, MultipleObjectsReturned,\
     ProtectError, UnprotectError
 from .fields import DateTimeField, DnField, Field, GUIDField, IntegerField,\
     StringField
-from .query import Query
 
 # Keeps track of registered models.
 # This gets populated by the ModelMeta class.
@@ -117,13 +116,14 @@ class Model(metaclass=ModelMeta):
             return str(self.dn)
 
     @staticmethod
+    @abstractmethod
     def get_base_dn(ldb):
         """Return the base DN for the container of this model.
 
         :param ldb: Ldb connection
         :return: Dn to use for new objects
         """
-        return ldb.get_default_basedn()
+        pass
 
     @classmethod
     def get_search_dn(cls, ldb):
@@ -246,7 +246,11 @@ class Model(metaclass=ModelMeta):
                 raise DoesNotExist(f"Container does not exist: {base_dn}")
             raise
 
-        return Query(cls, ldb, result)
+        # For now this returns a simple generator of model instances.
+        # This could eventually become a QuerySet class if we need to add
+        # additional methods on the return value for example .order_by()
+        for message in result:
+            yield cls.from_message(ldb, message)
 
     @classmethod
     def get(cls, ldb, **kwargs):
@@ -257,7 +261,7 @@ class Model(metaclass=ModelMeta):
 
         :param ldb: Ldb connection
         :param kwargs: Search criteria as keyword args
-        :returns: Model instance or None if not found
+        :returns: User object or None if not found
         :raises: MultipleObjects returned if there are more than one results
         """
         # If a DN is provided use that to get the object directly.
@@ -274,10 +278,27 @@ class Model(metaclass=ModelMeta):
                     return None
                 else:
                     raise
-
-            return cls.from_message(ldb, res[0])
         else:
-            return cls.query(ldb, **kwargs).get()
+            base_dn = cls.get_search_dn(ldb)
+
+            # If the container does not exist produce a friendly error message.
+            try:
+                res = ldb.search(base_dn,
+                                 scope=SCOPE_SUBTREE,
+                                 expression=cls.build_expression(**kwargs))
+            except LdbError as e:
+                if e.args[0] == ERR_NO_SUCH_OBJECT:
+                    raise DoesNotExist(f"Container does not exist: {base_dn}")
+                raise
+
+        # Expect to get one object back or raise MultipleObjectsReturned.
+        # For multiple records, please call .query() instead.
+        count = len(res)
+        if count > 1:
+            raise MultipleObjectsReturned(
+                f"More than one object returned (got {count}).")
+        elif count == 1:
+            return cls.from_message(ldb, res[0])
 
     @classmethod
     def create(cls, ldb, **kwargs):
@@ -336,12 +357,9 @@ class Model(metaclass=ModelMeta):
 
             message = Message(dn=self.dn)
             for attr, field in self.fields.items():
-                if attr != "dn" and not field.readonly:
+                if attr != "dn":
                     value = getattr(self, attr)
-                    try:
-                        db_value = field.to_db_value(ldb, value, FLAG_MOD_ADD)
-                    except ValueError as e:
-                        raise FieldError(e, field=field)
+                    db_value = field.to_db_value(value, FLAG_MOD_ADD)
 
                     # Don't add empty fields.
                     if db_value is not None and len(db_value):
@@ -361,16 +379,12 @@ class Model(metaclass=ModelMeta):
             # Any fields that are set to None or an empty list get unset.
             message = Message(dn=self.dn)
             for attr, field in self.fields.items():
-                if attr != "dn" and not field.readonly:
+                if attr != "dn":
                     value = getattr(self, attr)
                     old_value = getattr(existing_obj, attr)
 
                     if value != old_value:
-                        try:
-                            db_value = field.to_db_value(ldb, value,
-                                                         FLAG_MOD_REPLACE)
-                        except ValueError as e:
-                            raise FieldError(e, field=field)
+                        db_value = field.to_db_value(value, FLAG_MOD_REPLACE)
 
                         # When a field returns None or empty list, delete attr.
                         if db_value in (None, []):

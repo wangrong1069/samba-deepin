@@ -28,7 +28,7 @@ class ContactCmdTestCase(SambaToolCmdTest):
     samdb = None
 
     def setUp(self):
-        super().setUp()
+        super(ContactCmdTestCase, self).setUp()
         self.creds = "-U%s%%%s" % (os.environ["DC_USERNAME"],
                                    os.environ["DC_PASSWORD"])
         self.samdb = self.getSamDB("-H",
@@ -83,7 +83,7 @@ class ContactCmdTestCase(SambaToolCmdTest):
                               contact["description"])
 
     def tearDown(self):
-        super().tearDown()
+        super(ContactCmdTestCase, self).tearDown()
         # clean up all the left over contacts, just in case
         for contact in self.contacts:
             if self._find_contact(contact["expectedname"]):

@@ -87,13 +87,12 @@ def configure(conf):
 def build(bld):
     if not bld.CONFIG_SET("USING_SYSTEM_PAM_WRAPPER"):
         # We need to do it this way or the library wont work.
-        # We need force_unversioned=True as symbol versioning
+        # Using private_library=True will add symbol version which
         # breaks preloading!
         bld.SAMBA_LIBRARY('pam_wrapper',
                           source='pam_wrapper.c',
                           deps='dl pthread',
                           install=False,
-                          force_unversioned=True,
                           realname='libpam-wrapper.so')
 
         bld.SAMBA_SUBSYSTEM('libpamtest',
@@ -104,7 +103,6 @@ def build(bld):
                           source='modules/pam_set_items.c',
                           deps='pam',
                           install=False,
-                          force_unversioned=True,
                           realname='pam_set_items.so')
 
         pypamtest_cflags = ''

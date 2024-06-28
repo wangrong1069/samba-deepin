@@ -1,6 +1,6 @@
 /*
    Unix SMB/CIFS implementation.
-   test suite for the mdssvc RPC service
+   test suite for the mdssvc RPC serice
 
    Copyright (C) Ralph Boehme 2019
 

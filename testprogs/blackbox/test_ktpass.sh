@@ -2,7 +2,7 @@
 
 if [ $# -lt 1 ]; then
 	cat <<EOF
-Usage: test_ktpass.sh PREFIX
+Usage: blackbox_newuser.sh PREFIX
 EOF
 	exit 1
 fi

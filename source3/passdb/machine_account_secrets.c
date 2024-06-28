@@ -138,13 +138,11 @@ bool secrets_store_domain_sid(const char *domain, const struct dom_sid  *sid)
 			    &clean_sid,
 			    sizeof(struct dom_sid));
 
-	/* Force a re-query */
+	/* Force a re-query, in the case where we modified our domain */
 	if (ret) {
-		/*
-		 * Do not call get_global_domain_sid() here, or we will call it
-		 * recursively.
-		 */
-		reset_global_sam_sid();
+		if (dom_sid_equal(get_global_sam_sid(), sid) == false) {
+			reset_global_sam_sid();
+		}
 	}
 	return ret;
 }

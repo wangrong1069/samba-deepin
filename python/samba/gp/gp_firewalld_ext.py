@@ -16,9 +16,10 @@
 
 import os
 from subprocess import Popen, PIPE
+from hashlib import blake2b
 from shutil import which
 import json
-from samba.gp.gpclass import gp_pol_ext, gp_applier
+from samba.gp.gpclass import gp_pol_ext
 from samba.gp.util.logging import log
 
 def firewall_cmd(*args):
@@ -40,19 +41,16 @@ def rule_segment_parse(name, rule_segment):
         return '%s %s ' % (name,
             ' '.join(['%s=%s' % (k, v) for k, v in rule_segment.items()]))
 
-class gp_firewalld_ext(gp_pol_ext, gp_applier):
+class gp_firewalld_ext(gp_pol_ext):
     def __str__(self):
         return 'Security/Firewalld'
 
-    def apply_zone(self, guid, zone):
-        zone_attrs = []
+    def apply_zone(self, zone):
         ret = firewall_cmd('--permanent', '--new-zone=%s' % zone)[0]
         if ret != 0:
             log.error('Failed to add new zone', zone)
         else:
-            attribute = 'zone:%s' % zone
-            self.cache_add_attribute(guid, attribute, zone)
-            zone_attrs.append(attribute)
+            self.gp_db.store(str(self), 'zone:%s' % zone, zone)
         # Default to matching the interface(s) for the default zone
         ret, out = firewall_cmd('--list-interfaces')
         if ret != 0:
@@ -62,10 +60,8 @@ class gp_firewalld_ext(gp_pol_ext, gp_applier):
                                '--add-interface=%s' % interface.decode())
             if ret != 0:
                 log.error('Failed to set interfaces for zone', zone)
-        return zone_attrs
 
-    def apply_rules(self, guid, rule_dict):
-        rule_attrs = []
+    def apply_rules(self, rule_dict):
         for zone, rules in rule_dict.items():
             for rule in rules:
                 if 'rule' in rule:
@@ -92,60 +88,50 @@ class gp_firewalld_ext(gp_pol_ext, gp_applier):
                 if ret != 0:
                     log.error('Failed to add firewall rule', rule_parsed)
                 else:
-                    rhash = self.generate_value_hash(rule_parsed)
-                    attribute = 'rule:%s:%s' % (zone, rhash)
-                    self.cache_add_attribute(guid, attribute, rule_parsed)
-                    rule_attrs.append(attribute)
-        return rule_attrs
-
-    def unapply(self, guid, attribute, value):
-        if attribute.startswith('zone'):
-            ret = firewall_cmd('--permanent',
-                               '--delete-zone=%s' % value)[0]
-            if ret != 0:
-                log.error('Failed to remove zone', value)
-            else:
-                self.cache_remove_attribute(guid, attribute)
-        elif attribute.startswith('rule'):
-            _, zone, _ = attribute.split(':')
-            ret = firewall_cmd('--permanent', '--zone=%s' % zone,
-                               '--remove-rich-rule', value)[0]
-            if ret != 0:
-                log.error('Failed to remove firewall rule', value)
-            else:
-                self.cache_remove_attribute(guid, attribute)
-
-    def apply(self, applier_func, *args):
-        return applier_func(*args)
+                    rhash = blake2b(rule_parsed.encode()).hexdigest()
+                    self.gp_db.store(str(self), 'rule:%s:%s' % (zone, rhash),
+                                     rule_parsed)
 
     def process_group_policy(self, deleted_gpo_list, changed_gpo_list):
         for guid, settings in deleted_gpo_list:
+            self.gp_db.set_guid(guid)
             if str(self) in settings:
                 for attribute, value in settings[str(self)].items():
-                    self.unapply(guid, attribute, value)
+                    if attribute.startswith('zone'):
+                        ret = firewall_cmd('--permanent',
+                                           '--delete-zone=%s' % value)[0]
+                        if ret != 0:
+                            log.error('Failed to remove zone', value)
+                        else:
+                            self.gp_db.delete(str(self), attribute)
+                    elif attribute.startswith('rule'):
+                        _, zone, _ = attribute.split(':')
+                        ret = firewall_cmd('--permanent', '--zone=%s' % zone,
+                                           '--remove-rich-rule', value)[0]
+                        if ret != 0:
+                            log.error('Failed to remove firewall rule', value)
+                        else:
+                            self.gp_db.delete(str(self), attribute)
+            self.gp_db.commit()
 
         for gpo in changed_gpo_list:
             if gpo.file_sys_path:
                 section = 'Software\\Policies\\Samba\\Unix Settings\\Firewalld'
+                self.gp_db.set_guid(gpo.name)
                 pol_file = 'MACHINE/Registry.pol'
                 path = os.path.join(gpo.file_sys_path, pol_file)
                 pol_conf = self.parse(path)
                 if not pol_conf:
                     continue
-                attrs = []
                 for e in pol_conf.entries:
                     if e.keyname.startswith(section):
                         if e.keyname.endswith('Rules'):
-                            attrs.extend(self.apply(self.apply_rules, gpo.name,
-                                                    json.loads(e.data)))
+                            self.apply_rules(json.loads(e.data))
                         elif e.keyname.endswith('Zones'):
                             if e.valuename == '**delvals.':
                                 continue
-                            attrs.extend(self.apply(self.apply_zone, gpo.name,
-                                                    e.data))
-
-                # Cleanup all old zones and rules from this GPO
-                self.clean(gpo.name, keep=attrs)
+                            self.apply_zone(e.data)
+                self.gp_db.commit()
 
     def rsop(self, gpo):
         output = {}

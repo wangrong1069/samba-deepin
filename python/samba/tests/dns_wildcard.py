@@ -76,7 +76,7 @@ LEVEL2_EXACT       = "exact.level2.wildcardtest"
 class TestWildCardQueries(DNSTest):
 
     def setUp(self):
-        super().setUp()
+        super(TestWildCardQueries, self).setUp()
         global server, server_ip, lp, creds, timeout
         self.server = server_name
         self.server_ip = server_ip

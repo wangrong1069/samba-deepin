@@ -19,6 +19,8 @@ import os
 import ldb
 import re
 
+from samba.auth import system_session
+from samba.samdb import SamDB
 from samba.ndr import ndr_unpack, ndr_pack
 from samba.dcerpc import dnsp
 from samba.tests.samba_tool.base import SambaToolCmdTest
@@ -28,7 +30,7 @@ from samba import dsdb_dns
 
 class DnsCmdTestCase(SambaToolCmdTest):
     def setUp(self):
-        super().setUp()
+        super(DnsCmdTestCase, self).setUp()
 
         self.dburl = "ldap://%s" % os.environ["SERVER"]
         self.creds_string = "-U%s%%%s" % (os.environ["DC_USERNAME"],
@@ -206,7 +208,7 @@ class DnsCmdTestCase(SambaToolCmdTest):
             self.assertTrue("testrecord" in out and record_str in out,
                             "Query for a record which had DNS_RANK_NONE"
                             "succeeded but produced no resulting records.")
-        except AssertionError:
+        except AssertionError as e:
             # Windows produces no resulting records
             pass
 

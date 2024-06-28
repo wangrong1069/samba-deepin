@@ -641,7 +641,7 @@ static NTSTATUS benchrw_readwrite(struct torture_context *tctx,
 		if(state->readcnt < state->lpcfg_params->writeblocks){
 			state->readcnt++;	
 		}else{
-			/*start reading from beginning of file*/
+			/*start reading from beginn of file*/
 			state->readcnt=0;
 		}
 		req = smb_raw_read_send(state->cli,&rd);
@@ -856,7 +856,7 @@ static void async_open_callback(struct composite_context *con)
 }
 
 /*
- establishes a smbcli_tree from scratch (async)
+ establishs a smbcli_tree from scratch (async)
 */
 static struct composite_context *torture_connect_async(
 				struct torture_context *tctx,

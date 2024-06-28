@@ -46,9 +46,9 @@ char *ndr_syntax_id_buf_string(
 
 	snprintf(dst->buf,
 		 sizeof(dst->buf),
-		 "%s/0x%08"PRIx32,
+		 "%s/0x%08x",
 		 GUID_buf_string(&id->uuid, &guid_buf),
-		 id->if_version);
+		 (unsigned int)id->if_version);
 
 	return dst->buf;
 }

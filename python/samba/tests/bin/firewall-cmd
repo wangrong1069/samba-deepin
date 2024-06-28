@@ -48,8 +48,7 @@ if __name__ == "__main__":
     elif opts.new_zone:
         if 'zones' not in data:
             data['zones'] = []
-        if opts.new_zone not in data['zones']:
-            data['zones'].append(opts.new_zone)
+        data['zones'].append(opts.new_zone)
     elif opts.get_zones:
         if 'zones' in data:
             for zone in data['zones']:
@@ -71,8 +70,7 @@ if __name__ == "__main__":
             data['zone_interfaces'] = {}
         if opts.zone not in data['zone_interfaces'].keys():
             data['zone_interfaces'][opts.zone] = []
-        if opts.add_interface not in data['zone_interfaces'][opts.zone]:
-            data['zone_interfaces'][opts.zone].append(opts.add_interface)
+        data['zone_interfaces'][opts.zone].append(opts.add_interface)
     elif opts.add_rich_rule:
         assert opts.zone
         if 'rules' not in data:
@@ -82,11 +80,9 @@ if __name__ == "__main__":
         # Test rule parsing if firewalld is installed
         if Rich_Rule:
             # Parsing failure will throw an exception
-            rule = str(Rich_Rule(rule_str=opts.add_rich_rule))
+            data['rules'][opts.zone].append(str(Rich_Rule(rule_str=opts.add_rich_rule)))
         else:
-            rule = opts.add_rich_rule
-        if rule not in data['rules'][opts.zone]:
-            data['rules'][opts.zone].append(rule)
+            data['rules'][opts.zone].append(opts.add_rich_rule)
     elif opts.remove_rich_rule:
         assert opts.zone
         assert 'rules' in data

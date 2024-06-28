@@ -271,13 +271,6 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 		x->global->signing_flags &= ~SMBXSRV_SIGNING_REQUIRED;
 		/* we map anonymous to guest internally */
 		guest = true;
-	} else {
-		/*
-		 * Remember we got one authenticated session on the connection
-		 * in order to allow SMB3 decryption to happen
-		 * (sadly even for future anonymous connections).
-		 */
-		xconn->smb2.got_authenticated_session = true;
 	}
 
 	if (guest && (x->global->encryption_flags & SMBXSRV_ENCRYPTION_REQUIRED)) {
@@ -295,10 +288,7 @@ static NTSTATUS smbd_smb2_auth_generic_return(struct smbXsrv_session *session,
 	}
 	x->global->signing_algo = xconn->smb2.server.sign_algo;
 	x->global->encryption_cipher = xconn->smb2.server.cipher;
-	if (*out_session_flags & SMB2_SESSION_FLAG_IS_GUEST) {
-		/*
-		 * A fallback to guest can't do any encryption
-		 */
+	if (guest) {
 		x->global->encryption_cipher = SMB2_ENCRYPTION_NONE;
 	}
 
@@ -652,12 +642,6 @@ static NTSTATUS smbd_smb2_bind_auth_return(struct smbXsrv_session *session,
 		return NT_STATUS_LOGON_FAILURE;
 	}
 
-	/*
-	 * Remember we got one authenticated session on the connection
-	 * in order to allow SMB3 decryption to happen
-	 */
-	xconn->smb2.got_authenticated_session = true;
-
 	*out_session_id = session->global->session_wire_id;
 
 	return NT_STATUS_OK;
@@ -770,14 +754,8 @@ static struct tevent_req *smbd_smb2_session_setup_send(TALLOC_CTX *mem_ctx,
 		if (NT_STATUS_EQUAL(status, NT_STATUS_BAD_LOGON_SESSION_STATE)) {
 			/*
 			 * This comes from smb2srv_session_lookup_global().
-			 * And it's a cross node/cross smbd session bind,
-			 * which can't work in our architecture.
-			 *
-			 * Returning NT_STATUS_REQUEST_NOT_ACCEPTED is better
-			 * than NT_STATUS_USER_SESSION_DELETED in order to
-			 * avoid a completely new session.
 			 */
-			tevent_req_nterror(req, NT_STATUS_REQUEST_NOT_ACCEPTED);
+			tevent_req_nterror(req, NT_STATUS_USER_SESSION_DELETED);
 			return tevent_req_post(req, ev);
 		}
 

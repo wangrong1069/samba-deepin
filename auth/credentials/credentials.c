@@ -146,11 +146,6 @@ _PUBLIC_ enum credentials_use_kerberos cli_credentials_get_kerberos_state(struct
 	return creds->kerberos_state;
 }
 
-_PUBLIC_ enum credentials_obtained cli_credentials_get_kerberos_state_obtained(struct cli_credentials *creds)
-{
-	return creds->kerberos_state_obtained;
-}
-
 _PUBLIC_ const char *cli_credentials_get_forced_sasl_mech(struct cli_credentials *creds)
 {
 	return creds->forced_sasl_mech;
@@ -1584,10 +1579,6 @@ _PUBLIC_ bool cli_credentials_parse_password_fd(struct cli_credentials *credenti
 	char *p;
 	char pass[128];
 
-	if (credentials->password_obtained >= obtained) {
-		return false;
-	}
-
 	for(p = pass, *p = '\0'; /* ensure that pass is null-terminated */
 		p && p - pass < sizeof(pass) - 1;) {
 		switch (read(fd, p, 1)) {
@@ -1915,7 +1906,7 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 
 	if (data.data == NULL || data.length == 0) {
 		DBG_ERR("Nothing to encrypt "
-			"data.data == NULL or data.length == 0\n");
+			"data.data == NULL or data.length == 0");
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 	/*
@@ -1923,7 +1914,7 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 	 * NETLOGON pipe session key .
 	 */
 	if (all_zero(data.data, data.length)) {
-		DBG_ERR("Supplied data all zeros, could leak session key\n");
+		DBG_ERR("Supplied data all zeros, could leak session key");
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 	if (state->negotiate_flags & NETLOGON_NEG_SUPPORTS_AES) {
@@ -1935,7 +1926,7 @@ _PUBLIC_ NTSTATUS netlogon_creds_session_encrypt(
 						      data.data,
 						      data.length);
 	} else {
-		DBG_ERR("Unsupported encryption option negotiated\n");
+		DBG_ERR("Unsupported encryption option negotiated");
 		status = NT_STATUS_NOT_SUPPORTED;
 	}
 	if (!NT_STATUS_IS_OK(status)) {

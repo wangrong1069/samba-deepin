@@ -33,7 +33,6 @@
 #include "librpc/gen_ndr/auth.h"
 #include "auth/common_auth.h"
 #include "auth/kerberos/pac_utils.h"
-#include "lib/krb5_wrap/krb5_samba.h"
 
 krb5_error_code check_pac_checksum(DATA_BLOB pac_data,
 					  struct PAC_SIGNATURE_DATA *sig,
@@ -45,32 +44,24 @@ krb5_error_code check_pac_checksum(DATA_BLOB pac_data,
 	krb5_keyusage usage = 0;
 	krb5_boolean checksum_valid = false;
 	krb5_data input;
-	size_t idx = 0;
-	struct {
-		krb5_cksumtype cksum_type;
-		krb5_enctype enc_type;
-	} supported_types[] = {
-		{CKSUMTYPE_HMAC_SHA1_96_AES_256, ENCTYPE_AES256_CTS_HMAC_SHA1_96},
-		{CKSUMTYPE_HMAC_SHA1_96_AES_128, ENCTYPE_AES128_CTS_HMAC_SHA1_96},
-		/* RFC8009 types. Not supported by AD yet but used by FreeIPA and MIT Kerberos */
-		{CKSUMTYPE_HMAC_SHA256_128_AES128, ENCTYPE_AES128_CTS_HMAC_SHA256_128},
-		{CKSUMTYPE_HMAC_SHA384_192_AES256, ENCTYPE_AES256_CTS_HMAC_SHA384_192},
-		{0, 0},
-	};
 
-	for(idx = 0; supported_types[idx].cksum_type != 0; idx++) {
-		if (sig->type == supported_types[idx].cksum_type) {
-			if (KRB5_KEY_TYPE(keyblock) != supported_types[idx].enc_type) {
-				return EINVAL;
-			}
-			/* ok */
-			break;
+	switch (sig->type) {
+	case CKSUMTYPE_HMAC_MD5:
+		/* ignores the key type */
+		break;
+	case CKSUMTYPE_HMAC_SHA1_96_AES_256:
+		if (KRB5_KEY_TYPE(keyblock) != ENCTYPE_AES256_CTS_HMAC_SHA1_96) {
+			return EINVAL;
 		}
-	}
-
-	/* do not do key type check for HMAC-MD5 */
-	if ((sig->type != CKSUMTYPE_HMAC_MD5) &&
-	    (supported_types[idx].cksum_type == 0)) {
+		/* ok */
+		break;
+	case CKSUMTYPE_HMAC_SHA1_96_AES_128:
+		if (KRB5_KEY_TYPE(keyblock) != ENCTYPE_AES128_CTS_HMAC_SHA1_96) {
+			return EINVAL;
+		}
+		/* ok */
+		break;
+	default:
 		DEBUG(2,("check_pac_checksum: Checksum Type %d is not supported\n",
 			(int)sig->type));
 		return EINVAL;
@@ -188,7 +179,7 @@ NTSTATUS kerberos_decode_pac(TALLOC_CTX *mem_ctx,
 	}
 
 	if (pac_data->num_buffers < 4) {
-		/* we need logon_info, service_key and kdc_key */
+		/* we need logon_ingo, service_key and kdc_key */
 		DEBUG(0,("less than 4 PAC buffers\n"));
 		talloc_free(tmp_ctx);
 		return NT_STATUS_INVALID_PARAMETER;
@@ -206,14 +197,14 @@ NTSTATUS kerberos_decode_pac(TALLOC_CTX *mem_ctx,
 	}
 
 	if (pac_data_raw->num_buffers < 4) {
-		/* we need logon_info, service_key and kdc_key */
+		/* we need logon_ingo, service_key and kdc_key */
 		DEBUG(0,("less than 4 PAC buffers\n"));
 		talloc_free(tmp_ctx);
 		return NT_STATUS_INVALID_PARAMETER;
 	}
 
 	if (pac_data->num_buffers != pac_data_raw->num_buffers) {
-		/* we need logon_info, service_key and kdc_key */
+		/* we need logon_ingo, service_key and kdc_key */
 		DEBUG(0, ("misparse! PAC_DATA has %d buffers while "
 			  "PAC_DATA_RAW has %d\n", pac_data->num_buffers,
 			  pac_data_raw->num_buffers));
@@ -377,7 +368,7 @@ NTSTATUS kerberos_decode_pac(TALLOC_CTX *mem_ctx,
 	}
 
 	if (tgs_authtime) {
-		/* Convert to NT time, so as not to lose accuracy in comparison */
+		/* Convert to NT time, so as not to loose accuracy in comparison */
 		unix_to_nt_time(&tgs_authtime_nttime, tgs_authtime);
 
 		if (tgs_authtime_nttime != logon_name->logon_time) {

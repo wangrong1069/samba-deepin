@@ -27,12 +27,12 @@ import gc
 class ArrayTests(samba.tests.TestCase):
 
     def setUp(self):
-        super().setUp()
+        super(ArrayTests, self).setUp()
         talloc.enable_null_tracking()
         self.startup_blocks = talloc.total_blocks()
 
     def tearDown(self):
-        super().tearDown()
+        super(ArrayTests, self).tearDown()
         gc.collect()
         if talloc.total_blocks() != self.startup_blocks:
             talloc.report_full()

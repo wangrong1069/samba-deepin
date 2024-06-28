@@ -95,9 +95,7 @@ krb5_error_code samba_kdc_check_s4u2proxy_rbcd(
 		struct samba_kdc_db_context *kdc_db_ctx,
 		krb5_const_principal client_principal,
 		krb5_const_principal server_principal,
-		const struct auth_user_info_dc *user_info_dc,
-		const struct auth_user_info_dc *device_info_dc,
-		const struct auth_claims auth_claims,
+		krb5_const_pac header_pac,
 		struct samba_kdc_entry *proxy_skdc_entry);
 
 NTSTATUS samba_kdc_setup_db_ctx(TALLOC_CTX *mem_ctx, struct samba_kdc_base_context *base_ctx,

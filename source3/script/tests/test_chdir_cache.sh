@@ -8,7 +8,7 @@
 # Copyright (C) 2021 Jeremy Allison
 
 if [ $# -lt 5 ]; then
-	echo Usage: test_chdir_cache.sh \
+	echo Usage: test_chdir_user.sh \
 		--configfile=SERVERCONFFILE SMBCLIENT SMBCONTROL SERVER SHARE PREFIX TESTENV
 	exit 1
 fi

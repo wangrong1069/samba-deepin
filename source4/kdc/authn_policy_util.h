@@ -23,7 +23,6 @@
 
 #include "lib/replace/replace.h"
 #include "auth/authn_policy.h"
-#include "auth/session.h"
 #include <talloc.h>
 
 struct ldb_context;
@@ -69,7 +68,6 @@ NTSTATUS authn_policy_authenticate_from_device(TALLOC_CTX *mem_ctx,
 					       struct ldb_context *samdb,
 					       struct loadparm_context* lp_ctx,
 					       const struct auth_user_info_dc *device_info,
-					       const struct auth_claims auth_claims,
 					       const struct authn_kerberos_client_policy *client_policy,
 					       struct authn_audit_info **client_audit_info_out);
 
@@ -115,10 +113,6 @@ enum authn_policy_auth_type {
 	AUTHN_POLICY_AUTH_TYPE_NTLM,
 };
 
-struct authn_policy_flags {
-	bool force_compounded_authentication : 1;
-};
-
 /*
  * Perform an access check for the client attempting to authenticate to the
  * server. ‘user_info’ must be talloc-allocated so that we can make a reference
@@ -129,10 +123,7 @@ NTSTATUS authn_policy_authenticate_to_service(TALLOC_CTX *mem_ctx,
 					      struct loadparm_context* lp_ctx,
 					      enum authn_policy_auth_type auth_type,
 					      const struct auth_user_info_dc *user_info,
-					      const struct auth_user_info_dc *device_info,
-					      const struct auth_claims auth_claims,
 					      const struct authn_server_policy *server_policy,
-					      const struct authn_policy_flags authn_policy_flags,
 					      struct authn_audit_info **server_audit_info_out);
 
 /* Create a structure containing auditing information. */

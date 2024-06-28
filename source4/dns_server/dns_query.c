@@ -663,17 +663,8 @@ static NTSTATUS create_tkey(struct dns_server *dns,
 {
 	NTSTATUS status;
 	struct dns_server_tkey_store *store = dns->tkeys;
-	struct dns_server_tkey *k = NULL;
+	struct dns_server_tkey *k = talloc_zero(store, struct dns_server_tkey);
 
-	if (strcmp(algorithm, "gss-tsig") == 0) {
-		/* ok */
-	} else if (strcmp(algorithm, "gss.microsoft.com") == 0) {
-		/* ok */
-	} else {
-		return NT_STATUS_ACCESS_DENIED;
-	}
-
-	k = talloc_zero(store, struct dns_server_tkey);
 	if (k == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
@@ -799,22 +790,12 @@ static WERROR handle_tkey(struct dns_server *dns,
 {
 	struct dns_res_rec *in_tkey = NULL;
 	struct dns_res_rec *ret_tkey;
+	uint16_t i;
 
-	/*
-	 * TKEY needs to we the last one in
-	 * additional or answers
-	 */
-	if (in->arcount >= 1) {
-		uint16_t i = in->arcount - 1;
+	for (i = 0; i < in->arcount; i++) {
 		if (in->additional[i].rr_type == DNS_QTYPE_TKEY) {
 			in_tkey = &in->additional[i];
-		}
-	} else if (in->nscount >= 1) {
-		/* no lookup */
-	} else if (in->ancount >= 1) {
-		uint16_t i = in->ancount - 1;
-		if (in->answers[i].rr_type == DNS_QTYPE_TKEY) {
-			in_tkey = &in->answers[i];
+			break;
 		}
 	}
 

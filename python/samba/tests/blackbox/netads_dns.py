@@ -28,7 +28,7 @@ COMMAND = "bin/net ads"
 class NetAdsDnsTests(BlackboxTestCase):
 
     def setUp(self):
-        super().setUp()
+        super(NetAdsDnsTests, self).setUp()
         nameserver = os.environ["DC_SERVER_IP"]
         # filename=None will disable reading /etc/resolv.conf. The file might
         # not exist e.g. on build or CI systems.

@@ -90,13 +90,8 @@ static void sync_child(char *name, int nm_type,
 		return;
 	}
 
-	status = smbXcli_negprot(cli->conn,
-				 cli->timeout,
-				 PROTOCOL_CORE,
-				 PROTOCOL_NT1,
-				 NULL,
-				 NULL,
-				 NULL);
+	status = smbXcli_negprot(cli->conn, cli->timeout, PROTOCOL_CORE,
+				 PROTOCOL_NT1);
 	if (!NT_STATUS_IS_OK(status)) {
 		cli_shutdown(cli);
 		return;

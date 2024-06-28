@@ -33,10 +33,9 @@ static size_t mdssvc_interfaces(
 	return ARRAY_SIZE(ifaces);
 }
 
-static NTSTATUS mdssvc_servers(
+static size_t mdssvc_servers(
 	struct dcesrv_context *dce_ctx,
 	const struct dcesrv_endpoint_server ***_ep_servers,
-	size_t *_num_ep_servers,
 	void *private_data)
 {
 	static const struct dcesrv_endpoint_server *ep_servers[1] = { NULL };
@@ -47,14 +46,13 @@ static NTSTATUS mdssvc_servers(
 	ok = posix_locking_init(false);
 	if (!ok) {
 		DBG_ERR("posix_locking_init() failed\n");
-		return NT_STATUS_INTERNAL_ERROR;
+		exit(1);
 	}
 
 	ep_servers[0] = mdssvc_get_ep_server();
 
 	*_ep_servers = ep_servers;
-	*_num_ep_servers = ARRAY_SIZE(ep_servers);
-	return NT_STATUS_OK;
+	return ARRAY_SIZE(ep_servers);
 }
 
 int main(int argc, const char *argv[])

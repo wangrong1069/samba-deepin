@@ -763,8 +763,8 @@ sub ParseFunction($$$)
 		# TODO: make this fatal at NDR level
 		if ($e->{LEVELS}[0]->{TYPE} eq "POINTER") {
 			if ($e->{LEVELS}[1]->{TYPE} eq "DATA" and
-			    Parse::Pidl::Typelist::is_string_type($e->{LEVELS}[1]->{DATA_TYPE})) {
-				$reason = "is a pointer to a string type";
+			    $e->{LEVELS}[1]->{DATA_TYPE} eq "string") {
+				$reason = "is a pointer to type 'string'";
 			} elsif ($e->{LEVELS}[1]->{TYPE} eq "ARRAY" and
 				 $e->{LEVELS}[1]->{IS_ZERO_TERMINATED}) {
 				next;

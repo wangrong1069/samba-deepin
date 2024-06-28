@@ -55,7 +55,7 @@ creds.set_krb_forwardable(credentials.NO_KRB_FORWARDABLE)
 
 class TestBrokenQueries(DNSTest):
     def setUp(self):
-        super().setUp()
+        super(TestBrokenQueries, self).setUp()
         global server, server_ip, lp, creds, timeout
         self.server_ip = server_ip
         self.lp = lp

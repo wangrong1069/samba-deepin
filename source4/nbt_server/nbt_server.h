@@ -78,8 +78,6 @@ struct nbtd_server {
 	struct nbtd_statistics stats;
 
 	struct ldb_context *sam_ctx;
-
-	struct nb_packet_server *unexpected_server;
 };
 
 

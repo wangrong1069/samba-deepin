@@ -31,7 +31,7 @@ for p in ["../../../../../testdata/samba3", "../../../../testdata/samba3"]:
 class WinsDatabaseTestCase(TestCase):
 
     def setUp(self):
-        super().setUp()
+        super(WinsDatabaseTestCase, self).setUp()
         self.winsdb = WinsDatabase(os.path.join(DATADIR, "wins.dat"))
 
     def test_length(self):
@@ -42,4 +42,4 @@ class WinsDatabaseTestCase(TestCase):
 
     def tearDown(self):
         self.winsdb.close()
-        super().tearDown()
+        super(WinsDatabaseTestCase, self).tearDown()

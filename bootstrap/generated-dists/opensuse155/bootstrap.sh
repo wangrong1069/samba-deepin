@@ -22,7 +22,6 @@ zypper --non-interactive install \
     bison \
     ccache \
     chrpath \
-    codespell \
     crypto-policies-scripts \
     cups-devel \
     curl \
@@ -77,6 +76,8 @@ zypper --non-interactive install \
     perl \
     perl-Archive-Tar-Wrapper \
     perl-ExtUtils-MakeMaker \
+    perl-JSON \
+    perl-JSON-XS \
     perl-Parse-Yapp \
     perl-Test-Base \
     pkgconfig \

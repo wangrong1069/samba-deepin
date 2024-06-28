@@ -101,8 +101,6 @@ class package(Context.Context):
 				tarinfo.uid   = tarinfo.gid   = 0
 				tarinfo.uname = tarinfo.gname = 'root'
 				tarinfo.size = os.stat(x).st_size
-				if os.environ.get('SOURCE_DATE_EPOCH'):
-					tarinfo.mtime = int(os.environ.get('SOURCE_DATE_EPOCH'))
 
 				# TODO - more archive creation options?
 				if kw.get('bare', True):

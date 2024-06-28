@@ -34,7 +34,7 @@ class SamDBTestCase(TestCaseInTempDir):
     """
 
     def setUp(self):
-        super().setUp()
+        super(SamDBTestCase, self).setUp()
         self.session = system_session()
         logger = logging.getLogger("selftest")
         self.domain = "dsdb"
@@ -56,7 +56,7 @@ class SamDBTestCase(TestCaseInTempDir):
         self.rm_files('names.tdb')
         self.rm_dirs('etc', 'msg.lock', 'private', 'state', 'bind-dns')
 
-        super().tearDown()
+        super(SamDBTestCase, self).tearDown()
 
 
 class SamDBTests(SamDBTestCase):

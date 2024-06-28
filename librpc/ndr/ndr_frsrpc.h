@@ -23,12 +23,12 @@
 #define _LIBRPC_NDR_NDR_FRSRPC_H
 
 enum ndr_err_code ndr_push_frsrpc_CommPktChunkCtr(struct ndr_push *ndr,
-					ndr_flags_type ndr_flags,
+					int ndr_flags,
 					const struct frsrpc_CommPktChunkCtr *r);
 enum ndr_err_code ndr_pull_frsrpc_CommPktChunkCtr(struct ndr_pull *ndr,
-					ndr_flags_type ndr_flags,
+					int ndr_flags,
 					struct frsrpc_CommPktChunkCtr *r);
 size_t ndr_size_frsrpc_CommPktChunkCtr(const struct frsrpc_CommPktChunkCtr *r,
-				       libndr_flags flags);
+				       int flags);
 
 #endif /* _LIBRPC_NDR_NDR_FRSRPC_H */

@@ -466,7 +466,8 @@ static NTSTATUS btrfs_fget_compression(struct vfs_handle_struct *handle,
 				       struct files_struct *fsp,
 				       uint16_t *_compression_fmt)
 {
-	struct sys_proc_fd_path_buf buf;
+	char buf[PATH_MAX];
+	const char *p = NULL;
 	int ret;
 	long flags = 0;
 	int fsp_fd = fsp_get_pathref_fd(fsp);
@@ -492,11 +493,14 @@ static NTSTATUS btrfs_fget_compression(struct vfs_handle_struct *handle,
 		return NT_STATUS_NOT_IMPLEMENTED;
 	}
 
-	fd = open(sys_proc_fd_path(fsp_fd, &buf), O_RDONLY);
+	p = sys_proc_fd_path(fsp_fd, buf, sizeof(buf));
+	if (p == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	fd = open(p, O_RDONLY);
 	if (fd == -1) {
-		DBG_DEBUG("/proc open of %s failed: %s\n",
-			  buf.buf,
-			  strerror(errno));
+		DBG_DEBUG("/proc open of %s failed: %s\n", p, strerror(errno));
 		return map_nt_error_from_unix(errno);
 	}
 
@@ -775,7 +779,7 @@ static NTSTATUS btrfs_snap_delete(struct vfs_handle_struct *handle,
 				  char *snap_path)
 {
 	char *tstr;
-	struct tm t_gmt = {};
+	struct tm t_gmt;
 	DIR *dest_dir;
 	int dest_fd;
 	struct btrfs_ioctl_vol_args ioctl_arg;

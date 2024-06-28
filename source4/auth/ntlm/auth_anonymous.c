@@ -1,7 +1,7 @@
 /* 
    Unix SMB/CIFS implementation.
 
-   Anonymous Authentication
+   Anonymous Authentification
 
    Copyright (C) Stefan Metzmacher            2004-2005
    

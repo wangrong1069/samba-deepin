@@ -62,22 +62,17 @@
 		</varlistentry>
 		<varlistentry>
 		<term>schema_mode = &lt;rfc2307 | sfu | sfu20&gt;</term>
-		<listitem>
-		<para>
+		<listitem><para>
 			Defines the schema that idmap_ad should use when querying
 			Active Directory regarding user and group information.
 			This can be either the RFC2307 schema support included
-			in Windows Server 2003 R2 and newer or the Service for
-			Unix (SFU) schema for versions before Windows Server
-			2003 R2.
+			in Windows 2003 R2 or the Service for Unix (SFU) schema.
 			For SFU 3.0 or 3.5 please choose "sfu", for SFU 2.0
 			please choose "sfu20".
 
 			Please note that the behavior of primary group membership is
 			controlled by the <emphasis>unix_primary_group</emphasis> option.
-		</para>
-		<para>Default: rfc2307</para>
-		</listitem>
+		</para></listitem>
 		</varlistentry>
 		<varlistentry>
 		<term>unix_primary_group = yes/no</term>
@@ -100,16 +95,6 @@
 		  <parameter>no</parameter> or the AD LDAP entry lacks the SFU
 		  attributes the options <emphasis>template shell</emphasis> and
 		  <emphasis>template homedir</emphasis> are used.
-		</para>
-		<para>Default: no</para>
-		</listitem>
-		</varlistentry>
-		<varlistentry>
-		<term>all_groupmem = yes/no</term>
-		<listitem><para>
-		  If set to <parameter>yes</parameter> winbind will retrieve all
-		  group members for getgrnam(3), getgrgid(3) and getgrent(3) calls,
-		  including those with missing uidNumber.
 		</para>
 		<para>Default: no</para>
 		</listitem>

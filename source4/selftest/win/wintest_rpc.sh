@@ -9,7 +9,7 @@
 
 if [ $# -lt 4 ]; then
 	cat <<EOF
-Usage: wintest_rpc.sh SERVER USERNAME PASSWORD DOMAIN
+Usage: test_rpc.sh SERVER USERNAME PASSWORD DOMAIN
 EOF
 	exit 1
 fi

@@ -195,7 +195,7 @@ static WERROR DsCrackNameSPNAlias(struct ldb_context *sam_ctx, TALLOC_CTX *mem_c
 	WERROR wret;
 	krb5_error_code ret;
 	krb5_principal principal;
-	krb5_data component;
+	const krb5_data *component;
 	const char *service, *dns_name;
 	char *new_service;
 	char *new_princ;
@@ -213,22 +213,18 @@ static WERROR DsCrackNameSPNAlias(struct ldb_context *sam_ctx, TALLOC_CTX *mem_c
 
 	/* grab cifs/, http/ etc */
 
-	ret = smb_krb5_princ_component(smb_krb5_context->krb5_context,
-				       principal, 0, &component);
-	if (ret) {
+	/* This is checked for in callers, but be safe */
+	if (krb5_princ_size(smb_krb5_context->krb5_context, principal) < 2) {
 		info1->status = DRSUAPI_DS_NAME_STATUS_NOT_FOUND;
 		krb5_free_principal(smb_krb5_context->krb5_context, principal);
 		return WERR_OK;
 	}
-	service = (const char *)component.data;
-	ret = smb_krb5_princ_component(smb_krb5_context->krb5_context,
-				       principal, 1, &component);
-	if (ret) {
-		info1->status = DRSUAPI_DS_NAME_STATUS_NOT_FOUND;
-		krb5_free_principal(smb_krb5_context->krb5_context, principal);
-		return WERR_OK;
-	}
-	dns_name = (const char *)component.data;
+	component = krb5_princ_component(smb_krb5_context->krb5_context,
+					 principal, 0);
+	service = (const char *)component->data;
+	component = krb5_princ_component(smb_krb5_context->krb5_context,
+					 principal, 1);
+	dns_name = (const char *)component->data;
 
 	/* MAP it */
 	namestatus = LDB_lookup_spn_alias(sam_ctx, mem_ctx,
@@ -392,7 +388,7 @@ static WERROR DsCrackNameUPN(struct ldb_context *sam_ctx, TALLOC_CTX *mem_ctx,
 
 /*
  * This function will workout the filtering parameter in order to be able to do
- * the adapted search when the incoming format is format_functional.
+ * the adapted search when the incomming format is format_functional.
  * This boils down to defining the search_dn (passed as pointer to ldb_dn *) and the
  * ldap filter request.
  * Main input parameters are:
@@ -764,12 +760,12 @@ WERROR DsCrackNameOneName(struct ldb_context *sam_ctx, TALLOC_CTX *mem_ctx,
 
 		krb5_free_principal(smb_krb5_context->krb5_context, principal);
 
-		/* The ldb_binary_encode_string() here avoids LDAP filter injection attacks */
 		unparsed_name_encoded = ldb_binary_encode_string(mem_ctx, unparsed_name);
 		if (unparsed_name_encoded == NULL) {
 			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
+		/* The ldb_binary_encode_string() here avoid LDAP filter injection attacks */
 		result_filter = talloc_asprintf(mem_ctx, "(&(userPrincipalName=%s)(objectClass=user))",
 						unparsed_name_encoded);
 
@@ -781,7 +777,8 @@ WERROR DsCrackNameOneName(struct ldb_context *sam_ctx, TALLOC_CTX *mem_ctx,
 		krb5_principal principal;
 		char *unparsed_name_short;
 		const char *unparsed_name_short_encoded = NULL;
-		bool principal_is_host = false;
+		const krb5_data *component;
+		char *service;
 
 		ret = smb_krb5_init_context(mem_ctx, 
 					    (struct loadparm_context *)ldb_get_opaque(sam_ctx, "loadparm"), 
@@ -824,35 +821,20 @@ WERROR DsCrackNameOneName(struct ldb_context *sam_ctx, TALLOC_CTX *mem_ctx,
 			return WERR_NOT_ENOUGH_MEMORY;
 		}
 
-		if ((krb5_princ_size(smb_krb5_context->krb5_context, principal) == 2)) {
-			krb5_data component;
-
-			ret = smb_krb5_princ_component(smb_krb5_context->krb5_context,
-						       principal, 0, &component);
-			if (ret) {
-				krb5_free_principal(smb_krb5_context->krb5_context, principal);
-				free(unparsed_name_short);
-				return WERR_INTERNAL_ERROR;
-			}
-
-			principal_is_host = strcasecmp(component.data, "host") == 0;
-		}
-
-		if (principal_is_host) {
+		component = krb5_princ_component(smb_krb5_context->krb5_context,
+						 principal, 0);
+		service = (char *)component->data;
+		if ((krb5_princ_size(smb_krb5_context->krb5_context,
+							principal) == 2) &&
+			(strcasecmp(service, "host") == 0)) {
 			/* the 'cn' attribute is just the leading part of the name */
-			krb5_data component;
 			char *computer_name;
 			const char *computer_name_encoded = NULL;
-			ret = smb_krb5_princ_component(
-				smb_krb5_context->krb5_context,
-				principal, 1, &component);
-			if (ret) {
-				krb5_free_principal(smb_krb5_context->krb5_context, principal);
-				free(unparsed_name_short);
-				return WERR_INTERNAL_ERROR;
-			}
-			computer_name = talloc_strndup(mem_ctx, (char *)component.data,
-							strcspn((char *)component.data, "."));
+			component = krb5_princ_component(
+						smb_krb5_context->krb5_context,
+						principal, 1);
+			computer_name = talloc_strndup(mem_ctx, (char *)component->data,
+							strcspn((char *)component->data, "."));
 			if (computer_name == NULL) {
 				krb5_free_principal(smb_krb5_context->krb5_context, principal);
 				free(unparsed_name_short);
@@ -899,7 +881,7 @@ WERROR DsCrackNameOneName(struct ldb_context *sam_ctx, TALLOC_CTX *mem_ctx,
 }
 
 /* Subcase of CrackNames.  It is possible to translate a LDAP-style DN
- * (FQDN_1779) into a canonical name without actually searching the
+ * (FQDN_1779) into a canoical name without actually searching the
  * database */
 
 static WERROR DsCrackNameOneSyntactical(TALLOC_CTX *mem_ctx,
@@ -1260,7 +1242,7 @@ static WERROR DsCrackNameOneFilter(struct ldb_context *sam_ctx, TALLOC_CTX *mem_
 				info1->status = DRSUAPI_DS_NAME_STATUS_NO_MAPPING;
 				return WERR_OK;
 			}
-			if (dom_sid_in_domain(&global_sid_Builtin, sid)) {
+			if (dom_sid_in_domain(dom_sid_parse_talloc(mem_ctx, SID_BUILTIN), sid)) {
 				_dom = "BUILTIN";
 			} else {
 				const char *attrs[] = { NULL };

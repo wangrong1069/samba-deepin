@@ -24,7 +24,7 @@ class PromoteDcLmdbSizeTestCase(SambaToolCmdTest):
     """Test setting of the lmdb map size during a promote dc"""
 
     def setUp(self):
-        super().setUp()
+        super(PromoteDcLmdbSizeTestCase, self).setUp()
         self.tempsambadir = os.path.join(self.tempdir, "samba")
         os.mkdir(self.tempsambadir)
         (_, name) = os.path.split(self.tempdir)
@@ -170,5 +170,5 @@ class PromoteDcLmdbSizeTestCase(SambaToolCmdTest):
             " optional unit suffix")
 
     def tearDown(self):
-        super().tearDown()
+        super(PromoteDcLmdbSizeTestCase, self).tearDown()
         shutil.rmtree(self.tempsambadir)

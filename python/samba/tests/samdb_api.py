@@ -19,15 +19,19 @@
 from samba.tests import TestCaseInTempDir
 from samba.samdb import SamDB
 from ldb import LdbError, ERR_OPERATIONS_ERROR
+import os
 import errno
 
 
 class SamDBApiTestCase(TestCaseInTempDir):
 
+    def setUp(self):
+        super(SamDBApiTestCase, self).setUp()
+
     def tearDown(self):
         self.rm_files("test.db", "existing.db", allow_missing=True)
 
-        super().tearDown()
+        super(SamDBApiTestCase, self).tearDown()
 
     # Attempt to open and existing non tdb file as a tdb file.
     # Don't create new db is set, the default

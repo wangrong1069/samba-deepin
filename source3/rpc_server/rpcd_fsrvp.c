@@ -45,18 +45,16 @@ static size_t fsrvp_interfaces(
 	return ARRAY_SIZE(ifaces);
 }
 
-static NTSTATUS fsrvp_servers(
+static size_t fsrvp_servers(
 	struct dcesrv_context *dce_ctx,
 	const struct dcesrv_endpoint_server ***_ep_servers,
-	size_t *_num_ep_servers,
 	void *private_data)
 {
 	static const struct dcesrv_endpoint_server *ep_servers[1] = { NULL };
 
 	if (lp_server_role() == ROLE_ACTIVE_DIRECTORY_DC) {
 		*_ep_servers = NULL;
-		*_num_ep_servers = 0;
-		return NT_STATUS_OK;
+		return 0;
 	}
 
 	lp_load_with_shares(get_dyn_CONFIGFILE());
@@ -64,8 +62,7 @@ static NTSTATUS fsrvp_servers(
 	ep_servers[0] = FileServerVssAgent_get_ep_server();
 
 	*_ep_servers = ep_servers;
-	*_num_ep_servers = ARRAY_SIZE(ep_servers);
-	return NT_STATUS_OK;
+	return ARRAY_SIZE(ep_servers);
 }
 
 int main(int argc, const char *argv[])

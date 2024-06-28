@@ -35,7 +35,6 @@
 #include "includes.h"
 #include "kdc/kdc-glue.h"
 #include "kdc/db-glue.h"
-#include "kdc/pac-glue.h"
 #include "auth/auth_sam.h"
 #include "auth/common_auth.h"
 #include "auth/authn_policy.h"
@@ -179,7 +178,7 @@ static krb5_error_code hdb_samba4_fetch_kvno(krb5_context context, HDB *db,
 	ret = sdb_entry_to_hdb_entry(context, &sentry, entry);
 	sdb_entry_free(&sentry);
 
-	if (code == 0) {
+	if (code != 0 && ret != 0) {
 		code = ret;
 	}
 
@@ -215,7 +214,7 @@ static krb5_error_code hdb_samba4_kpasswd_fetch_kvno(krb5_context context, HDB *
 	flags &= ~HDB_F_KVNO_SPECIFIED;
 
 	/* Don't bother looking up a client or krbtgt. */
-	flags &= ~(HDB_F_GET_CLIENT|HDB_F_GET_KRBTGT);
+	flags &= ~(SDB_F_GET_CLIENT|SDB_F_GET_KRBTGT);
 
 	ret = hdb_samba4_fetch_kvno(context, db,
 				    kpasswd_principal,
@@ -319,111 +318,25 @@ hdb_samba4_check_constrained_delegation(krb5_context context, HDB *db,
 
 static krb5_error_code
 hdb_samba4_check_rbcd(krb5_context context, HDB *db,
-		      const hdb_entry *client_krbtgt,
-		      const hdb_entry *client,
-		      const hdb_entry *device_krbtgt,
-		      const hdb_entry *device,
+		      krb5_const_principal client_principal,
 		      krb5_const_principal server_principal,
 		      krb5_const_pac header_pac,
-		      krb5_const_pac device_pac,
 		      const hdb_entry *proxy)
 {
 	struct samba_kdc_db_context *kdc_db_ctx = NULL;
-	struct samba_kdc_entry *client_skdc_entry = NULL;
-	const struct samba_kdc_entry *client_krbtgt_skdc_entry = NULL;
 	struct samba_kdc_entry *proxy_skdc_entry = NULL;
-	const struct auth_user_info_dc *client_info = NULL;
-	const struct auth_user_info_dc *device_info = NULL;
-	struct samba_kdc_entry_pac client_pac_entry = {};
-	struct auth_claims auth_claims = {};
-	TALLOC_CTX *mem_ctx = NULL;
-	krb5_error_code code;
 
 	kdc_db_ctx = talloc_get_type_abort(db->hdb_db,
 					   struct samba_kdc_db_context);
-	client_skdc_entry = talloc_get_type_abort(client->context,
-						  struct samba_kdc_entry);
-	client_krbtgt_skdc_entry = talloc_get_type_abort(client_krbtgt->context,
-							 struct samba_kdc_entry);
 	proxy_skdc_entry = talloc_get_type_abort(proxy->context,
 						 struct samba_kdc_entry);
 
-	mem_ctx = talloc_new(kdc_db_ctx);
-	if (mem_ctx == NULL) {
-		return ENOMEM;
-	}
-
-	client_pac_entry = samba_kdc_entry_pac(header_pac,
-					       client_skdc_entry,
-					       samba_kdc_entry_is_trust(client_krbtgt_skdc_entry));
-
-	code = samba_kdc_get_user_info_dc(mem_ctx,
-					  context,
-					  kdc_db_ctx->samdb,
-					  client_pac_entry,
-					  &client_info,
-					  NULL /* resource_groups_out */);
-	if (code != 0) {
-		goto out;
-	}
-
-	code = samba_kdc_get_claims_data(mem_ctx,
-					 context,
-					 kdc_db_ctx->samdb,
-					 client_pac_entry,
-					 &auth_claims.user_claims);
-	if (code) {
-		goto out;
-	}
-
-	if (device != NULL) {
-		struct samba_kdc_entry *device_skdc_entry = NULL;
-		const struct samba_kdc_entry *device_krbtgt_skdc_entry = NULL;
-		struct samba_kdc_entry_pac device_pac_entry = {};
-
-		device_skdc_entry = talloc_get_type_abort(device->context,
-							  struct samba_kdc_entry);
-
-		if (device_krbtgt != NULL) {
-			device_krbtgt_skdc_entry = talloc_get_type_abort(device_krbtgt->context,
-									 struct samba_kdc_entry);
-		}
-
-		device_pac_entry = samba_kdc_entry_pac(device_pac,
-						       device_skdc_entry,
-						       samba_kdc_entry_is_trust(device_krbtgt_skdc_entry));
-
-		code = samba_kdc_get_user_info_dc(mem_ctx,
-						  context,
-						  kdc_db_ctx->samdb,
-						  device_pac_entry,
-						  &device_info,
-						  NULL /* resource_groups_out */);
-		if (code) {
-			goto out;
-		}
-
-		code = samba_kdc_get_claims_data(mem_ctx,
-						 context,
-						 kdc_db_ctx->samdb,
-						 device_pac_entry,
-						 &auth_claims.device_claims);
-		if (code) {
-			goto out;
-		}
-	}
-
-	code = samba_kdc_check_s4u2proxy_rbcd(context,
+	return samba_kdc_check_s4u2proxy_rbcd(context,
 					      kdc_db_ctx,
-					      client->principal,
+					      client_principal,
 					      server_principal,
-					      client_info,
-					      device_info,
-					      auth_claims,
+					      header_pac,
 					      proxy_skdc_entry);
-out:
-	talloc_free(mem_ctx);
-	return code;
 }
 
 static krb5_error_code
@@ -492,7 +405,7 @@ static void reset_bad_password_netlogon(TALLOC_CTX *mem_ctx,
 						  &ndr_table_winbind);
 
 	if (irpc_handle == NULL) {
-		DBG_ERR("No winbind_server running!\n");
+		DEBUG(0, ("No winbind_server running!\n"));
 		return;
 	}
 
@@ -711,7 +624,7 @@ static krb5_error_code hdb_samba4_set_edata_from_ntstatus(hdb_request_t r, const
 		return ret;
 	}
 
-	ret = kdc_request_set_e_data((astgs_request_t)r, e_data);
+	ret = kdc_set_e_data((astgs_request_t)r, e_data);
 	if (ret) {
 		krb5_data_free(&e_data);
 	}
@@ -987,7 +900,7 @@ static krb5_error_code hdb_samba4_audit(krb5_context context,
 				r->error_code = final_ret = KRB5KDC_ERR_CLIENT_REVOKED;
 				rwdc_fallback = kdc_db_ctx->rodc;
 			} else if (!NT_STATUS_IS_OK(status)) {
-				r->error_code = final_ret = KRB5KDC_ERR_CLIENT_REVOKED;
+				r->error_code = final_ret = KRB5KRB_ERR_GENERIC;
 				rwdc_fallback = kdc_db_ctx->rodc;
 			} else {
 				if (r->error_code == KRB5KDC_ERR_NEVER_VALID) {
@@ -1071,7 +984,7 @@ static krb5_error_code hdb_samba4_audit(krb5_context context,
 			 * from the password history, so we don't
 			 * update the badPwdCount, but still return
 			 * PREAUTH_FAILED and need to forward to
-			 * a RWDC in order to produce an authoritative
+			 * a RWDC in order to produce an autoritative
 			 * response for the client.
 			 */
 			status = NT_STATUS_WRONG_PASSWORD;
@@ -1196,7 +1109,7 @@ static krb5_error_code hdb_samba4_audit(krb5_context context,
 NTSTATUS hdb_samba4_create_kdc(struct samba_kdc_base_context *base_ctx,
 			       krb5_context context, struct HDB **db)
 {
-	struct samba_kdc_db_context *kdc_db_ctx = NULL;
+	struct samba_kdc_db_context *kdc_db_ctx;
 	NTSTATUS nt_status;
 
 	if (hdb_interface_version != HDB_INTERFACE_VERSION) {
@@ -1206,7 +1119,7 @@ NTSTATUS hdb_samba4_create_kdc(struct samba_kdc_base_context *base_ctx,
 
 	*db = talloc_zero(base_ctx, HDB);
 	if (!*db) {
-		krb5_set_error_message(context, ENOMEM, "talloc_zero: out of memory");
+		krb5_set_error_message(context, ENOMEM, "malloc: out of memory");
 		return NT_STATUS_NO_MEMORY;
 	}
 

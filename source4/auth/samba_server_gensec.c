@@ -20,7 +20,7 @@
 */
 
 /* This code sets up GENSEC in the way that all Samba servers want
- * (because they have presumed access to the sam.ldb etc */
+ * (becaue they have presumed access to the sam.ldb etc */
 
 #include "includes.h"
 #include "auth/auth.h"

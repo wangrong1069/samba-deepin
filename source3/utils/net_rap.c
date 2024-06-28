@@ -712,7 +712,7 @@ static int rap_printq_info(struct net_context *c, int argc, const char **argv)
 static int rap_printq_delete(struct net_context *c, int argc, const char **argv)
 {
 	struct cli_state *cli;
-	NTSTATUS status;
+	int ret;
 
 	if (argc == 0 || c->display_usage)
                 return net_rap_printq_usage(c, argc, argv);
@@ -720,12 +720,9 @@ static int rap_printq_delete(struct net_context *c, int argc, const char **argv)
 	if (!NT_STATUS_IS_OK(net_make_ipc_connection(c, 0, &cli)))
                 return -1;
 
-	status = cli_printjob_del(cli, atoi(argv[0]));
+	ret = cli_printjob_del(cli, atoi(argv[0]));
 	cli_shutdown(cli);
-	if (!NT_STATUS_IS_OK(status)) {
-		return -1;
-	}
-	return 0;
+	return ret;
 }
 
 int net_rap_printq(struct net_context *c, int argc, const char **argv)
@@ -1214,10 +1211,6 @@ int net_rap_service(struct net_context *c, int argc, const char **argv)
 			d_printf(_("Service name          Comment\n"
 		                   "-----------------------------\n"));
 			ret = cli_RNetServiceEnum(cli, long_group_fn, NULL);
-			if (ret) {
-				cli_shutdown(cli);
-				return ret;
-			}
 		}
 		ret = cli_RNetServiceEnum(cli, service_fn, NULL);
 		cli_shutdown(cli);

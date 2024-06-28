@@ -238,7 +238,6 @@ struct symbol {
     IOSObject *object;
     IOSObjectSet *objectset;
     HEIM_TAILQ_ENTRY(symbol) symlist;
-    unsigned int emitted_asn1:1;
     unsigned int emitted_declaration:1;
     unsigned int emitted_definition:1;
     unsigned int emitted_tag_enums:1;
@@ -261,7 +260,6 @@ Symbol *getsym(char *name);
 void output_name (char *);
 int checkundefined(void);
 void generate_types(void);
-void emitted_asn1(const Symbol *);
 void emitted_declaration(const Symbol *);
 void emitted_definition(const Symbol *);
 void emitted_tag_enums(const Symbol *);

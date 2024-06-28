@@ -20,7 +20,18 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-from samba.getopt import Validator, ValidationError
+from abc import ABCMeta, abstractmethod
+
+
+class ValidationError(Exception):
+    pass
+
+
+class Validator(metaclass=ABCMeta):
+
+    @abstractmethod
+    def __call__(self, field, value):
+        pass
 
 
 class Range(Validator):

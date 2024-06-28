@@ -81,7 +81,7 @@ extern int quotactl(int cmd, const char *special, uid_t uid, void *addr);
 
 #else
 
-#error Unknown QUOTACTL prototype
+#error Unknow QUOTACTL prototype
 
 #endif
 

@@ -32,8 +32,11 @@ from samba.dcerpc.windows_event_ids import (
 class AuthLogTestsNcalrpc(samba.tests.auth_log_base.AuthLogTestBase):
 
     def setUp(self):
-        super().setUp()
+        super(AuthLogTestsNcalrpc, self).setUp()
         self.remoteAddress = AS_SYSTEM_MAGIC_PATH_TOKEN
+
+    def tearDown(self):
+        super(AuthLogTestsNcalrpc, self).tearDown()
 
     def _test_rpc_ncaclrpc(self, authTypes, binding, creds,
                            protection, checkFunction):

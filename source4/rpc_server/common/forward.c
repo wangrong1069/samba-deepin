@@ -51,7 +51,11 @@ static void dcesrv_irpc_forward_callback(struct tevent_req *subreq)
 			 opname, nt_errstr(status)));
 		st->dce_call->fault_code = DCERPC_FAULT_CANT_PERFORM;
 	}
-	_dcesrv_async_reply(st->dce_call, __func__, opname);
+	status = dcesrv_reply(st->dce_call);
+	if (!NT_STATUS_IS_OK(status)) {
+		DEBUG(0,("%s_handler: dcesrv_reply() failed - %s\n",
+			 opname, nt_errstr(status)));
+	}
 }
 
 

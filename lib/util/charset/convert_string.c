@@ -334,7 +334,7 @@ bool convert_string_handle(struct smb_iconv_handle *ic,
  *
  * @param srclen length of source buffer.
  * @param dest always set at least to NULL
- * @param converted_size set to the number of bytes occupied by the string in
+ * @parm converted_size set to the number of bytes occupied by the string in
  * the destination on success.
  * @note -1 is not accepted for srclen.
  *
@@ -342,6 +342,9 @@ bool convert_string_handle(struct smb_iconv_handle *ic,
  * converted.
  *
  * Ensure the srclen contains the terminating zero.
+ *
+ * I hate the goto's in this function. It's emberrassing.....
+ * There has to be a cleaner way to do this. JRA.
  */
 bool convert_string_talloc_handle(TALLOC_CTX *ctx, struct smb_iconv_handle *ic,
 				  charset_t from, charset_t to,
@@ -354,7 +357,7 @@ bool convert_string_talloc_handle(TALLOC_CTX *ctx, struct smb_iconv_handle *ic,
 	const char *inbuf = NULL;
 	char *outbuf = NULL, *ob = NULL;
 	smb_iconv_t descriptor;
-	void **dest = dst;
+	void **dest = (void **)dst;
 
 	*dest = NULL;
 	if (converted_size != NULL) {
@@ -490,9 +493,7 @@ bool convert_string_talloc_handle(TALLOC_CTX *ctx, struct smb_iconv_handle *ic,
 }
 
 /**
- * Convert string from one encoding to another, with error checking.
- * This version produces more logging information than
- * convert_string_error(), but is otherwise functionally identical.
+ * Convert string from one encoding to another, making error checking etc
  *
  * @param src pointer to source string (multibyte or singlebyte)
  * @param srclen length of the source string in bytes
@@ -513,8 +514,7 @@ _PUBLIC_ bool convert_string(charset_t from, charset_t to,
 }
 
 /**
- * Convert string from one encoding to another, with error checking.
- * This version is less verbose than convert_string().
+ * Convert string from one encoding to another, making error checking etc
  *
  * @param src pointer to source string (multibyte or singlebyte)
  * @param srclen length of the source string in bytes

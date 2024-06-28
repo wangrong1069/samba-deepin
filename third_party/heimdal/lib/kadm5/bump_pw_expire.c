@@ -53,12 +53,7 @@ _kadm5_bump_pw_expire(kadm5_server_context *context,
 					    "password_lifetime",
 					    NULL);
 
-	if (life != 0)
-	    *(ent->pw_end) = time(NULL) + life;
-	else {
-	    free(ent->pw_end);
-	    ent->pw_end = NULL;
-	}
+	*(ent->pw_end) = time(NULL) + life;
     }
     return 0;
 }

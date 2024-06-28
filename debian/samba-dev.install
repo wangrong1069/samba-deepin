@@ -3,6 +3,7 @@
 # wbclient.h: libwbclient-dev
 # ldb*.h (except ldb_wrap.h): libldb-dev
 usr/include/samba-4.0/charset.h
+usr/include/samba-4.0/core/*.h
 usr/include/samba-4.0/credentials.h
 usr/include/samba-4.0/dcerpc.h
 usr/include/samba-4.0/dcerpc_server.h
@@ -22,7 +23,6 @@ usr/include/samba-4.0/rpc_common.h
 usr/include/samba-4.0/samba/*.h
 usr/include/samba-4.0/share.h
 usr/include/samba-4.0/smb2_lease_struct.h
-usr/include/samba-4.0/smb3posix.h
 usr/include/samba-4.0/smb_ldap.h
 usr/include/samba-4.0/smbconf.h
 usr/include/samba-4.0/smbldap.h

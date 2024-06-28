@@ -449,8 +449,6 @@ static NTSTATUS query_user_list(struct winbindd_domain *domain,
 	rids = talloc_realloc(mem_ctx, rids, uint32_t, count);
 	if (prids != NULL) {
 		*prids = rids;
-	} else {
-		TALLOC_FREE(rids);
 	}
 
 	status = NT_STATUS_OK;
@@ -1039,7 +1037,7 @@ static NTSTATUS lookup_useraliases(struct winbindd_domain *domain,
 }
 
 static NTSTATUS add_primary_group_members(
-	ADS_STRUCT *ads, TALLOC_CTX *mem_ctx, uint32_t rid, const char *domname,
+	ADS_STRUCT *ads, TALLOC_CTX *mem_ctx, uint32_t rid,
 	char ***all_members, size_t *num_all_members)
 {
 	char *filter;
@@ -1051,13 +1049,10 @@ static NTSTATUS add_primary_group_members(
 	char **members;
 	size_t num_members;
 	ads_control args;
-	bool all_groupmem = idmap_config_bool(domname, "all_groupmem", false);
 
 	filter = talloc_asprintf(
-		mem_ctx,
-		"(&(objectCategory=user)(primaryGroupID=%u)%s)",
-		(unsigned)rid,
-		all_groupmem ? "" : "(uidNumber=*)(!(uidNumber=0))");
+		mem_ctx, "(&(objectCategory=user)(primaryGroupID=%u))",
+		(unsigned)rid);
 	if (filter == NULL) {
 		goto done;
 	}
@@ -1209,7 +1204,7 @@ static NTSTATUS lookup_groupmem(struct winbindd_domain *domain,
 
 	DEBUG(10, ("ads lookup_groupmem: got %d sids via extended dn call\n", (int)num_members));
 
-	status = add_primary_group_members(ads, mem_ctx, rid, domain->name,
+	status = add_primary_group_members(ads, mem_ctx, rid,
 					   &members, &num_members);
 	if (!NT_STATUS_IS_OK(status)) {
 		DEBUG(10, ("%s: add_primary_group_members failed: %s\n",

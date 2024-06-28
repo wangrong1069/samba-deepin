@@ -1388,9 +1388,6 @@ static ssize_t libc_writev(int fd, const struct iovec *iov, int iovcnt)
 	return swrap.libc.symbols._libc_writev.f(fd, iov, iovcnt);
 }
 
-/* JEMALLOC: This tells socket_wrapper if it should handle syscall() */
-static bool swrap_handle_syscall;
-
 #ifdef HAVE_SYSCALL
 DO_NOT_SANITIZE_ADDRESS_ATTRIBUTE
 static long int libc_vsyscall(long int sysno, va_list va)
@@ -1399,27 +1396,7 @@ static long int libc_vsyscall(long int sysno, va_list va)
 	long int rc;
 	int i;
 
-	/*
-	 * JEMALLOC:
-	 *
-	 * This is a workaround to prevent a deadlock in jemalloc calling
-	 * malloc_init() twice. The first allocation call will trigger a
-	 * malloc_init() of jemalloc. The functions calls syscall(SYS_open, ...)
-	 * so it goes to socket or uid wrapper. In this code path we need to
-	 * avoid any allocation calls. This will prevent the deadlock.
-	 *
-	 * We also need to avoid dlopen() as that would trigger the recursion
-	 * into malloc_init(), so we use dlsym(RTLD_NEXT), until we reached
-	 * swrap_constructor() or any real socket call at that time
-	 * swrap_bind_symbol_all() will replace the function pointer again after
-	 * dlopen of libc.
-	 */
-	if (swrap_handle_syscall) {
-		swrap_bind_symbol_all();
-	} else if (swrap.libc.symbols._libc_syscall.obj == NULL) {
-		swrap.libc.symbols._libc_syscall.obj = dlsym(RTLD_NEXT,
-							     "syscall");
-	}
+	swrap_bind_symbol_all();
 
 	for (i = 0; i < 8; i++) {
 		args[i] = va_arg(va, long int);
@@ -1540,8 +1517,6 @@ static void __swrap_bind_symbol_all_once(void)
 	swrap_bind_symbol_rtld_default_optional(uid_wrapper_syscall_valid);
 	swrap_bind_symbol_rtld_default_optional(uid_wrapper_syscall_va);
 #endif
-
-	swrap_handle_syscall = true;
 }
 
 static void swrap_bind_symbol_all(void)
@@ -8770,21 +8745,6 @@ long int syscall(long int sysno, ...)
 	va_start(va, sysno);
 
 	/*
-	 * JEMALLOC:
-	 *
-	 * This is a workaround to prevent a deadlock in jemalloc calling
-	 * malloc_init() twice. The first allocation call will trigger a
-	 * malloc_init() of jemalloc. The functions calls syscall(SYS_open, ...)
-	 * so it goes to socket or uid wrapper. In this code path we need to
-	 * avoid any allocation calls. This will prevent the deadlock.
-	 */
-	if (!swrap_handle_syscall) {
-		rc = libc_vsyscall(sysno, va);
-		va_end(va);
-		return rc;
-	}
-
-	/*
 	 * We should only handle the syscall numbers
 	 * we care about...
 	 */
@@ -8900,9 +8860,6 @@ void swrap_constructor(void)
 	pthread_atfork(&swrap_thread_prepare,
 		       &swrap_thread_parent,
 		       &swrap_thread_child);
-
-	/* Let socket_wrapper handle syscall() */
-	swrap_handle_syscall = true;
 }
 
 /****************************

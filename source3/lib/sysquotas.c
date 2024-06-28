@@ -383,13 +383,13 @@ static int command_get_quota(const char *path, enum SMB_QUOTA_TYPE qtype, unid_t
 			DEBUG (3, ("Parsed output of get_quota, ...\n"));
 
 			DEBUGADD (5,( 
-				"qflags:%"PRIu32" curblocks:%"PRIu64" softlimit:%"PRIu64" hardlimit:%"PRIu64"\n"
-				"curinodes:%"PRIu64" isoftlimit:%"PRIu64" ihardlimit:%"PRIu64" bsize:%"PRIu64"\n",
-				dp->qflags,dp->curblocks,
-				dp->softlimit,dp->hardlimit,
-				dp->curinodes,
-				dp->isoftlimit,dp->ihardlimit,
-				dp->bsize));
+				"qflags:%u curblocks:%llu softlimit:%llu hardlimit:%llu\n"
+				"curinodes:%llu isoftlimit:%llu ihardlimit:%llu bsize:%llu\n", 
+				dp->qflags,(long long unsigned)dp->curblocks,
+				(long long unsigned)dp->softlimit,(long long unsigned)dp->hardlimit,
+				(long long unsigned)dp->curinodes,
+				(long long unsigned)dp->isoftlimit,(long long unsigned)dp->ihardlimit,
+				(long long unsigned)dp->bsize));
 			return 0;
 		}
 
@@ -439,33 +439,33 @@ static int command_set_quota(const char *path, enum SMB_QUOTA_TYPE qtype, unid_t
 		str_list_add_printf(&argl, "%d", _id);
 		str_list_add_printf(&argl, "%u", dp->qflags);
 		str_list_add_printf(
-			&argl, "%"PRIu64, dp->softlimit);
+			&argl, "%llu", (long long unsigned)dp->softlimit);
 		str_list_add_printf(
-			&argl, "%"PRIu64, dp->hardlimit);
+			&argl, "%llu", (long long unsigned)dp->hardlimit);
 		str_list_add_printf(
-			&argl, "%"PRIu64, dp->isoftlimit);
+			&argl, "%llu", (long long unsigned)dp->isoftlimit);
 		str_list_add_printf(
-			&argl, "%"PRIu64, dp->ihardlimit);
+			&argl, "%llu", (long long unsigned)dp->ihardlimit);
 		str_list_add_printf(
-			&argl, "%"PRIu64, dp->bsize);
+			&argl, "%llu", (long long unsigned)dp->bsize);
 		if (argl == NULL) {
 			return -1;
 		}
 
 		DBG_NOTICE("Running command "
 			"%s %s %d %d "
-			"%"PRIu32" %"PRIu64" %"PRIu64" "
-			"%"PRIu64" %"PRIu64" %"PRIu64"\n",
+			"%u %llu %llu "
+			"%llu %llu %llu ",
 			set_quota_command,
 			path,
 			qtype,
 			_id,
 			dp->qflags,
-			dp->softlimit,
-			dp->hardlimit,
-			dp->isoftlimit,
-			dp->ihardlimit,
-			dp->bsize);
+			(long long unsigned)dp->softlimit,
+			(long long unsigned)dp->hardlimit,
+			(long long unsigned)dp->isoftlimit,
+			(long long unsigned)dp->ihardlimit,
+			(long long unsigned)dp->bsize);
 
 		lines = file_lines_ploadv(talloc_tos(), argl, NULL);
 		TALLOC_FREE(argl);

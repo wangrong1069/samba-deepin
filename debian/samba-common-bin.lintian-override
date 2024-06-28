@@ -1,4 +1,2 @@
 # deliberate, a synonym for misspelled parameter
 samba-common-bin: typo-in-manual-page prefered preferred */man/man5/smb.conf.5*
-# python script wrapped in #!/bin/sh
-samba-common-bin: bash-term-in-posix-shell *usr/bin/samba-log-parser*

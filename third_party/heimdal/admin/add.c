@@ -187,7 +187,7 @@ read_file(FILE *f)
             if ((tmp = realloc(res, alloced + (alloced > 1))) == NULL)
                 err(1, "Out of memory");
             alloced += alloced > 1;
-            p = tmp + len;
+            p = tmp + (p - res);
             res = tmp;
             end = res + alloced;
         }

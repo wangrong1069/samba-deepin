@@ -1,5 +1,5 @@
 usr/bin/ldb*
-usr/lib/*/samba/libldb-cmdline-private-samba.so.0
+usr/lib/*/samba/libldb-cmdline-samba4.so.0
 usr/share/man/man1/ldbadd.1
 usr/share/man/man1/ldbdel.1
 usr/share/man/man1/ldbedit.1

@@ -39,11 +39,14 @@ def rm(rmdir):
 class NetS3JoinTests(samba.tests.TestCaseInTempDir):
 
     def setUp(self):
-        super().setUp()
+        super(NetS3JoinTests, self).setUp()
         self.realm = os.environ["REALM"]
         self.domain = os.environ["DOMAIN"]
         self.server = os.environ["SERVER"]
         self.lp = self.get_loadparm()
+
+    def tearDown(self):
+        super(NetS3JoinTests, self).tearDown()
 
     def test_net_join(self):
         netbios_name = "S3NetJoinTest"

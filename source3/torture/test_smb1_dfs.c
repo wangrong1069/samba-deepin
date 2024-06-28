@@ -1978,11 +1978,11 @@ static size_t get_filename(TALLOC_CTX *ctx,
 	p += 4; /* fileindex */
 	/* Offset zero is "create time", not "change time". */
 	p += 8;
-	finfo->atime_ts = interpret_long_date(BVAL(p, 0));
+	finfo->atime_ts = interpret_long_date((const char *)p);
 	p += 8;
-	finfo->mtime_ts = interpret_long_date(BVAL(p, 0));
+	finfo->mtime_ts = interpret_long_date((const char *)p);
 	p += 8;
-	finfo->ctime_ts = interpret_long_date(BVAL(p, 0));
+	finfo->ctime_ts = interpret_long_date((const char *)p);
 	p += 8;
 	finfo->size = PULL_LE_U64(p, 0);
 	p += 8;

@@ -44,7 +44,7 @@ global_hexdump = False
 class TestDCERPC_BIND(RawDCERPCTest):
 
     def setUp(self):
-        super().setUp()
+        super(TestDCERPC_BIND, self).setUp()
         self.do_ndr_print = global_ndr_print
         self.do_hexdump = global_hexdump
 

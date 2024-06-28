@@ -666,7 +666,7 @@ static bool test_validate_trust(struct torture_context *tctx,
 			break;
 		default:
 			torture_assert_int_equal(tctx, e->type, LSA_FOREST_TRUST_TOP_LEVEL_NAME,
-						 "Unexpected LSA_FOREST_TRUST_* type");
+						 "Unexptected LSA_FOREST_TRUST_* type");
 		}
 	}
 

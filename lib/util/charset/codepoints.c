@@ -1,21 +1,21 @@
-/*
+/* 
    Unix SMB/CIFS implementation.
    Character set conversion Extensions
    Copyright (C) Igor Vergeichik <iverg@mail.ru> 2001
    Copyright (C) Andrew Tridgell 2001
    Copyright (C) Simo Sorce 2001
    Copyright (C) Jelmer Vernooij 2007
-
+   
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
-
+   
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-
+   
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
@@ -26,7 +26,6 @@
 #include "dynconfig/dynconfig.h"
 #include "lib/util/debug.h"
 #include "lib/util/byteorder.h"
-#include "lib/util/tsort.h"
 
 #ifdef strcasecmp
 #undef strcasecmp
@@ -16480,23 +16479,11 @@ _PUBLIC_ bool isupper_m(codepoint_t val)
 */
 _PUBLIC_ int codepoint_cmpi(codepoint_t c1, codepoint_t c2)
 {
-	/*
-	 * FIXME: this is unsuitable for use in a sort, as the
-	 * comparison is intransitive.
-	 *
-	 * The problem is toupper_m() is only called on equality case,
-	 * which has strange effects.
-	 *
-	 *    Consider {'a', 'A', 'B'}.
-	 *     'a' == 'A'
-	 *     'a' >  'B'  (lowercase letters come after upper)
-	 *     'A' <  'B'
-	 */
 	if (c1 == c2 ||
 	    toupper_m(c1) == toupper_m(c2)) {
 		return 0;
 	}
-	return NUMERIC_CMP(c1, c2);
+	return c1 - c2;
 }
 
 
@@ -16525,8 +16512,8 @@ struct smb_iconv_handle *get_iconv_handle(void)
 	return global_iconv_handle;
 }
 
-struct smb_iconv_handle *get_iconv_testing_handle(TALLOC_CTX *mem_ctx,
-						  const char *dos_charset,
+struct smb_iconv_handle *get_iconv_testing_handle(TALLOC_CTX *mem_ctx, 
+						  const char *dos_charset, 
 						  const char *unix_charset,
 						  bool use_builtin_handlers)
 {

@@ -166,13 +166,6 @@ struct smb2cli_session {
 	uint16_t channel_sequence;
 	bool replay_active;
 	bool require_signed_response;
-
-	/*
-	 * The following are just for torture tests
-	 */
-	bool anonymous_signing;
-	bool anonymous_encryption;
-	bool no_signing_disconnect;
 };
 
 struct smbXcli_session {
@@ -4006,9 +3999,6 @@ static NTSTATUS smb2cli_conn_dispatch_incoming(struct smbXcli_conn *conn,
 
 		if (NT_STATUS_EQUAL(status, NT_STATUS_NETWORK_NAME_DELETED) ||
 		    NT_STATUS_EQUAL(status, NT_STATUS_FILE_CLOSED) ||
-		    (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED) &&
-		     session != NULL &&
-		     session->smb2->no_signing_disconnect) ||
 		    NT_STATUS_EQUAL(status, NT_STATUS_INVALID_PARAMETER)) {
 			/*
 			 * if the server returns
@@ -4052,29 +4042,8 @@ static NTSTATUS smb2cli_conn_dispatch_incoming(struct smbXcli_conn *conn,
 				/*
 				 * If the signing check fails, we disconnect
 				 * the connection.
-				 *
-				 * Unless
-				 * smb2cli_session_torture_no_signing_disconnect
-				 * was called in torture tests
 				 */
-
-				if (!NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
-					return signing_status;
-				}
-
-				if (!NT_STATUS_EQUAL(status, signing_status)) {
-					return signing_status;
-				}
-
-				if (session == NULL) {
-					return signing_status;
-				}
-
-				if (!session->smb2->no_signing_disconnect) {
-					return signing_status;
-				}
-
-				state->smb2.signing_skipped = true;
+				return signing_status;
 			}
 		}
 
@@ -4424,7 +4393,7 @@ static struct tevent_req *smbXcli_negprot_smb1_subreq(struct smbXcli_negprot_sta
 		}
 
 		/*
-		 * We know it is already ascii and
+		 * We now it is already ascii and
 		 * we want NULL termination.
 		 */
 		ok = data_blob_append(state, &bytes,
@@ -4646,8 +4615,8 @@ static void smbXcli_negprot_smb1_done(struct tevent_req *subreq)
 			if (blob1.length > 0) {
 				size_t len;
 
-				len = utf16_null_terminated_len_n(blob1.data,
-								  blob1.length);
+				len = utf16_len_n(blob1.data,
+						  blob1.length);
 				blob1.length = len;
 
 				ok = convert_string_talloc(state,
@@ -4668,6 +4637,10 @@ static void smbXcli_negprot_smb1_done(struct tevent_req *subreq)
 			blob2.length -= blob1.length;
 			if (blob2.length > 0) {
 				size_t len;
+
+				len = utf16_len_n(blob1.data,
+						  blob1.length);
+				blob1.length = len;
 
 				ok = convert_string_talloc(state,
 							   CH_UTF16LE,
@@ -4764,8 +4737,8 @@ static void smbXcli_negprot_smb1_done(struct tevent_req *subreq)
 			size_t len;
 			bool ok;
 
-			len = utf16_null_terminated_len_n(blob1.data,
-							  blob1.length);
+			len = utf16_len_n(blob1.data,
+					  blob1.length);
 			blob1.length = len;
 
 			ok = convert_string_talloc(state,
@@ -5478,6 +5451,13 @@ static void smbXcli_negprot_smb2_done(struct tevent_req *subreq)
 		}
 	}
 
+	if (rc < 0) {
+		gnutls_hash_deinit(hash_hnd, NULL);
+		tevent_req_nterror(req,
+				   gnutls_error_to_ntstatus(rc, NT_STATUS_HASH_NOT_SUPPORTED));
+		return;
+	}
+
 	/* This resets the hash state */
 	gnutls_hash_output(hash_hnd, conn->smb2.preauth_sha512);
 	TALLOC_FREE(subreq);
@@ -5619,10 +5599,7 @@ NTSTATUS smbXcli_negprot_recv(
 NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 			 uint32_t timeout_msec,
 			 enum protocol_types min_protocol,
-			 enum protocol_types max_protocol,
-			 struct smb2_negotiate_contexts *in_ctx,
-			 TALLOC_CTX *mem_ctx,
-			 struct smb2_negotiate_contexts **out_ctx)
+			 enum protocol_types max_protocol)
 {
 	TALLOC_CTX *frame = talloc_stackframe();
 	struct tevent_context *ev;
@@ -5649,7 +5626,7 @@ NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 		min_protocol,
 		max_protocol,
 		WINDOWS_CLIENT_PURE_SMB2_NEGPROT_INITIAL_CREDIT_ASK,
-		in_ctx);
+		NULL);
 	if (req == NULL) {
 		goto fail;
 	}
@@ -5657,7 +5634,7 @@ NTSTATUS smbXcli_negprot(struct smbXcli_conn *conn,
 	if (!ok) {
 		goto fail;
 	}
-	status = smbXcli_negprot_recv(req, mem_ctx, out_ctx);
+	status = smbXcli_negprot_recv(req, NULL, NULL);
  fail:
 	TALLOC_FREE(frame);
 	return status;
@@ -6363,23 +6340,6 @@ void smb2cli_session_require_signed_response(struct smbXcli_session *session,
 	session->smb2->require_signed_response = require_signed_response;
 }
 
-void smb2cli_session_torture_anonymous_signing(struct smbXcli_session *session,
-					       bool anonymous_signing)
-{
-	session->smb2->anonymous_signing = anonymous_signing;
-}
-
-void smb2cli_session_torture_anonymous_encryption(struct smbXcli_session *session,
-						  bool anonymous_encryption)
-{
-	session->smb2->anonymous_encryption = anonymous_encryption;
-}
-
-void smb2cli_session_torture_no_signing_disconnect(struct smbXcli_session *session)
-{
-	session->smb2->no_signing_disconnect = true;
-}
-
 NTSTATUS smb2cli_session_update_preauth(struct smbXcli_session *session,
 					const struct iovec *iov)
 {
@@ -6480,10 +6440,6 @@ NTSTATUS smb2cli_session_set_session_key(struct smbXcli_session *session,
 						  conn->protocol,
 						  preauth_hash);
 
-	if (session->smb2->anonymous_encryption) {
-		goto skip_signing_key;
-	}
-
 	status = smb2_signing_key_sign_create(session->smb2,
 					      conn->smb2.server.sign_algo,
 					      &_session_key,
@@ -6492,15 +6448,6 @@ NTSTATUS smb2cli_session_set_session_key(struct smbXcli_session *session,
 	if (!NT_STATUS_IS_OK(status)) {
 		return status;
 	}
-
-	if (session->smb2->anonymous_signing) {
-		/*
-		 * skip encryption and application keys
-		 */
-		goto skip_application_key;
-	}
-
-skip_signing_key:
 
 	status = smb2_signing_key_cipher_create(session->smb2,
 						conn->smb2.server.cipher,
@@ -6520,10 +6467,6 @@ skip_signing_key:
 		return status;
 	}
 
-	if (session->smb2->anonymous_encryption) {
-		goto skip_application_key;
-	}
-
 	status = smb2_signing_key_sign_create(session->smb2,
 					      conn->smb2.server.sign_algo,
 					      &_session_key,
@@ -6533,8 +6476,6 @@ skip_signing_key:
 		return status;
 	}
 
-skip_application_key:
-
 	status = smb2_signing_key_copy(session,
 				       session->smb2->signing_key,
 				       &session->smb2_channel.signing_key);
@@ -6543,18 +6484,6 @@ skip_application_key:
 	}
 
 	check_signature = conn->mandatory_signing;
-
-	if (conn->protocol >= PROTOCOL_SMB3_11) {
-		check_signature = true;
-	}
-
-	if (session->smb2->anonymous_signing) {
-		check_signature = false;
-	}
-
-	if (session->smb2->anonymous_encryption) {
-		check_signature = false;
-	}
 
 	hdr_flags = IVAL(recv_iov[0].iov_base, SMB2_HDR_FLAGS);
 	if (hdr_flags & SMB2_HDR_FLAG_SIGNED) {
@@ -6568,6 +6497,10 @@ skip_application_key:
 		 * We only check the signature if it's mandatory
 		 * or SMB2_HDR_FLAG_SIGNED is provided.
 		 */
+		check_signature = true;
+	}
+
+	if (conn->protocol >= PROTOCOL_SMB3_11) {
 		check_signature = true;
 	}
 
@@ -6600,15 +6533,6 @@ skip_application_key:
 
 	if (conn->smb2.server.cipher == 0) {
 		session->smb2->should_encrypt = false;
-	}
-
-	if (session->smb2->anonymous_signing) {
-		session->smb2->should_sign = true;
-	}
-
-	if (session->smb2->anonymous_encryption) {
-		session->smb2->should_encrypt = true;
-		session->smb2->should_sign = false;
 	}
 
 	/*
@@ -6753,18 +6677,11 @@ NTSTATUS smb2cli_session_set_channel_key(struct smbXcli_session *session,
 	if (conn->protocol >= PROTOCOL_SMB3_00) {
 		struct _derivation *d = &derivation.signing;
 
-		status = samba_gnutls_sp800_108_derive_key(
-			channel_key,
-			sizeof(channel_key),
-			NULL,
-			0,
-			d->label.data,
-			d->label.length,
-			d->context.data,
-			d->context.length,
-			GNUTLS_MAC_SHA256,
-			session->smb2_channel.signing_key->blob.data,
-			session->smb2_channel.signing_key->blob.length);
+		status = smb2_key_derivation(channel_key, sizeof(channel_key),
+					     d->label.data, d->label.length,
+					     d->context.data, d->context.length,
+					     session->smb2_channel.signing_key->blob.data,
+					     session->smb2_channel.signing_key->blob.length);
 		if (!NT_STATUS_IS_OK(status)) {
 			return status;
 		}
@@ -6782,16 +6699,6 @@ NTSTATUS smb2cli_session_set_channel_key(struct smbXcli_session *session,
 
 NTSTATUS smb2cli_session_encryption_on(struct smbXcli_session *session)
 {
-	if (session->smb2->anonymous_signing) {
-		return NT_STATUS_INVALID_PARAMETER_MIX;
-	}
-
-	if (session->smb2->anonymous_encryption) {
-		SMB_ASSERT(session->smb2->should_encrypt);
-		SMB_ASSERT(!session->smb2->should_sign);
-		return NT_STATUS_OK;
-	}
-
 	if (!session->smb2->should_sign) {
 		/*
 		 * We need required signing on the session

@@ -18,6 +18,7 @@
 
 """Tests for samba.dcerpc.samr.password"""
 
+import os
 import ctypes
 import samba.tests
 
@@ -32,7 +33,7 @@ from samba.tests import RpcInterfaceTestCase
 
 class SamrPasswordTests(RpcInterfaceTestCase):
     def setUp(self):
-        super().setUp()
+        super(SamrPasswordTests, self).setUp()
         self.open_samdb()
 
         self.create_user_account(10000)
@@ -49,7 +50,7 @@ class SamrPasswordTests(RpcInterfaceTestCase):
         self.remote_creds.set_password(self.remote_password)
 
     def tearDown(self):
-        super().tearDown()
+        super(SamrPasswordTests, self).tearDown()
 
         samr.Close(self.user_handle)
         samr.Close(self.domain_handle)

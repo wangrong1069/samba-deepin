@@ -17,6 +17,7 @@
 
 from samba.samba3 import libsmb_samba_internal as libsmb
 from samba import (ntstatus,NTSTATUSError)
+from samba.dcerpc import security as sec
 import samba.tests.libsmb
 import stat
 

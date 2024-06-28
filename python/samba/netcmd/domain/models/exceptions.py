@@ -24,18 +24,6 @@ class ModelError(Exception):
     pass
 
 
-class FieldError(ModelError):
-    """A ModelError on a specific field."""
-
-    def __init__(self, *args, field=None):
-        self.field = field
-        super().__init__(*args)
-
-    def __str__(self):
-        message = super().__str__()
-        return f"{self.field.name}: {message}"
-
-
 class MultipleObjectsReturned(ModelError):
     pass
 
@@ -44,11 +32,11 @@ class DoesNotExist(ModelError):
     pass
 
 
-class GrantMemberError(ModelError):
+class AddMemberError(ModelError):
     pass
 
 
-class RevokeMemberError(ModelError):
+class RemoveMemberError(ModelError):
     pass
 
 

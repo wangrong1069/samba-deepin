@@ -63,7 +63,6 @@ struct libnetapi_ctx {
 	struct cli_credentials *creds;
 
 	void *private_data;
-	struct loadparm_context *lp_ctx;
 };
 
 

@@ -136,12 +136,12 @@ static void query_iface_speed_from_name(const char *name, uint64_t *speed)
 
 	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 	if (fd == -1) {
-		DBG_ERR("Failed to open socket.\n");
+		DBG_ERR("Failed to open socket.");
 		return;
 	}
 
 	if (strlen(name) >= IF_NAMESIZE) {
-		DBG_ERR("Interface name too long.\n");
+		DBG_ERR("Interface name too long.");
 		goto done;
 	}
 
@@ -184,12 +184,12 @@ static void query_iface_rx_queues_from_name(const char *name,
 
 	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 	if (fd == -1) {
-		DBG_ERR("Failed to open socket.\n");
+		DBG_ERR("Failed to open socket.");
 		return;
 	}
 
 	if (strlen(name) >= IF_NAMESIZE) {
-		DBG_ERR("Interface name too long.\n");
+		DBG_ERR("Interface name too long.");
 		goto done;
 	}
 
@@ -386,18 +386,18 @@ static int iface_comp(struct iface_struct *i1, struct iface_struct *i2)
 	if (((struct sockaddr *)&i1->ip)->sa_family == AF_INET) {
 		struct sockaddr_in *s1 = (struct sockaddr_in *)&i1->ip;
 		struct sockaddr_in *s2 = (struct sockaddr_in *)&i2->ip;
-		uint32_t a1 = ntohl(s1->sin_addr.s_addr);
-		uint32_t a2 = ntohl(s2->sin_addr.s_addr);
-		r = NUMERIC_CMP(a1, a2);
-		if (r == 0) {
-			/* compare netmasks as a tiebreaker */
-			s1 = (struct sockaddr_in *)&i1->netmask;
-			s2 = (struct sockaddr_in *)&i2->netmask;
-			a1 = ntohl(s1->sin_addr.s_addr);
-			a2 = ntohl(s2->sin_addr.s_addr);
-			r = NUMERIC_CMP(a1, a2);
+
+		r = ntohl(s1->sin_addr.s_addr) -
+			ntohl(s2->sin_addr.s_addr);
+		if (r) {
+			return r;
 		}
-		return r;
+
+		s1 = (struct sockaddr_in *)&i1->netmask;
+		s2 = (struct sockaddr_in *)&i2->netmask;
+
+		return ntohl(s1->sin_addr.s_addr) -
+			ntohl(s2->sin_addr.s_addr);
 	}
 	return 0;
 }

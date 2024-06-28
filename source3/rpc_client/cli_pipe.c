@@ -1662,7 +1662,7 @@ static bool check_bind_response(const struct dcerpc_bind_ack *r,
 	bool equal;
 
 	if (r->secondary_address_size == 0) {
-		DEBUG(4,("Ignoring length check -- ASU bug (server didn't fill in the pipe name correctly)\n"));
+		DEBUG(4,("Ignoring length check -- ASU bug (server didn't fill in the pipe name correctly)"));
 	}
 
 	if (r->num_results < 1 || !r->ctx_list) {
@@ -2299,7 +2299,7 @@ static bool rpccli_bh_ref_alloc(struct dcerpc_binding_handle *h)
 }
 
 static void rpccli_bh_do_ndr_print(struct dcerpc_binding_handle *h,
-				   ndr_flags_type ndr_flags,
+				   int ndr_flags,
 				   const void *_struct_ptr,
 				   const struct ndr_interface_call *call)
 {

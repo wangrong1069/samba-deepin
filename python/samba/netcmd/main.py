@@ -73,7 +73,6 @@ class cmd_sambatool(SuperCommand):
     subcommands["ntacl"] = None
     subcommands["rodc"] = None
     subcommands["schema"] = None
-    subcommands["shell"] = None
     subcommands["sites"] = None
     subcommands["spn"] = None
     subcommands["testparm"] = None

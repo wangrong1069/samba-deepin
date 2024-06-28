@@ -26,7 +26,6 @@
 #define __LIBSMBCLIENT_INTERNAL__
 #include "libsmbclient.h"
 #include "libsmb_internal.h"
-#include "lib/param/param.h"
 
 
 /** Get the netbios name used for making connections */
@@ -95,7 +94,7 @@ smbc_setDebug(SMBCCTX *c, int debug)
 	TALLOC_CTX *frame = talloc_stackframe();
 	snprintf(buf, sizeof(buf), "%d", debug);
         c->debug = debug;
-	lpcfg_set_cmdline(c->internal->lp_ctx, "log level", buf);
+	lp_set_cmdline("log level", buf);
 	TALLOC_FREE(frame);
 }
 
@@ -535,32 +534,14 @@ smbc_setOptionProtocols(SMBCCTX *c,
 	bool ok = true;
 
 	if (min_proto != NULL) {
-		ok = lpcfg_set_cmdline(c->internal->lp_ctx,
-				       "client min protocol",
-				       min_proto);
+		ok = lp_set_cmdline("client min protocol", min_proto);
 	}
 
 	if (max_proto != NULL) {
-		ok &= lpcfg_set_cmdline(c->internal->lp_ctx,
-					"client max protocol",
-					max_proto);
+		ok &= lp_set_cmdline("client max protocol", max_proto);
 	}
 
 	return ok;
-}
-
-/** Get whether to enable POSIX extensions if available */
-smbc_bool
-smbc_getOptionPosixExtensions(SMBCCTX *c)
-{
-	return c->internal->posix_extensions;
-}
-
-/** Set whether to enable POSIX extensions if available */
-void
-smbc_setOptionPosixExtensions(SMBCCTX *c, smbc_bool b)
-{
-	c->internal->posix_extensions = b;
 }
 
 /** Get the function for obtaining authentication data */

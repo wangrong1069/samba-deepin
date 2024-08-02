@@ -1,0 +1,19 @@
+Description: fix mips filesize is zero
+Author: caitongxun <caitongxun@deepin.com>
+Forwarded: not-needed
+---
+Index: samba-4.17.12.2/source3/libsmb/libsmb_stat.c
+===================================================================
+--- samba-4.17.12.2.orig/source3/libsmb/libsmb_stat.c
++++ samba-4.17.12.2/source3/libsmb/libsmb_stat.c
+@@ -22,6 +22,10 @@
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#if defined(__mips__) || defined(__mips64__) || defined(__sw_64__)
++#define _FILE_OFFSET_BITS 64
++#endif
++
+ #include "includes.h"
+ #include "libsmb/libsmb.h"
+ #include "libsmbclient.h"

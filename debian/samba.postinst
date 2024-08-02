@@ -72,8 +72,8 @@ dir=/var/lib/samba/private/msg.sock
 if [ -d $dir -a configure = "$1" ] &&
    dpkg --compare-versions "$2" lt-nl 2:4.16.0+dfsg-7~
 then
-    rm -f $dir/*
-    rmdir $dir
+    rm -f $dir/* || true
+    rmdir $dir || true
 fi
 
 exit 0

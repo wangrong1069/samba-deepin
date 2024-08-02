@@ -1,0 +1,26 @@
+Description: fix smb userpass mount fail
+ When using the current version of samba to access some NAS devices, the
+ error KRB5KDC_ERR_S_PRINCIPAL_UNKNOWN is not recognized in the call to
+ gss_init_sec_context(), and the error NT_STATUS_LOGON_FAILURE is
+ returned, which causes gvfsd-smb to repeatedly ask the user to enter a
+ username and password. The solution is that when gss_init_sec_context()
+ returns other errors, samba will return the error
+ NT_STATUS_INVALID_PARAMETER, which makes samba try other authentication
+ mechanisms.
+Author: rong wang <wangrong@uniontech.com>
+Bug: https://pms.uniontech.com/bug-view-259307.html
+Forwarded: not-needed
+---
+Index: samba-4.17.12.4/source3/librpc/crypto/gse.c
+===================================================================
+--- samba-4.17.12.4.orig/source3/librpc/crypto/gse.c
++++ samba-4.17.12.4/source3/librpc/crypto/gse.c
+@@ -594,7 +594,7 @@ init_sec_context_done:
+ 			DBG_ERR("gss_init_sec_context failed with [%s](%u)\n",
+ 				gse_errstr(talloc_tos(), gss_maj, gss_min),
+ 				gss_min);
+-			status = NT_STATUS_LOGON_FAILURE;
++			status = NT_STATUS_INVALID_PARAMETER;
+ 			goto done;
+ 		}
+ 		break;

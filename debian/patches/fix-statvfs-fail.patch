@@ -1,0 +1,169 @@
+Description: fix statvfs fail
+ fix statvfs fail when root directory has no access permissions.
+ When samba obtains fs_info, it will open the root directory and obtain
+ relevant information. When the client does not have permission to
+ access the root directory, obtaining fs_info will fail. The solution is
+ to use the path actually requested by the user instead of the root
+ directory when obtaining information.
+Author: rong wang <wangrong@uniontech.com>
+Bug: https://pms.uniontech.com/bug-view-256243.html
+Forwarded: not-needed
+---
+Index: samba-4.19.5+dfsg/source3/libsmb/cli_smb2_fnum.c
+===================================================================
+--- samba-4.19.5+dfsg.orig/source3/libsmb/cli_smb2_fnum.c
++++ samba-4.19.5+dfsg/source3/libsmb/cli_smb2_fnum.c
+@@ -2806,6 +2806,7 @@ NTSTATUS cli_smb2_dskattr(struct cli_sta
+ ***************************************************************/
+ 
+ NTSTATUS cli_smb2_get_fs_full_size_info(struct cli_state *cli,
++				const char *dir_path,
+ 				uint64_t *total_allocation_units,
+ 				uint64_t *caller_allocation_units,
+ 				uint64_t *actual_allocation_units,
+@@ -2827,7 +2828,7 @@ NTSTATUS cli_smb2_get_fs_full_size_info(
+ 
+ 	/* First open the top level directory. */
+ 	status =
+-	    cli_smb2_create_fnum(cli, "",
++	    cli_smb2_create_fnum(cli, dir_path,
+ 				 (struct cli_smb2_create_flags){0},
+ 				 SMB2_IMPERSONATION_IMPERSONATION,
+ 				 FILE_READ_ATTRIBUTES,     /* desired_access */
+Index: samba-4.19.5+dfsg/source3/libsmb/cli_smb2_fnum.h
+===================================================================
+--- samba-4.19.5+dfsg.orig/source3/libsmb/cli_smb2_fnum.h
++++ samba-4.19.5+dfsg/source3/libsmb/cli_smb2_fnum.h
+@@ -202,6 +202,7 @@ NTSTATUS cli_smb2_dskattr(struct cli_sta
+ 			uint64_t *avail);
+ NTSTATUS cli_smb2_get_fs_attr_info(struct cli_state *cli, uint32_t *fs_attr);
+ NTSTATUS cli_smb2_get_fs_full_size_info(struct cli_state *cli,
++			const char *dir_path,
+ 			uint64_t *total_allocation_units,
+ 			uint64_t *caller_allocation_units,
+ 			uint64_t *actual_allocation_units,
+Index: samba-4.19.5+dfsg/source3/libsmb/clifile.c
+===================================================================
+--- samba-4.19.5+dfsg.orig/source3/libsmb/clifile.c
++++ samba-4.19.5+dfsg/source3/libsmb/clifile.c
+@@ -5222,6 +5222,7 @@ NTSTATUS cli_disk_size(struct cli_state
+ 	 */
+ 
+ 	status = cli_get_fs_full_size_info(cli,
++			"",
+ 			total,
+ 			avail,
+ 			NULL,
+Index: samba-4.19.5+dfsg/source3/libsmb/clifsinfo.c
+===================================================================
+--- samba-4.19.5+dfsg.orig/source3/libsmb/clifsinfo.c
++++ samba-4.19.5+dfsg/source3/libsmb/clifsinfo.c
+@@ -429,6 +429,7 @@ NTSTATUS cli_get_fs_volume_info(struct c
+ }
+ 
+ NTSTATUS cli_get_fs_full_size_info(struct cli_state *cli,
++				   const char *dir_path,
+ 				   uint64_t *total_allocation_units,
+ 				   uint64_t *caller_allocation_units,
+ 				   uint64_t *actual_allocation_units,
+@@ -443,6 +444,7 @@ NTSTATUS cli_get_fs_full_size_info(struc
+ 
+ 	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+ 		return cli_smb2_get_fs_full_size_info(cli,
++						dir_path,
+ 						total_allocation_units,
+ 						caller_allocation_units,
+ 						actual_allocation_units,
+Index: samba-4.19.5+dfsg/source3/libsmb/libsmb_stat.c
+===================================================================
+--- samba-4.19.5+dfsg.orig/source3/libsmb/libsmb_stat.c
++++ samba-4.19.5+dfsg/source3/libsmb/libsmb_stat.c
+@@ -398,6 +398,48 @@ SMBC_statvfs_ctx(SMBCCTX *context,
+ }
+ 
+ 
++static int
++get_fname_path(TALLOC_CTX *frame,
++	       SMBCCTX *context,
++	       const char *fname,
++	       char **pp_path)
++{
++	char *server = NULL;
++	char *share = NULL;
++	char *user = NULL;
++	char *password = NULL;
++	char *workgroup = NULL;
++	uint16_t port = 0;
++
++	if (!context || !context->internal->initialized) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	if (!fname) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	if (SMBC_parse_path(frame,
++			context,
++			fname,
++			&workgroup,
++			&server,
++			&port,
++			&share,
++			pp_path,
++			&user,
++			&password,
++			NULL)) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	return 0;
++}
++
++
+ /*
+  * Routine to obtain file system information given an fd
+  */
+@@ -412,6 +454,19 @@ SMBC_fstatvfs_ctx(SMBCCTX *context,
+ 	struct cli_state *cli = file->srv->cli;
+ 	struct smbXcli_tcon *tcon;
+ 	TALLOC_CTX *frame = talloc_stackframe();
++	char *path = NULL, *dir_end;
++
++	get_fname_path(frame, context, file->fname, &path);
++	if (!path)
++		path = talloc_strdup(frame, "");
++	else if (file->file) {
++		/* Get the directory path of the file */
++		dir_end = strrchr_m(path, '\\');
++		if (dir_end)
++			*dir_end = '\0';
++		else
++			path = talloc_strdup(frame, "");
++	}
+ 
+ 	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+ 		tcon = cli->smb2.tcon;
+@@ -442,6 +497,7 @@ SMBC_fstatvfs_ctx(SMBCCTX *context,
+ 
+                 /* Nope. If size data is available... */
+ 		status = cli_get_fs_full_size_info(cli,
++						   path,
+ 						   &total_allocation_units,
+ 						   &caller_allocation_units,
+ 						   &actual_allocation_units,
+Index: samba-4.19.5+dfsg/source3/libsmb/proto.h
+===================================================================
+--- samba-4.19.5+dfsg.orig/source3/libsmb/proto.h
++++ samba-4.19.5+dfsg/source3/libsmb/proto.h
+@@ -716,6 +716,7 @@ NTSTATUS cli_get_fs_volume_info(struct c
+ 				TALLOC_CTX *mem_ctx, char **volume_name,
+ 				uint32_t *pserial_number, time_t *pdate);
+ NTSTATUS cli_get_fs_full_size_info(struct cli_state *cli,
++				   const char *dir_path,
+ 				   uint64_t *total_allocation_units,
+ 				   uint64_t *caller_allocation_units,
+ 				   uint64_t *actual_allocation_units,

@@ -23,3 +23,9 @@ meaningful-error-if-no-samba-ad-provision.patch
 meaningful-error-if-no-python3-markdown.patch
 ctdb-use-run-instead-of-var-run.patch
 silence-can-not-convert-group-sid.diff
+fix-mips-filesize-is-zero.patch
+fix-add-usershare-fail.patch
+add-interface-for-libsmbclient.patch
+fix-smbtree-segfault.patch
+fix-smb-userpass-mount-fail.patch
+fix-statvfs-fail.patch

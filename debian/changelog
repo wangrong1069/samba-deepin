@@ -1,3 +1,20 @@
+samba (2:4.19.5+dfsg-1deepin2) unstable; urgency=medium
+
+  * fix mips filesize is zero.
+  * set file/directory mode.
+  * disable user home share.
+  * client support NT1.
+  * fix add usershare fail with specified port.
+  * support negotiate smb protocol and resolve host name.
+  * fix smbtree segfault.
+  * delete postinst and postrm for libnss-winbind to prohibit update /etc/nsswitch.conf.
+  * d/samba-common.postinst: ignore ucf error.
+  * fix smb userpass mount fail.
+  * fix statvfs fail.
+  * samba.postinst ignore rm/rmdir error.
+
+ -- wangrong <wangrong@uniontech.com>  Thu, 01 Aug 2024 15:27:44 +0800
+
 samba (2:4.19.5+dfsg-1deepin1) unstable; urgency=medium
 
   * No source change upload against python 3.12.

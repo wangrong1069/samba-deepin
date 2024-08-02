@@ -1,0 +1,268 @@
+Description: support negotiate smb protocol and resolve host name
+Author: rong wang <wangrong@uniontech.com>
+Bug: https://pms.uniontech.com/bug-view-210139.html
+Forwarded: not-needed
+---
+Index: samba-4.17.12.2/source3/include/libsmbclient.h
+===================================================================
+--- samba-4.17.12.2.orig/source3/include/libsmbclient.h
++++ samba-4.17.12.2/source3/include/libsmbclient.h
+@@ -3279,4 +3279,65 @@ struct _SMBCCTX
+ };
+ 
+ 
++/**@ingroup misc
++ * Negotiate the SMB protocol dialect with the specified server.
++ *
++ * @param host      Hostname to connect.
++ *
++ * @param port      Port to connect.
++ *
++ * @param timeout_msec
++ *                  Timeout for negotiated protocol operation.
++ *
++ * @param min_protocol
++ *                  Client min protocol.
++ *
++ * @param max_protocol
++ *                  Client max protocol.
++ *
++ * @return          The negotiated protocol, NULL on error with errno set.
++ */
++#ifdef __cplusplus
++extern "C" {
++#endif
++const char *
++smbc_negprot(const char *host,
++             uint16_t port,
++             uint32_t timeout_msec,
++             const char *min_protocol,
++             const char *max_protocol);
++#ifdef __cplusplus
++}
++#endif
++
++/**@ingroup misc
++ * Resolve the hostname and use the specified port for connection testing.
++ *
++ * @param host      Hostname to resolve.
++ *
++ * @param port      Port to connect.
++ *
++ * @param timeout_msec
++ *                  Timeout for connection testing.
++ *
++ * @param buf       Pointer to buffer to save IP address.
++ *
++ * @param bufsize   Size of buf in bytes
++ *
++ * @return          0 on success, < 0 on error with errno set.
++ */
++#ifdef __cplusplus
++extern "C" {
++#endif
++int
++smbc_resolve_host(const char *host,
++                  uint16_t port,
++                  uint32_t timeout_msec,
++                  void *buf,
++                  size_t bufsize);
++#ifdef __cplusplus
++}
++#endif
++
++
+ #endif /* SMBCLIENT_H_INCLUDED */
+Index: samba-4.17.12.2/source3/libsmb/libsmb_context.c
+===================================================================
+--- samba-4.17.12.2.orig/source3/libsmb/libsmb_context.c
++++ samba-4.17.12.2/source3/libsmb/libsmb_context.c
+@@ -33,6 +33,9 @@
+ #include "lib/param/param.h"
+ #include "../lib/util/smb_threads.h"
+ #include "../lib/util/smb_threads_internal.h"
++#include "client.h"
++#include "libsmb/namequery.h"
++#include "../lib/util/tevent_ntstatus.h"
+ 
+ /*
+  * Is the logging working / configfile read ?
+@@ -801,3 +804,178 @@ void smbc_set_credentials_with_fallback(
+ 	TALLOC_FREE(context->internal->creds);
+ 	context->internal->creds = creds;
+ }
++
++
++static const struct enum_list enum_protocol[] = {
++        {PROTOCOL_SMB3_11, "SMB3_11"},
++        {PROTOCOL_SMB3_02, "SMB3_02"},
++        {PROTOCOL_SMB3_00, "SMB3_00"},
++        {PROTOCOL_SMB2_10, "SMB2_10"},
++        {PROTOCOL_SMB2_02, "SMB2_02"},
++        {PROTOCOL_NT1, "NT1"},
++        {PROTOCOL_LANMAN2, "LANMAN2"},
++        {PROTOCOL_LANMAN1, "LANMAN1"},
++        {PROTOCOL_CORE, "CORE"},
++        {PROTOCOL_COREPLUS, "COREPLUS"},
++        {-1, NULL}
++};
++
++static const char *
++get_protocol_name(enum protocol_types protocol)
++{
++        const struct enum_list *p = enum_protocol;
++
++        for (; p->name; ++p) {
++                if (p->value == protocol)
++                        return p->name;
++        }
++
++        return "DEFAULT";
++}
++
++const char *
++smbc_negprot(const char *host,
++             uint16_t port,
++             uint32_t timeout_msec,
++             const char *min_protocol,
++             const char *max_protocol)
++{
++        struct cli_state *cli = NULL;
++        NTSTATUS status;
++        TALLOC_CTX *frame = talloc_stackframe();
++        const char *protocol = NULL;
++
++        if (!lp_set_cmdline("client min protocol", min_protocol) ||
++            !lp_set_cmdline("client max protocol", max_protocol)) {
++                errno = EINVAL;
++                goto quit;
++        }
++
++        status = cli_connect_nb(host, NULL, port, 0x20, NULL,
++                                SMB_SIGNING_IPC_DEFAULT, 0, &cli);
++        if (!NT_STATUS_IS_OK(status)) {
++                errno = map_errno_from_nt_status(status);
++                goto quit;
++        }
++
++        status = smbXcli_negprot(cli->conn, timeout_msec,
++                                 lp_client_min_protocol(),
++                                 lp_client_max_protocol());
++        if (!NT_STATUS_IS_OK(status)) {
++                errno = map_errno_from_nt_status(status);
++                goto quit;
++        }
++
++        protocol = get_protocol_name(smbXcli_conn_protocol(cli->conn));
++        errno = 0;
++
++quit:
++        cli_shutdown(cli);
++        TALLOC_FREE(frame);
++        return protocol;
++}
++
++
++int
++smbc_resolve_host(const char *host,
++                  uint16_t port,
++                  uint32_t timeout_msec,
++                  void *buf,
++                  size_t bufsize)
++{
++        NTSTATUS status;
++        TALLOC_CTX *frame = talloc_stackframe();
++        const char **called_names;
++        const char **calling_names;
++        int *called_types;
++        int fd = -1;
++        size_t chosen_index;
++        struct sockaddr_storage *addrs;
++        unsigned int i, num_addrs;
++        struct tevent_req *req;
++        struct tevent_context *ev;
++        int name_type = 0x20;
++#if defined(HAVE_IPV6)
++        char *pct;
++        int if_buf_len, printf_ret;
++#endif
++        int error;
++
++        status = resolve_name_list(frame, host, name_type, &addrs, &num_addrs);
++        if (!NT_STATUS_IS_OK(status)) {
++                error = -map_errno_from_nt_status(status);
++                goto quit;
++        }
++
++        error = -ENOMEM;
++        called_names = talloc_array(frame, const char *, num_addrs);
++        called_types = talloc_array(frame, int, num_addrs);
++        calling_names = talloc_array(frame, const char *, num_addrs);
++        if (!called_names || !called_names || !called_names)
++                goto quit;
++        for (i=0; i<num_addrs; i++) {
++                called_names[i] = host;
++                called_types[i] = name_type;
++                calling_names[i] = NULL;
++        }
++
++        ev = samba_tevent_context_init(talloc_tos());
++        if (!ev)
++                goto quit;
++
++        req = smbsock_any_connect_send(
++                frame, ev, addrs, called_names, called_types,
++                calling_names, NULL, num_addrs, port);
++        if (!req)
++                goto quit;
++
++        if (!tevent_req_set_endtime(req, ev, timeval_current_ofs_msec(timeout_msec)))
++                goto quit;
++
++        if (!tevent_req_poll_ntstatus(req, ev, &status))
++                goto quit;
++
++        status = smbsock_any_connect_recv(req, &fd, &chosen_index, NULL);
++        if (!NT_STATUS_IS_OK(status)) {
++                error = -map_errno_from_nt_status(status);
++                goto quit;
++        }
++        close(fd);
++
++        if (chosen_index >= num_addrs) {
++                DEBUG(1, ("Internal error: chosen_index >= num_addrs.\n"));
++                error = -EINVAL;
++                goto quit;
++        }
++
++        print_sockaddr(buf, bufsize, addrs+chosen_index);
++#if defined(HAVE_IPV6)
++        /*
++         * If it's an IPv6 address and it has a "%" sign in it,
++         * try to treat the part after the "%" as a network interface name
++         * and convert it to an index.
++         * ipv6 addr: fe80::34a3:2c80:e61b:83f3%enp2s0
++         */
++        pct = memchr(buf, '%', bufsize);
++        if (pct) {
++                if_buf_len = bufsize-(pct-(char*)buf+1);
++                printf_ret = snprintf(pct+1, if_buf_len, "%u", if_nametoindex(pct+1));
++                if (printf_ret < 0) {
++                        DEBUG(1, ("snprintf fail: %d.\n", printf_ret));
++                        error = -EINVAL;
++                        goto quit;
++                }
++                if (printf_ret >= if_buf_len) {
++                        DEBUG(1, ("snprintf buf overflow: need %ld but got %ld.\n",
++                              (bufsize-if_buf_len+printf_ret), bufsize));
++                        error = -ENOBUFS;
++                        goto quit;
++                }
++        }
++#endif
++        error = 0;
++quit:
++        TALLOC_FREE(frame);
++        errno = -error;
++        return error;
++}

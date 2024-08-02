@@ -103,6 +103,7 @@ libsmbclient.so.0 #PACKAGE# #MINVER#
  smbc_lseekdir@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_lsetxattr@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_mkdir@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
+ smbc_negprot@SMBCLIENT_0.7.0 2:4.17.12.3
  smbc_new_context@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_notify@SMBCLIENT_0.2.3 2:4.3.0+dfsg
  smbc_open@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
@@ -117,6 +118,7 @@ libsmbclient.so.0 #PACKAGE# #MINVER#
  smbc_readdirplus@SMBCLIENT_0.3.3 2:4.9.0+dfsg
  smbc_removexattr@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_rename@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
+ smbc_resolve_host@SMBCLIENT_0.7.0 2:4.17.12.3
  smbc_rmdir@SMBCLIENT_0.1.0 2:4.0.3+dfsg1
  smbc_setConfiguration@SMBCLIENT_0.3.2 2:4.9.0+dfsg
  smbc_setDebug@SMBCLIENT_0.1.0 2:4.0.3+dfsg1

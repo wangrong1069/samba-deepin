@@ -1,0 +1,23 @@
+Description: fix add usershare fail with specified port
+ Net connections to servers always pass in port 0, which causes net
+ connections to servers using non-standard ports (such as 448) to fail.
+ The solution is to use the port passed in by the user via the command
+ line argument (-p). When the user does not pass in a port, it defaults
+ to 0, which remains the same as before.
+Author: rong wang <wangrong@uniontech.com>
+Bug: https://pms.uniontech.com/bug-view-181833.html
+Forwarded: not-needed
+---
+Index: samba-4.17.12.2/source3/utils/netlookup.c
+===================================================================
+--- samba-4.17.12.2.orig/source3/utils/netlookup.c
++++ samba-4.17.12.2/source3/utils/netlookup.c
+@@ -96,7 +96,7 @@ static struct con_struct *create_cs(stru
+ 	talloc_set_destructor(cs, cs_destructor);
+ 
+ 	nt_status = cli_full_connection_creds(&cs->cli, lp_netbios_name(), lp_netbios_name(),
+-					&loopback_ss, 0,
++					&loopback_ss, c->opt_port,
+ 					"IPC$", "IPC",
+ 					anon_creds,
+ 					CLI_FULL_CONNECTION_IPC);

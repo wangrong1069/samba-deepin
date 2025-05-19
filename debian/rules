@@ -298,11 +298,12 @@ override_dh_installpam:
 ifpkg = $(if $(filter ${1},${build-pkgs}),${2})
 
 override_dh_installinit:
-ifneq (,$(filter samba, ${build-pkgs}))
-	dh_installinit -psamba --name smbd
-	dh_installinit -psamba --name nmbd --error-handler nmbd_error_handler
-	dh_installinit -psamba --name samba-ad-dc
-endif
+	# Disable smbd nmbd samba-ad-dc auto-start
+# ifneq (,$(filter samba, ${build-pkgs}))
+# 	dh_installinit -psamba --name smbd
+# 	dh_installinit -psamba --name nmbd --error-handler nmbd_error_handler
+# 	dh_installinit -psamba --name samba-ad-dc
+# endif
 	$(call ifpkg, winbind, dh_installinit -pwinbind)
 ifneq (,$(filter ctdb, ${build-pkgs}))
 	install -Dp -m755 ctdb/config/ctdb.init debian/ctdb/etc/init.d/ctdb
@@ -311,11 +312,12 @@ ifneq (,$(filter ctdb, ${build-pkgs}))
 endif
 
 override_dh_installsystemd:
-ifneq (,$(filter samba, ${build-pkgs}))
-	dh_installsystemd -psamba --name=smbd
-	dh_installsystemd -psamba --name=nmbd
-	dh_installsystemd -psamba --name=samba-ad-dc
-endif
+	# Disable smbd nmbd samba-ad-dc auto-start
+# ifneq (,$(filter samba, ${build-pkgs}))
+# 	dh_installsystemd -psamba --name=smbd
+# 	dh_installsystemd -psamba --name=nmbd
+# 	dh_installsystemd -psamba --name=samba-ad-dc
+# endif
 	$(call ifpkg, winbind, dh_installsystemd -pwinbind)
 	$(call ifpkg, ctdb, dh_installsystemd -pctdb --no-start --no-stop-on-upgrade)
 

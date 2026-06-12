@@ -23,3 +23,9 @@ meaningful-error-if-no-python3-markdown.patch
 ctdb-use-run-instead-of-var-run.patch
 replace-xpg-strerror.patch
 bug-16018-v4-22-06.patch
+fix-mips-filesize-is-zero.patch
+fix-add-usershare-fail.patch
+add-interface-for-libsmbclient.patch
+fix-smbtree-segfault.patch
+fix-smb-userpass-mount-fail.patch
+fix-statvfs-fail.patch

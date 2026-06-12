@@ -1,3 +1,21 @@
+samba (2:4.22.8+dfsg-0+deb13u2deepin2) unstable; urgency=medium
+
+  * fix mips filesize is zero.
+  * set file/directory mode.
+  * disable user home share.
+  * client support NT1.
+  * fix add usershare fail with specified port.
+  * support negotiate smb protocol and resolve host name.
+  * fix smbtree segfault.
+  * delete postinst and postrm for libnss-winbind to prohibit update /etc/nsswitch.conf.
+  * d/samba-common.postinst: ignore ucf error.
+  * fix smb userpass mount fail.
+  * fix statvfs fail.
+  * samba.postinst ignore rm/rmdir error.
+  * disable smbd nmbd samba-ad-dc auto-start.
+
+ -- wangrong <wangrong@uniontech.com>  Thu, 11 Jun 2026 17:09:09 +0800
+
 samba (2:4.22.8+dfsg-0+deb13u2deepin1) unstable; urgency=medium
 
   * revert t64.

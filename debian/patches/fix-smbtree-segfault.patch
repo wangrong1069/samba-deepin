@@ -1,0 +1,48 @@
+Description: fix smbtree segfault
+Author: rong wang <wangrong@uniontech.com>
+Forwarded: not-needed
+---
+Index: samba-4.17.12.1/source3/utils/smbtree.c
+===================================================================
+--- samba-4.17.12.1.orig/source3/utils/smbtree.c
++++ samba-4.17.12.1/source3/utils/smbtree.c
+@@ -48,6 +48,7 @@ static void get_auth_data_with_context_f
+ {
+ 	struct cli_credentials *creds = samba_cmdline_get_creds();
+ 	size_t len;
++	const char *pass;
+ 
+ 	len = strlcpy(domain, cli_credentials_get_domain(creds), domain_len);
+ 	if ((int)len >= domain_len) {
+@@ -58,8 +59,8 @@ static void get_auth_data_with_context_f
+ 	if ((int)len >= user_len) {
+ 		return;
+ 	}
+-	len = strlcpy(
+-		password, cli_credentials_get_password(creds), password_len);
++	pass = cli_credentials_get_password(creds);
++	len = strlcpy(password, (pass?pass:""), password_len);
+ 	if ((int)len >= password_len) {
+ 		/* pointless, but what can you do... */
+ 		return;
+@@ -155,7 +156,7 @@ int main(int argc, char *argv[])
+ 		goto fail;
+ 	}
+ 	smbc_setDebug(ctx, debuglevel);
+-	ok = smbc_setOptionProtocols(ctx, NULL, "NT1");
++	ok = smbc_setOptionProtocols(ctx, "NT1", "NT1");
+ 	if (!ok) {
+ 		perror("smbc_setOptionProtocols");
+ 		goto fail;
+@@ -246,8 +247,9 @@ int main(int argc, char *argv[])
+ 
+ 			shares = smbc_getFunctionOpendir(ctx)(ctx, url);
+ 			if (shares == NULL) {
+-				perror("smbc_opendir");
+-				goto fail;
++				TALLOC_FREE(servername);
++				TALLOC_FREE(url);
++				continue;
+ 			}
+ 
+ 			while ((dirent = smbc_getFunctionReaddir(

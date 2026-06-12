@@ -1,0 +1,157 @@
+Description: fix statvfs fail
+ fix statvfs fail when root directory has no access permissions.
+ When samba obtains fs_info, it will open the root directory and obtain
+ relevant information. When the client does not have permission to
+ access the root directory, obtaining fs_info will fail. The solution is
+ to use the path actually requested by the user instead of the root
+ directory when obtaining information.
+Author: rong wang <wangrong@uniontech.com>
+Bug: https://pms.uniontech.com/bug-view-256243.html
+Forwarded: not-needed
+---
+--- a/source3/libsmb/cli_smb2_fnum.c
++++ b/source3/libsmb/cli_smb2_fnum.c
+@@ -2656,6 +2656,7 @@
+ ***************************************************************/
+ 
+ NTSTATUS cli_smb2_get_fs_full_size_info(struct cli_state *cli,
++				const char *dir_path,
+ 				uint64_t *total_allocation_units,
+ 				uint64_t *caller_allocation_units,
+ 				uint64_t *actual_allocation_units,
+@@ -2677,7 +2678,7 @@
+ 
+ 	/* First open the top level directory. */
+ 	status =
+-	    cli_smb2_create_fnum(cli, "",
++	    cli_smb2_create_fnum(cli, dir_path,
+ 				 (struct cli_smb2_create_flags){0},
+ 				 SMB2_IMPERSONATION_IMPERSONATION,
+ 				 FILE_READ_ATTRIBUTES,     /* desired_access */
+--- a/source3/libsmb/cli_smb2_fnum.h
++++ b/source3/libsmb/cli_smb2_fnum.h
+@@ -190,6 +190,7 @@
+ 			uint64_t *avail);
+ NTSTATUS cli_smb2_get_fs_attr_info(struct cli_state *cli, uint32_t *fs_attr);
+ NTSTATUS cli_smb2_get_fs_full_size_info(struct cli_state *cli,
++			const char *dir_path,
+ 			uint64_t *total_allocation_units,
+ 			uint64_t *caller_allocation_units,
+ 			uint64_t *actual_allocation_units,
+--- a/source3/libsmb/clifile.c
++++ b/source3/libsmb/clifile.c
+@@ -5470,6 +5470,7 @@
+ 	 */
+ 
+ 	status = cli_get_fs_full_size_info(cli,
++			"",
+ 			total,
+ 			avail,
+ 			NULL,
+--- a/source3/libsmb/clifsinfo.c
++++ b/source3/libsmb/clifsinfo.c
+@@ -427,6 +427,7 @@
+ }
+ 
+ NTSTATUS cli_get_fs_full_size_info(struct cli_state *cli,
++				   const char *dir_path,
+ 				   uint64_t *total_allocation_units,
+ 				   uint64_t *caller_allocation_units,
+ 				   uint64_t *actual_allocation_units,
+@@ -441,6 +442,7 @@
+ 
+ 	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+ 		return cli_smb2_get_fs_full_size_info(cli,
++						dir_path,
+ 						total_allocation_units,
+ 						caller_allocation_units,
+ 						actual_allocation_units,
+--- a/source3/libsmb/libsmb_stat.c
++++ b/source3/libsmb/libsmb_stat.c
+@@ -356,6 +356,48 @@
+ }
+ 
+ 
++static int
++get_fname_path(TALLOC_CTX *frame,
++	       SMBCCTX *context,
++	       const char *fname,
++	       char **pp_path)
++{
++	char *server = NULL;
++	char *share = NULL;
++	char *user = NULL;
++	char *password = NULL;
++	char *workgroup = NULL;
++	uint16_t port = 0;
++
++	if (!context || !context->internal->initialized) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	if (!fname) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	if (SMBC_parse_path(frame,
++			context,
++			fname,
++			&workgroup,
++			&server,
++			&port,
++			&share,
++			pp_path,
++			&user,
++			&password,
++			NULL)) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	return 0;
++}
++
++
+ /*
+  * Routine to obtain file system information given an fd
+  */
+@@ -370,6 +412,19 @@
+ 	struct cli_state *cli = file->srv->cli;
+ 	struct smbXcli_tcon *tcon;
+ 	TALLOC_CTX *frame = talloc_stackframe();
++	char *path = NULL, *dir_end;
++
++	get_fname_path(frame, context, file->fname, &path);
++	if (!path)
++		path = talloc_strdup(frame, "");
++	else if (file->file) {
++		/* Get the directory path of the file */
++		dir_end = strrchr_m(path, '\\');
++		if (dir_end)
++			*dir_end = '\0';
++		else
++			path = talloc_strdup(frame, "");
++	}
+ 
+ 	if (smbXcli_conn_protocol(cli->conn) >= PROTOCOL_SMB2_02) {
+ 		tcon = cli->smb2.tcon;
+@@ -400,6 +455,7 @@
+ 
+                 /* Nope. If size data is available... */
+ 		status = cli_get_fs_full_size_info(cli,
++						   path,
+ 						   &total_allocation_units,
+ 						   &caller_allocation_units,
+ 						   &actual_allocation_units,
+--- a/source3/libsmb/proto.h
++++ b/source3/libsmb/proto.h
+@@ -724,6 +724,7 @@
+ 				TALLOC_CTX *mem_ctx, char **volume_name,
+ 				uint32_t *pserial_number, time_t *pdate);
+ NTSTATUS cli_get_fs_full_size_info(struct cli_state *cli,
++				   const char *dir_path,
+ 				   uint64_t *total_allocation_units,
+ 				   uint64_t *caller_allocation_units,
+ 				   uint64_t *actual_allocation_units,

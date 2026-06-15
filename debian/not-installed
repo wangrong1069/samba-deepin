@@ -18,3 +18,6 @@ usr/lib/*/pkgconfig/pyldb-util.cpython-*.pc
 usr/include/pytalloc.h
 usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/pytalloc-util.cpython-*.pc
 usr/lib/${DEB_HOST_MULTIARCH}/libpytalloc-util.cpython-*.so
+# winexe: conditionally installed by debian/rules execute_after_dh_install-arch
+usr/bin/winexe
+usr/share/man/man1/winexe.1

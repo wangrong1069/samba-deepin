@@ -1,3 +1,14 @@
+samba (2:4.22.8+dfsg-0+deb13u2deepin5) unstable; urgency=medium
+
+  * fix: conditionally build and install winexe per architecture
+    - Uncomment mingw-w64 build deps with arch restrictions [linux-any !sw64 !loong64]
+    - Remove winexe from samba-common-bin.install (static list)
+    - Add conditional winexe install in debian/rules execute_after_dh_install-arch
+    - sw64 and loong64 lack gcc-mingw-w64 cross-compilers,
+      so winexe is only built and packaged on supported architectures
+
+ -- lichenggang <lichenggang@uniontech.com>  Mon, 15 Jun 2026 14:55:56 +0800
+
 samba (2:4.22.8+dfsg-0+deb13u2deepin4) unstable; urgency=medium
 
   * fix: comment out unused mingw-w64 build dependencies (debian/control)

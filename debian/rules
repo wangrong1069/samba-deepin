@@ -311,6 +311,11 @@ execute_after_dh_install-arch:
 	    debian/samba/usr/share/man/man8/vfs_glusterfs*.8 \
 	    debian/samba/usr/lib/${DEB_HOST_MULTIARCH}/samba/vfs/ceph*.so \
 	    debian/samba/usr/share/man/man8/vfs_ceph*.8
+	# winexe: only install if built (mingw-w64 unavailable on sw64/loong64)
+	if [ -f debian/tmp/usr/bin/winexe ]; then \
+	    install -Dp -m0755 debian/tmp/usr/bin/winexe debian/samba-common-bin/usr/bin/winexe; \
+	    install -Dp -m0644 debian/tmp/usr/share/man/man1/winexe.1 debian/samba-common-bin/usr/share/man/man1/winexe.1; \
+	fi
 
 provision-dest := debian/samba-ad-provision/usr/share/samba/setup
 

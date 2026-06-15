@@ -23,7 +23,7 @@ Build-Depends-Arch:
 	libparse-yapp-perl:native | libparse-yapp-perl,
 	rpcsvc-proto,
 # for winexe. gcc-mingw-w64 brings 4 toolchains, we need only 2
-        gcc-mingw-w64-i686-win32, gcc-mingw-w64-x86-64-win32,
+#        gcc-mingw-w64-i686-win32, gcc-mingw-w64-x86-64-win32,
 # system libraries:
 	pkgconf,
 	libacl1-dev,

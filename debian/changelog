@@ -1,3 +1,9 @@
+samba (2:4.22.8+dfsg-0+deb13u2deepin4) unstable; urgency=medium
+
+  * fix: comment out unused mingw-w64 build dependencies (debian/control)
+
+ -- Liu Zheng <liuzheng@uniontech.com>  Mon, 15 Jun 2026 13:29:38 +0800
+
 samba (2:4.22.8+dfsg-0+deb13u2deepin3) unstable; urgency=medium
 
   * fix: remove Build-Profile conditionals for deepin

@@ -1,3 +1,9 @@
+samba (2:4.22.8+dfsg-0+deb13u2deepin6) unstable; urgency=medium
+
+  * fix(debian): add sw64 and loong64 architecture support
+
+ -- wangrong <wangrong@uniontech.com>  Mon, 22 Jun 2026 17:30:46 +0800
+
 samba (2:4.22.8+dfsg-0+deb13u2deepin5) unstable; urgency=medium
 
   * fix: conditionally build and install winexe per architecture

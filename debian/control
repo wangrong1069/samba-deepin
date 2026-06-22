@@ -426,7 +426,7 @@ Description: Samba Virtual FileSystem glusterfs modules
 
 Package: libsmbclient0
 # ${t64:Provides}:
-Provides: libsmbclient (= ${binary:Version}) [amd64 arm64 i386 mips64el ppc64el riscv64 s390x]
+Provides: libsmbclient (= ${binary:Version}) [amd64 arm64 i386 mips64el ppc64el riscv64 s390x sw64 loong64]
 Replaces: libsmbclient
 Breaks: libsmbclient (<< ${source:Version})
 Section: libs
